@@ -1,0 +1,9 @@
+[Check] parsed: harness reported every stage OK
+[Check] streaming: 9 chunks over 3.92s of audio OK
+[Check] end of speech: 3.92s for one sentence OK
+[Check] ttfa: 63.9 ms to first audio OK
+[Check] faster than real time: RTF 0.4741 over 1858.4 ms OK
+[Check] cancel honored: synthesis reported cancelled OK
+[Check] cancel latency: 308.9 ms to release the floor OK
+[Check] cancel truncates: 0.56s after 3 chunks OK
+[Check] wav: 3.92s written at 24000 Hz OK

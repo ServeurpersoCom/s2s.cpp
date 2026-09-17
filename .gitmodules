@@ -1,0 +1,8 @@
+[submodule "ggml"]
+	path = ggml
+	url = https://github.com/ServeurpersoCom/ggml.git
+	branch = master
+[submodule "qwentts.cpp"]
+	path = qwentts.cpp
+	url = https://github.com/ServeurpersoCom/qwentts.cpp.git
+	branch = master
