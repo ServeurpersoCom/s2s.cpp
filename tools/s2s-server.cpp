@@ -38,6 +38,7 @@
 #ifdef _WIN32
 #    include <fcntl.h>
 #    include <io.h>
+#    include <windows.h>
 #    ifndef STDERR_FILENO
 #        define STDERR_FILENO 2
 #    endif
@@ -181,6 +182,51 @@ static void log_capture_stop() {
     g_real_stderr_fd = -1;
 }
 
+// A crash kills the process with its last words still in the pipe. This
+// names the crash through the pipe, so /logs carries it too, then drops the
+// last write end so the reader drains everything to the real stderr before
+// the process goes. A crash on the reader itself writes straight out.
+static void log_capture_crash(const char * what) {
+    char      line[160];
+    const int n = snprintf(line, sizeof(line), "[Server] FATAL: %s\n", what);
+    if (g_real_stderr_fd < 0) {
+        fd_write(STDERR_FILENO, line, (size_t) n);
+        return;
+    }
+    if (std::this_thread::get_id() == g_log_reader.get_id()) {
+        fd_write(g_real_stderr_fd, line, (size_t) n);
+        return;
+    }
+    fd_write(STDERR_FILENO, line, (size_t) n);
+    fd_dup2(g_real_stderr_fd, STDERR_FILENO);
+    if (g_log_reader.joinable()) {
+        g_log_reader.join();
+    }
+}
+
+// Once the log is out, the crash goes on the way it would have.
+static void on_crash(int sig) {
+    log_capture_crash(sig == SIGABRT ? "abort" :
+                      sig == SIGSEGV ? "invalid memory access" :
+                      sig == SIGFPE  ? "arithmetic fault" :
+                      sig == SIGILL  ? "illegal instruction" :
+                                       "crash");
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+#ifdef _WIN32
+// Windows raises no signal for an access violation outside the thread that
+// installed it: the process wide filter catches every thread.
+static LONG WINAPI on_exception(EXCEPTION_POINTERS * info) {
+    char what[64];
+    snprintf(what, sizeof(what), "exception 0x%08lx at %p", (unsigned long) info->ExceptionRecord->ExceptionCode,
+             info->ExceptionRecord->ExceptionAddress);
+    log_capture_crash(what);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+#endif
+
 static void setup_log_capture() {
     g_real_stderr_fd = fd_dup(STDERR_FILENO);
     int pipefd[2];
@@ -197,6 +243,14 @@ static void setup_log_capture() {
     // explains the failure reaches the terminal.
     atexit(log_capture_stop);
     g_log_reader = std::thread(log_reader_main);
+
+    signal(SIGABRT, on_crash);
+    signal(SIGSEGV, on_crash);
+    signal(SIGFPE, on_crash);
+    signal(SIGILL, on_crash);
+#ifdef _WIN32
+    SetUnhandledExceptionFilter(on_exception);
+#endif
 }
 
 // RAII: captures stderr on construction, restores and drains on destruction.
