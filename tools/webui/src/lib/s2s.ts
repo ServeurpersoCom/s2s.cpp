@@ -217,6 +217,20 @@ export function realtimeUrl(url?: string): string {
 	return base.toString();
 }
 
+// Echo cancellation matters more than anything else here: on laptop speakers
+// the assistant would otherwise hear itself and barge in on its own voice.
+// The server canceller wants the raw microphone, since a browser processing in
+// front of it would bend the echo path it models.
+function micConstraints(echo: S2SEcho): MediaTrackConstraints {
+	const raw = echo === 'server';
+	return {
+		echoCancellation: echo === 'native' ? ECHO_CANCELLATION_ALL : false,
+		noiseSuppression: !raw,
+		autoGainControl: !raw,
+		channelCount: 1
+	};
+}
+
 function workletUrl(source: string): string {
 	return URL.createObjectURL(new Blob([source], { type: 'application/javascript' }));
 }
@@ -315,23 +329,8 @@ export class S2S {
 
 		this.log(`Audio context at ${this.context.sampleRate} Hz`);
 
-		// Echo cancellation matters more than anything else here: on laptop
-		// speakers the assistant would otherwise hear itself and barge in on
-		// its own voice.
-		// The server canceller wants the raw microphone: a browser processing
-		// in front of it would bend the echo path it models.
-		const echo = this.echo();
-		const raw = echo === 'server';
-		this.stream = await navigator.mediaDevices.getUserMedia({
-			audio: {
-				echoCancellation: echo === 'native' ? ECHO_CANCELLATION_ALL : false,
-				noiseSuppression: !raw,
-				autoGainControl: !raw,
-				channelCount: 1
-			}
-		});
-
-		this.log('Microphone granted');
+		this.stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints(this.echo()) });
+		this.log(`Microphone granted, ${this.micApplied()}`);
 
 		this.duplex = new AudioWorkletNode(this.context, 's2s-duplex', {
 			numberOfInputs: 1,
@@ -408,12 +407,35 @@ export class S2S {
 	// A field left out keeps its value: an undefined arriving from a cleared
 	// input must not erase what the session already runs with.
 	update(options: Partial<S2SOptions>) {
+		const echo = this.echo();
 		for (const [key, value] of Object.entries(options)) {
 			if (value !== undefined) {
 				(this.options as Record<string, unknown>)[key] = value;
 			}
 		}
 		this.sendSessionUpdate();
+		if (this.stream && this.echo() !== echo) {
+			this.applyEcho();
+		}
+	}
+
+	// The server switches its canceller on the session.update; the microphone
+	// follows here, so the browser processing always matches the method.
+	private applyEcho() {
+		const track = this.stream?.getAudioTracks()[0];
+		track
+			?.applyConstraints(micConstraints(this.echo()))
+			.then(() => this.log(`Microphone switched, ${this.micApplied()}`))
+			.catch((e) =>
+				this.log(`Microphone switch refused, ${e instanceof Error ? e.message : String(e)}`)
+			);
+	}
+
+	// What the browser really runs on the microphone, which is not always
+	// what was asked.
+	private micApplied(): string {
+		const settings = this.stream?.getAudioTracks()[0]?.getSettings();
+		return `echo ${this.echo()}, browser echo cancellation ${settings?.echoCancellation}, noise suppression ${settings?.noiseSuppression}, gain control ${settings?.autoGainControl}`;
 	}
 
 	private setState(state: S2SState) {

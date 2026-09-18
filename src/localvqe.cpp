@@ -39,7 +39,11 @@
 #define LV_KT          4  // time taps of every encoder and decoder conv
 #define LV_ALIGN_KT    5  // time taps of the alignment smoothing conv
 #define LV_MASK_KT     3  // time taps of the complex mask
+#define LV_MASK_KF     3  // frequency taps of the complex mask
+#define LV_MASK_TAPS   (LV_MASK_KT * LV_MASK_KF)
+#define LV_MASK_ROOTS  3  // cube roots of unity the mask channels combine
 #define LV_N_ENCODER   5
+#define LV_N_BEFORE    2  // mic encoders before the alignment
 #define LV_N_FAR       2
 #define LV_N_DECODER   5
 #define LV_MAG_EPS     1e-12f
@@ -310,12 +314,13 @@ static struct ggml_tensor * lv_mask(lv_context *          ctx,
                                     struct ggml_tensor *  spec) {
     const int64_t n_freq = spec->ne[0];
 
-    struct ggml_tensor * mr = ggml_cont(g, ggml_permute(g, ggml_reshape_3d(g, m, n_freq, 9, 3), 1, 2, 0, 3));
-    mr                      = ggml_reshape_2d(g, mr, 3, n_freq * 9);  // [3, F * 9]
-    struct ggml_tensor * hre =
-        ggml_reshape_2d(g, ggml_mul_mat(g, mr, ggml_reshape_2d(g, ctx->mask_re, 3, 1)), n_freq, 9);
-    struct ggml_tensor * him =
-        ggml_reshape_2d(g, ggml_mul_mat(g, mr, ggml_reshape_2d(g, ctx->mask_im, 3, 1)), n_freq, 9);
+    struct ggml_tensor * mr =
+        ggml_cont(g, ggml_permute(g, ggml_reshape_3d(g, m, n_freq, LV_MASK_TAPS, LV_MASK_ROOTS), 1, 2, 0, 3));
+    mr                       = ggml_reshape_2d(g, mr, LV_MASK_ROOTS, n_freq * LV_MASK_TAPS);
+    struct ggml_tensor * hre = ggml_reshape_2d(
+        g, ggml_mul_mat(g, mr, ggml_reshape_2d(g, ctx->mask_re, LV_MASK_ROOTS, 1)), n_freq, LV_MASK_TAPS);
+    struct ggml_tensor * him = ggml_reshape_2d(
+        g, ggml_mul_mat(g, mr, ggml_reshape_2d(g, ctx->mask_im, LV_MASK_ROOTS, 1)), n_freq, LV_MASK_TAPS);
 
     struct ggml_tensor * win = lv_window(ctx, g, spec, LV_MASK_KT - 1);  // [F, 3, 2]
     win                      = ggml_cont(g, ggml_pad_ext(g, win, 1, 1, 0, 0, 0, 0, 0, 0));
@@ -324,13 +329,14 @@ static struct ggml_tensor * lv_mask(lv_context *          ctx,
     struct ggml_tensor * taps[2];
     for (int c = 0; c < 2; c++) {
         struct ggml_tensor * t = nullptr;
-        for (int k = 0; k < 9; k++) {
+        for (int k = 0; k < LV_MASK_TAPS; k++) {
             const size_t offset =
-                ((size_t) (k % 3) + (size_t) (k / 3) * width + (size_t) c * width * LV_MASK_KT) * sizeof(float);
+                ((size_t) (k % LV_MASK_KF) + (size_t) (k / LV_MASK_KF) * width + (size_t) c * width * LV_MASK_KT) *
+                sizeof(float);
             struct ggml_tensor * tap = ggml_view_2d(g, win, n_freq, 1, win->nb[1], offset);
             t                        = t ? ggml_concat(g, t, tap, 1) : ggml_cont(g, tap);
         }
-        taps[c] = t;  // [F, 9]
+        taps[c] = t;  // [F, LV_MASK_TAPS]
     }
 
     struct ggml_tensor * re = ggml_sub(g, ggml_mul(g, hre, taps[0]), ggml_mul(g, him, taps[1]));
@@ -373,7 +379,7 @@ static void lv_build_graph(lv_context * ctx) {
 
     struct ggml_tensor * skips[LV_N_ENCODER];
     struct ggml_tensor * x = lv_compress(ctx, g, mic_spec);
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < LV_N_BEFORE; i++) {
         x        = lv_encoder(ctx, g, ctx->mic[i], x);
         skips[i] = x;
     }
@@ -384,7 +390,7 @@ static void lv_build_graph(lv_context * ctx) {
     }
 
     x = ggml_concat(g, x, lv_align(ctx, g, x, far), 2);
-    for (int i = 2; i < LV_N_ENCODER; i++) {
+    for (int i = LV_N_BEFORE; i < LV_N_ENCODER; i++) {
         x        = lv_encoder(ctx, g, ctx->mic[i], x);
         skips[i] = x;
     }

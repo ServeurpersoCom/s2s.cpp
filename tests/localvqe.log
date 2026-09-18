@@ -10,6 +10,6 @@ load_backend: loaded CPU backend from /mnt/workspace/git/s2s.cpp/build/libggml-c
 [WeightCtx] Loaded 137 tensors, 18.4 MB into backend
 [LocalVQE] 16000 Hz, hop 256, dmax 64, 29 state slots of 2336.8 KB, 771 graph nodes
 ggml_backend_cuda_graph_compute: CUDA graph warmup complete
-[LocalVQE] 500 hops in 604.3 ms, 1.209 ms per hop, 13.2x real time
+[LocalVQE] 500 hops in 755.7 ms, 1.511 ms per hop, 10.6x real time
 [Parity] output: cossim 0.999999766 max abs 7.500e-04 OK
 [Check] echo removed where the far end plays alone: 56.1 dB OK

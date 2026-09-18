@@ -337,14 +337,18 @@ struct Connection {
 
     // Energy in and out of the canceller over one run of playback, and the
     // compute of every hop since the last report, for the log lines that
-    // close the run.
-    double aec_in     = 0.0;
-    double aec_out    = 0.0;
-    size_t aec_played = 0;
-    int    aec_quiet  = 0;
-    size_t aec_hops   = 0;
-    double aec_ms     = 0.0;
-    double aec_peak   = 0.0;
+    // close the run. The output is one hop late, so the energy of the
+    // microphone hop waits one call for the output it produced.
+    double aec_in         = 0.0;
+    double aec_out        = 0.0;
+    size_t aec_played     = 0;
+    int    aec_quiet      = 0;
+    size_t aec_hops       = 0;
+    double aec_ms         = 0.0;
+    double aec_peak       = 0.0;
+    double aec_pending_in = 0.0;
+    bool   aec_pending    = false;
+    bool   aec_failing    = false;
 };
 
 // Frames without playback that close a run of it, 0.5 s of client frames: a
@@ -391,21 +395,34 @@ static void conn_cancel_echo(Connection * conn, std::vector<float> & pcm, const 
     for (; done + hop <= conn->aec_mic.size(); done += hop) {
         const size_t base = pcm.size();
         pcm.resize(base + hop);
-        Timer t_hop;
-        if (lv_process(conn->aec, conn->aec_mic.data() + done, conn->aec_ref.data() + done, pcm.data() + base) != 0) {
+        Timer      t_hop;
+        const bool failed =
+            lv_process(conn->aec, conn->aec_mic.data() + done, conn->aec_ref.data() + done, pcm.data() + base) != 0;
+        if (failed && !conn->aec_failing) {
             s2s_log(S2S_LOG_ERROR, "[AEC] %s", lv_last_error());
             conn_send(conn, rt_event_error(lv_last_error()));
         }
+        conn->aec_failing = failed;
+
         const double ms = t_hop.ms();
         conn->aec_ms += ms;
         conn->aec_peak = ms > conn->aec_peak ? ms : conn->aec_peak;
         conn->aec_hops++;
-        if (played) {
+
+        // pcm holds the output of the previous hop: it is weighed against the
+        // microphone energy kept from the previous call, when that hop played.
+        if (conn->aec_pending) {
+            conn->aec_in += conn->aec_pending_in;
             for (size_t i = 0; i < hop; i++) {
-                conn->aec_in += (double) conn->aec_mic[done + i] * conn->aec_mic[done + i];
                 conn->aec_out += (double) pcm[base + i] * pcm[base + i];
             }
             conn->aec_played += hop;
+        }
+        conn->aec_pending    = false;
+        conn->aec_pending_in = 0.0;
+        for (size_t i = 0; i < hop; i++) {
+            conn->aec_pending = conn->aec_pending || conn->aec_ref[done + i] != 0.0f;
+            conn->aec_pending_in += (double) conn->aec_mic[done + i] * conn->aec_mic[done + i];
         }
     }
     conn->aec_mic.erase(conn->aec_mic.begin(), conn->aec_mic.begin() + (ptrdiff_t) done);
@@ -656,13 +673,16 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
         conn->aec_mic.clear();
         conn->aec_ref.clear();
         conn->reference_tail.clear();
-        conn->aec_in     = 0.0;
-        conn->aec_out    = 0.0;
-        conn->aec_played = 0;
-        conn->aec_quiet  = 0;
-        conn->aec_hops   = 0;
-        conn->aec_ms     = 0.0;
-        conn->aec_peak   = 0.0;
+        conn->aec_in         = 0.0;
+        conn->aec_out        = 0.0;
+        conn->aec_played     = 0;
+        conn->aec_quiet      = 0;
+        conn->aec_hops       = 0;
+        conn->aec_ms         = 0.0;
+        conn->aec_peak       = 0.0;
+        conn->aec_pending_in = 0.0;
+        conn->aec_pending    = false;
+        conn->aec_failing    = false;
     }
     if (!patch.llm_url.empty()) {
         if (host_allowed(g_llm_hosts, patch.llm_url)) {
