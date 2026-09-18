@@ -2,8 +2,8 @@
 // smart-turn.h: Smart Turn v3.2 end of turn classifier, public C ABI
 //
 // Answers one question: did the speaker finish their turn, or did they
-// just pause. The model reads the last 8 seconds of the current turn as
-// 16 kHz mono and returns the probability that the turn is complete.
+// just pause. The model reads the last 8 seconds of the audio it is given
+// as 16 kHz mono and returns the probability that the turn is complete.
 //
 // It runs on a speech to silence boundary, a few times per turn, never on
 // the 32 ms window loop, so it sits on the CPU with the encoder threads

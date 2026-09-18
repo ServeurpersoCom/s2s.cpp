@@ -382,7 +382,8 @@ export class S2S {
 	}
 
 	// Client side barge-in: the user took the floor, so playback stops now and
-	// the server is told how much was actually heard.
+	// the server stops the response. The answer keeps what was actually heard
+	// once the server confirms with response.cancelled.
 	cancel() {
 		this.send({ type: 'response.cancel' });
 		this.flushPlayback();
