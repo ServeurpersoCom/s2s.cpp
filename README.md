@@ -26,7 +26,6 @@ completions endpoint. Runs on CUDA, Vulkan, SYCL, Metal and CPU.
   the client: the server keeps nothing between two turns
 - Embedded web UI plus `s2s.js`, the same client as a standalone ES
   module to drop on any page
-- No conversation text in the server log
 
 ## Architecture
 
