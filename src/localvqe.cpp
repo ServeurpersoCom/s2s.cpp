@@ -98,7 +98,7 @@ struct lv_context {
     struct ggml_tensor * synthesis = nullptr;  // [512, 512]
 
     LvEncoder mic[LV_N_ENCODER];
-    LvEncoder far[LV_N_FAR];
+    LvEncoder ref[LV_N_FAR];
     LvDecoder dec[LV_N_DECODER];
 
     LvPoint              align_q;
@@ -252,11 +252,11 @@ static struct ggml_tensor * lv_decoder(lv_context *          ctx,
 static struct ggml_tensor * lv_align(lv_context *          ctx,
                                      struct ggml_context * g,
                                      struct ggml_tensor *  mic,
-                                     struct ggml_tensor *  far) {
+                                     struct ggml_tensor *  ref) {
     const int64_t n_freq = mic->ne[0];
 
     struct ggml_tensor * q = lv_point(g, ctx->align_q, mic);
-    struct ggml_tensor * k = lv_window(ctx, g, lv_point(g, ctx->align_k, far), ctx->dmax - 1);  // [F, dmax, H]
+    struct ggml_tensor * k = lv_window(ctx, g, lv_point(g, ctx->align_k, ref), ctx->dmax - 1);  // [F, dmax, H]
 
     struct ggml_tensor * v = ggml_sum_rows(g, ggml_mul(g, k, q));                               // [1, dmax, H]
     v                      = ggml_scale(g, ggml_reshape_3d(g, v, ctx->dmax, 1, v->ne[2]), 1.0f / sqrtf((float) n_freq));
@@ -272,11 +272,11 @@ static struct ggml_tensor * lv_align(lv_context *          ctx,
     score                        = ggml_add(g, score, ctx->align_smooth.b);
     struct ggml_tensor * weights = ggml_soft_max(g, score);
 
-    struct ggml_tensor * refs = lv_window(ctx, g, far, ctx->dmax - 1);            // [F, dmax, C]
+    struct ggml_tensor * refs = lv_window(ctx, g, ref, ctx->dmax - 1);            // [F, dmax, C]
     refs                      = ggml_cont(g, ggml_permute(g, refs, 1, 0, 2, 3));  // [dmax, F, C]
     struct ggml_tensor * aligned =
         ggml_mul_mat(g, ggml_reshape_2d(g, refs, ctx->dmax, refs->ne[1] * refs->ne[2]), weights);
-    return ggml_reshape_3d(g, aligned, n_freq, 1, far->ne[2]);
+    return ggml_reshape_3d(g, aligned, n_freq, 1, ref->ne[2]);
 }
 
 // Diagonal state space step: h = a h + b v on complex numbers, y = Re(c h).
@@ -384,12 +384,12 @@ static void lv_build_graph(lv_context * ctx) {
         skips[i] = x;
     }
 
-    struct ggml_tensor * far = lv_compress(ctx, g, ref_spec);
+    struct ggml_tensor * ref = lv_compress(ctx, g, ref_spec);
     for (int i = 0; i < LV_N_FAR; i++) {
-        far = lv_encoder(ctx, g, ctx->far[i], far);
+        ref = lv_encoder(ctx, g, ctx->ref[i], ref);
     }
 
-    x = ggml_concat(g, x, lv_align(ctx, g, x, far), 2);
+    x = ggml_concat(g, x, lv_align(ctx, g, x, ref), 2);
     for (int i = LV_N_BEFORE; i < LV_N_ENCODER; i++) {
         x        = lv_encoder(ctx, g, ctx->mic[i], x);
         skips[i] = x;
@@ -481,7 +481,7 @@ lv_context * lv_init(const char * gguf_path, int use_gpu, int n_threads) {
             lv_load_decoder(ctx, gf, ctx->dec[i], "dec" + std::to_string(i + 1));
         }
         for (int i = 0; i < LV_N_FAR; i++) {
-            lv_load_encoder(ctx, gf, ctx->far[i], "far_enc" + std::to_string(i + 1));
+            lv_load_encoder(ctx, gf, ctx->ref[i], "far_enc" + std::to_string(i + 1));
         }
         lv_load_point(ctx, gf, ctx->align_q, "align.pconv_mic");
         lv_load_point(ctx, gf, ctx->align_k, "align.pconv_ref");
