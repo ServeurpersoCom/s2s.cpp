@@ -142,9 +142,17 @@ macro(link_ggml_backends target)
 endmacro()
 
 
+# parakeet-core: the recognizer compiled once for every target that
+# transcribes. PARAKEET_STATIC keeps the C ABI free of dllimport on Windows,
+# the symbols live in the same binary as their callers.
+add_library(parakeet-core STATIC src/parakeet.cpp src/pipeline-asr.cpp)
+target_compile_definitions(parakeet-core PUBLIC PARAKEET_STATIC)
+link_ggml_backends(parakeet-core)
+
 # parakeet-transcribe: audio file to text, plus the stage dump debug path
-add_executable(parakeet-transcribe tools/parakeet-transcribe.cpp src/parakeet.cpp src/pipeline-asr.cpp)
+add_executable(parakeet-transcribe tools/parakeet-transcribe.cpp)
 link_ggml_backends(parakeet-transcribe)
+target_link_libraries(parakeet-transcribe PRIVATE parakeet-core)
 
 # webui: convert tools/public/index.html.gz to a C header for embedding.
 # the .gz is committed to git so the C++ build works without npm.
@@ -176,8 +184,6 @@ add_executable(s2s-server tools/s2s-server.cpp
     src/s2s-session.cpp
     src/silero.cpp
     src/smart-turn.cpp
-    src/parakeet.cpp
-    src/pipeline-asr.cpp
     src/llm-client.cpp
     src/tts-bridge.cpp
     src/localvqe.cpp
@@ -185,7 +191,7 @@ add_executable(s2s-server tools/s2s-server.cpp
     ${WEBUI_LIB_OUTPUT})
 target_include_directories(s2s-server PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 link_ggml_backends(s2s-server)
-target_link_libraries(s2s-server PRIVATE qwen-core httplib yyjson)
+target_link_libraries(s2s-server PRIVATE parakeet-core qwen-core httplib yyjson)
 
 # quantize: GGUF requantizer (F32 -> K-quants)
 add_executable(quantize tools/quantize.cpp)

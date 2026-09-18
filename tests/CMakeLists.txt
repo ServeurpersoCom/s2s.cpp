@@ -20,10 +20,9 @@ link_ggml_backends(test-localvqe)
 add_executable(test-session test-session.cpp
     ${CMAKE_SOURCE_DIR}/src/s2s-session.cpp
     ${CMAKE_SOURCE_DIR}/src/silero.cpp
-    ${CMAKE_SOURCE_DIR}/src/smart-turn.cpp
-    ${CMAKE_SOURCE_DIR}/src/parakeet.cpp
-    ${CMAKE_SOURCE_DIR}/src/pipeline-asr.cpp)
+    ${CMAKE_SOURCE_DIR}/src/smart-turn.cpp)
 link_ggml_backends(test-session)
+target_link_libraries(test-session PRIVATE parakeet-core)
 
 # test-tts-bridge: streaming synthesis and barge-in through the qwentts ABI.
 add_executable(test-tts-bridge test-tts-bridge.cpp ${CMAKE_SOURCE_DIR}/src/tts-bridge.cpp)
