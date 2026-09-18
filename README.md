@@ -10,6 +10,9 @@ completions endpoint. Runs on CUDA, Vulkan, SYCL, Metal and CPU.
 - Full duplex conversation loop: listen, detect the end of the turn,
   transcribe, query the LLM, speak, and yield the floor the moment the
   user speaks again
+- Speaks as soon as the LLM has written its first sentence: the request
+  streams over SSE, and each sentence is synthesized while the model
+  writes the next one
 - Silero VAD on CPU, one 32 ms window at a time, with hysteresis so a
   breath never opens a turn
 - Smart Turn v3.2 end of turn classifier, called only on a speech to

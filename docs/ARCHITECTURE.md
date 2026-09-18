@@ -94,7 +94,12 @@ answer closes with the units whose audio started:
 
 ## Sentence splitting
 
-The LLM stream is split into synthesis units, the sentence and nothing
+The LLM is queried with `stream: true` and read as SSE, and the voice
+starts on the first complete sentence while the model keeps writing:
+the time to first audio is the time to the first sentence, not to the
+whole answer.
+
+The stream is split into synthesis units, the sentence and nothing
 else. A terminator is confirmed by the character after it, which keeps
 decimals and abbreviations whole, and a line break ends a unit too. There
 is no length cap: cutting on a character count lands mid syntagm.
