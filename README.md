@@ -3,7 +3,7 @@
 Local AI voice assistant, powered by GGML. C++17 speech to speech loop:
 voice activity detection, end of turn detection, speech recognition and
 speech synthesis in one binary, driving any OpenAI compatible chat
-completions endpoint. Runs on CUDA, Vulkan, SYCL and Metal.
+completions endpoint. Runs on CUDA, Vulkan, SYCL, Metal and CPU.
 
 ## Features
 
@@ -13,53 +13,67 @@ completions endpoint. Runs on CUDA, Vulkan, SYCL and Metal.
 - Silero VAD on CPU, one 32 ms window at a time, with hysteresis so a
   breath never opens a turn
 - Smart Turn v3.2 end of turn classifier, called only on a speech to
-  silence boundary, so a thinking pause is not mistaken for a finished
-  sentence
+  silence boundary, on a sliding window of the stream, so a thinking
+  pause is not mistaken for a finished sentence
 - Parakeet TDT 0.6B v3 recognition, 25 European languages with
   punctuation and casing, non autoregressive duration prediction
-- Qwen3-TTS synthesis through the qwentts.cpp C ABI, in process and
-  streamed sentence by sentence
-- Barge-in: the TTS is cancelled, the LLM request is aborted and the
-  assistant message is truncated to what was really played
-- OpenAI Realtime protocol over WebSocket, so existing clients connect
-  unchanged
+- Qwen3-TTS CustomVoice synthesis through the qwentts.cpp C ABI, in
+  process, streamed sentence by sentence, 9 preset voices and optional
+  batching of concurrent sessions on the GPU
+- Barge-in: the synthesis stops, the LLM request is aborted, and the
+  conversation keeps only the sentences the user really heard
+- OpenAI Realtime protocol over WebSocket, with the conversation owned by
+  the client: the server keeps nothing between two turns
 - Embedded web UI plus `s2s.js`, the same client as a standalone ES
   module to drop on any page
+- No conversation text in the server log
 
 ## Architecture
 
 ```
-mic -> WebSocket -> Silero VAD -> Smart Turn -> Parakeet TDT -+
-                                                              |
-                                          OpenAI chat completions (external)
-                                                              |
-speaker <- WebSocket <- sentence split <- qwentts.cpp <-------+
+mic -> WebSocket -> 24 to 16 kHz -> Silero VAD -> Smart Turn -> Parakeet TDT -+
+                                                                              |
+                                                  OpenAI chat completions (external)
+                                                                              |
+speaker <- WebSocket <- qwentts.cpp <- sentence split <-----------------------+
 ```
 
-Everything except the LLM runs inside `s2s-server`. A GPU is required:
-the ASR and the TTS share one device context.
+Everything except the LLM runs inside `s2s-server`. Parakeet and Qwen3-TTS
+run on the best GPU found, Silero and Smart Turn on the CPU. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the threads, the turn
+state machine and the protocol.
 
 ## Build
 
 ```
 git clone https://github.com/ServeurpersoCom/s2s.cpp.git
 cd s2s.cpp
-git submodule update --init          # ggml and qwentts.cpp, not the ggml inside qwentts.cpp
+git submodule update --init      # ggml and qwentts.cpp, not the ggml inside qwentts.cpp
 ./buildcuda.sh                   # NVIDIA GPU
 ./buildvulkan.sh                 # AMD/Intel GPU (Vulkan)
 ./buildsycl.sh                   # Intel GPU (SYCL)
-./buildall.sh                    # all backends, runtime DL loading
+./buildcpu.sh                    # CPU with BLAS
+./buildtermux.sh                 # Android, Termux
+./buildall.sh                    # CPU, CUDA and Vulkan, runtime DL loading
 NVCC_CCBIN=g++-13 ./buildcuda.sh # rolling release distros (Arch w/ GCC 16, etc.)
 ```
+
+`GGML_BACKEND` picks a device by name (`CUDA0`, `Vulkan1`...) when the
+machine has several.
 
 ## Models
 
 ```
-./models.sh                      # prebuilt GGUF -> models/
+./models.sh                      # prebuilt GGUF -> models/, 1.7b talker, Q8_0
+./models.sh --talker 0.6b        # smaller talker, for a small card next to a LLM
 ./checkpoints.sh                 # upstream checkpoints -> checkpoints/
 ./convert.py                     # checkpoints -> GGUF
 ./quantize.sh                    # Q4_K_M to Q8_0 derived from the F32 base
 ```
+
+`--quant` and `--tts` pick the ASR and TTS quants. The server loads, for
+each model, the largest one present in `models/`, at the best quant up to
+Q8_0. The TTS checkpoints belong to the qwentts.cpp submodule.
 
 ## Run
 
@@ -67,48 +81,41 @@ NVCC_CCBIN=g++-13 ./buildcuda.sh # rolling release distros (Arch w/ GCC 16, etc.
 ./server.sh                      # then open http://localhost:8088
 ```
 
-`--llm-url` points at any OpenAI compatible endpoint: llama-server,
-Ollama, LM Studio, a cloud API. The microphone needs a secure context,
-which `http://localhost` satisfies; serving the UI from a LAN address or
-a domain requires HTTPS and `wss://`.
+The command line only holds what belongs to the host: `--models`,
+`--host`, `--port`, the security allowlists `--origin` and `--llm-host`,
+and the TTS engine options (`--max-batch`, `--no-fa`, `--clamp-fp16`,
+`--codec-chunk-dur`). Everything else belongs to the client: mode,
+endpoint, prompt, voice, sampling, echo cancellation and turn detection
+travel in `session.update`, and their defaults are published on `/props`.
+
+The endpoint is any OpenAI compatible server: llama-server, Ollama,
+LM Studio, a cloud API. The voice reads the text in the language it is
+written in, so the system prompt decides the language of the answers.
+
+The microphone needs a secure context, which `http://localhost`
+satisfies; serving the UI from a LAN address or a domain requires HTTPS
+and `wss://`.
 
 ## Using the component on your own page
 
-`s2s.js` is the same component the bundled page runs, built from the same
-sources, with no dependency and no markup of its own: it owns the microphone,
-the socket and the turn state, and reports through callbacks. A host draws
-whatever it wants around it, or nothing at all.
+The embedded web UI is a playground: tune the voice, the turn detection,
+the echo cancellation and the endpoint, talk to it until it feels right,
+then press "Copy the client code with your current settings". You get a
+ready to paste snippet that loads `s2s.js` from your server with exactly
+the options you changed, the base of your own Jarvis-like assistant at
+home.
 
-```html
-<script type="module">
-    import { S2S } from "https://your-host/s2s.js";
+## TODO
 
-    const s2s = new S2S({
-        url: "wss://your-host/v1/realtime",
-        mode: "conversation",          // or "loopback", no endpoint in the path
-        instructions: "You are a voice assistant. Answer in one or two sentences.",
-        llmUrl: "http://127.0.0.1:8080/v1",
-        llmModel: "local",
-        tts: { speaker: "ryan", language: "french" },
-        vad: { threshold: 0.6, minSilenceMs: 64 },
-        turn: { threshold: 0.5, maxWaitMs: 2000 }
-    });
-
-    s2s.on("state", (state) => console.log(state));
-    s2s.on("user_text", (text) => console.log("user:", text));
-    s2s.on("assistant_text", (text) => console.log("assistant:", text));
-
-    // the conversation belongs to the page: persist it, reload it, edit it
-    s2s.setHistory(JSON.parse(localStorage.getItem("chat") ?? "[]"));
-    s2s.on("history", (messages) => localStorage.setItem("chat", JSON.stringify(messages)));
-
-    // start() needs a user gesture and a secure context
-    document.querySelector("button").onclick = () => s2s.start();
-</script>
-```
-
-The settings panel of the bundled page edits exactly these options, nothing
-more: it is the visible version of what a host writes in code.
+- Universal echo cancellation, in development. The native one only works
+  on Chrome: other browsers do not remove the page's own playback from the
+  microphone, so on speakers the assistant hears itself and interrupts its
+  own answer. The fix moves it to the server, where the exact reference is
+  known: the client sends each microphone frame together with the audio it
+  played during the same render quanta, and a neural echo canceller
+  (LocalVQE, a DeepVQE derivative, ported to GGML) cleans the microphone
+  before the VAD. Same result on every browser, and for every page that
+  embeds `s2s.js`.
 
 ## License
 

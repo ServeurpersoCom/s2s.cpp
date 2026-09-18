@@ -10,43 +10,53 @@ while staying ready to be interrupted at any instant.
 | Stage | Model | Source | Device |
 | --- | --- | --- | --- |
 | Voice activity | Silero VAD v5 | onnx-community/silero-vad | CPU, 1 thread |
-| End of turn | Smart Turn v3.2 | pipecat-ai/smart-turn-v3 | CPU, 1 thread |
-| Recognition | Parakeet TDT 0.6B v3 | nvidia/parakeet-tdt-0.6b-v3 | shared GPU |
-| Synthesis | Qwen3-TTS | qwentts.cpp submodule | shared GPU |
+| End of turn | Smart Turn v3.2 | pipecat-ai/smart-turn-v3 | CPU |
+| Recognition | Parakeet TDT 0.6B v3 | nvidia/parakeet-tdt-0.6b-v3 | best GPU |
+| Synthesis | Qwen3-TTS CustomVoice 0.6B or 1.7B | qwentts.cpp submodule | best GPU |
 | Reasoning | any OpenAI chat completions endpoint | external | external |
 
 The VAD runs on every 32 ms window, so it stays on the CPU with a single
 thread: the model is 2 MB and a GPU dispatch would cost more than the
-work. Smart Turn runs once per speech to silence boundary, on the same
-terms. Parakeet and Qwen3-TTS share one backend and one device context.
+work. Smart Turn runs once per speech to silence boundary, on the CPU as
+well. Parakeet and Qwen3-TTS take the best device `ggml_backend_init_best`
+finds, or the one `GGML_BACKEND` names.
+
+The models are found in `--models` by file name. For each one the server
+takes the largest model present, then the best quant up to Q8_0, F32 and
+BF16 last; the talker must be a `customvoice` one. The five files really
+loaded are logged at startup and published on `/props`.
 
 ## Threading
 
 | Thread | Owns |
 | --- | --- |
-| WebSocket, one per client | frame decode, PCM ring buffer |
-| session, one per client | VAD window loop, Smart Turn, turn state machine, outgoing events |
-| ASR worker, one process wide | the Parakeet backend and its job queue |
-| TTS worker, inside libqwen | the Qwen3-TTS backend |
-| LLM, one per response | SSE read loop, aborted by closing the socket |
+| reader, one per connection | the socket, frame decode, 24 to 16 kHz decimation, the turn session, incoming events |
+| responder, one per connection | recognition, the LLM stream, the sentence splitter, synthesis, outgoing audio |
+| TTS worker, inside qwentts.cpp | the Qwen3-TTS backend and its queue, up to `--max-batch` syntheses per step |
+| log reader, one per process | stderr capture, the ring behind `/logs` |
 
-Every GGML graph is computed by the worker that owns its backend. A
-session thread never touches a device: it posts a job and waits.
+The reader keeps consuming audio while the responder talks, which is what
+makes the barge-in possible. The responder takes committed turns from a
+queue, so a turn spoken during an answer waits for the next one.
+
+Silero, Smart Turn and Parakeet each keep one context for the whole
+process and serialize their compute behind a mutex. Only the TTS batches
+sessions together.
 
 ## Turn state machine
 
 ```
-IDLE --speech >= min_speech_ms--> USER_SPEAKING
-USER_SPEAKING --silence >= min_silence_ms--> PENDING_END
-PENDING_END --Smart Turn complete--> THINKING
-PENDING_END --Smart Turn incomplete, then wait > turn_max_wait_ms--> THINKING
-PENDING_END --speech >= min_speech_continuation_ms--> USER_SPEAKING
-THINKING --first TTS chunk--> SPEAKING
-SPEAKING --response done--> IDLE
-THINKING, SPEAKING --speech >= min_speech_ms--> USER_SPEAKING (barge-in)
+IDLE          --speech >= min_speech_ms-->               USER_SPEAKING
+USER_SPEAKING --silence >= min_silence_ms-->             PENDING_END
+PENDING_END   --turn complete-->                         committed, IDLE
+PENDING_END   --incomplete, then turn_max_wait_ms-->     committed, IDLE
+PENDING_END   --speech >= min_speech_continuation_ms-->  USER_SPEAKING
 ```
 
-Defaults, inherited from the Python reference this project replaces:
+The session is told when the assistant holds the floor. Speech of
+`min_speech_ms` during that time raises a barge-in.
+
+Defaults, published on `/props` and patchable per session:
 
 | Parameter | Default | Role |
 | --- | --- | --- |
@@ -54,76 +64,117 @@ Defaults, inherited from the Python reference this project replaces:
 | `min_speech_ms` | 384 | opens a turn, and arms a barge-in |
 | `min_speech_continuation_ms` | 192 | reopens a turn from `PENDING_END` |
 | `min_silence_ms` | 64 | speech to silence boundary |
-| `speech_pad_ms` | 30 | margin kept around a segment |
+| `speech_pad_ms` | 500 | audio kept before the speech onset |
 | `turn_threshold` | 0.5 | Smart Turn completion probability |
 | `turn_max_wait_ms` | 2000 | commit an incomplete turn anyway |
 
-Smart Turn reads the last 8 seconds of the current turn. A turn judged
-incomplete keeps its identity: reopening increments a revision counter
-instead of starting a new turn, so the transcript of the whole utterance
-reaches the LLM as one message.
+Smart Turn reads a sliding window of the last 8 seconds of the stream,
+fed on every VAD window and independent of the turn, so a short turn is
+judged with the context that precedes it. A turn judged incomplete keeps
+its identity: reopening increments a revision counter and the audio keeps
+accumulating, so the whole utterance reaches the recognizer as one piece.
 
-## Barge-in
+## Conversation and barge-in
 
-Speech detected while the assistant holds the floor cancels the response
-in three steps:
+The conversation belongs to the client. It pushes the whole list with
+`conversation.history` whenever it changes; the responder copies it when
+it picks a turn up and appends the new transcript. The server keeps
+nothing between two turns.
 
-1. the TTS cancel flag is raised, the LLM socket is closed and the
-   outgoing audio queue is dropped,
-2. `response.cancelled` tells the client to flush its playback buffer,
-3. the client answers with `conversation.item.truncate` and the played
-   sample count, and the server trims the assistant message to the last
-   sentence that was actually heard.
+The transcript of each synthesis unit leaves right before its first audio
+chunk, so the client only ever receives text that has sound behind it.
+The client notes the sample where each unit starts in its playback
+stream, and its playback worklet counts the samples really played. An
+answer closes with the units whose audio started:
 
-The server knows the sample count of every synthesized sentence, so the
-trim lands on a sentence boundary and the conversation history matches
-what the user experienced.
+- on `response.done`, once the last queued sample has been played,
+- on a barge-in: the server raises the cancel flag, which stops the
+  synthesis and aborts the LLM request, and sends `response.cancelled`;
+  the client flushes its playback and keeps what was heard.
 
 ## Sentence splitting
 
-The LLM stream is split on sentence terminators and line breaks, with a
-length cap that falls back to the last comma or space, because a model
-can emit 300 characters without punctuation. Markdown and emoji are
-stripped before synthesis. The first unit uses a shorter threshold to
-cut the time to first audio.
+The LLM stream is split into synthesis units, the sentence and nothing
+else. A terminator is confirmed by the character after it, which keeps
+decimals and abbreviations whole, and a line break ends a unit too. There
+is no length cap: cutting on a character count lands mid syntagm.
+
+Markdown markers and emoji (Extended_Pictographic and the emoji
+components of the Unicode emoji data, `src/emoji.h`) are dropped, and a
+unit left without a single letter or digit is not emitted: a talker given
+nothing to say never finds its end of speech.
+
+The TTS bridge then skips a unit shorter than `tts_min_chars` characters,
+and bounds each synthesis to a frame budget derived from the text length,
+`tts_chars_per_second` plus `tts_margin_seconds`. All three are session
+parameters.
+
+## Echo cancellation
+
+The client picks it with `echo`. `native` asks the browser for
+`echoCancellation: "all"`, which cancels everything the system plays,
+this page included; plain `true` would only cover WebRTC remote tracks.
+`off` hands over the raw microphone. The client logs what the browser
+really applied.
 
 ## Protocol
 
 `WS /v1/realtime`, a subset of the OpenAI Realtime API. Audio is PCM16
-at 24 kHz, base64 encoded, which matches the TTS output rate and needs a
-single resample on the way in.
+at 24 kHz, base64 encoded, in both directions: it matches the codec
+output, and the input is decimated 3 to 2 to the 16 kHz the VAD and the
+recognizer work at.
 
 Client to server: `session.update`, `input_audio_buffer.append`,
-`input_audio_buffer.commit`, `response.create`, `response.cancel`,
-`conversation.item.truncate`.
+`input_audio_buffer.commit`, `response.cancel`, `conversation.history`.
 
 Server to client: `session.created`, `session.updated`,
 `input_audio_buffer.speech_started`, `input_audio_buffer.speech_stopped`,
 `conversation.item.input_audio_transcription.completed`,
-`response.created`, `response.output_audio.delta`,
-`response.output_audio_transcript.delta`, `response.done`, `error`.
+`response.created`, `response.output_text.delta`,
+`response.output_audio.delta`, `response.output_audio_transcript.delta`,
+`response.done`, `response.cancelled`, `error`.
 
-WebSocket handshakes bypass CORS, so the server checks the `Origin`
-header against the `--origin` allowlist.
+`response.output_text.delta` is what the model writes, as it writes it;
+`response.output_audio_transcript.delta` is what the voice speaks, one
+unit at a time. Unknown types and fields are ignored.
+
+HTTP routes: `/` the page, `/s2s.js` the component, `/props` the session
+defaults and the loaded models, `/health`, `/logs` the server log as SSE,
+`/log` where the page posts its own lines, and `POST /v1/models` which
+lists the models of the endpoint a client names.
+
+## Security
+
+`--origin` is an allowlist of browser origins, checked on the WebSocket
+handshake, which CORS does not cover, and on the HTTP routes. A request
+without `Origin` passes, a foreign one gets 403. `--llm-host` is an
+allowlist of endpoint hosts: the server fetches the endpoint a client
+names, so without it the server reaches anything it can route to. The
+log carries no conversation text, only character counts and timings.
 
 ## Module map
 
 | File | Role |
 | --- | --- |
 | `src/backend.h` | backend selection, CPU thread count, log dedup |
-| `src/gguf-weights.h` | GGUF reader and weight upload |
-| `src/static-graph.h` | direct galloc path with scheduler fallback |
-| `src/graph-arena.h` | graph context arena |
-| `src/audio-resample.h` | polyphase resampler, any rate to 16 or 24 kHz |
-| `src/audio-mel.h` | log mel frontends, NeMo and Whisper variants |
+| `src/gguf-weights.h`, `src/weight-ctx.h` | GGUF reader and weight upload |
+| `src/static-graph.h`, `src/graph-arena.h` | graph allocation |
+| `src/conv-f32.h` | f32 convolutions, no f16 im2col staging |
+| `src/audio-resample.h` | polyphase resampler, any rate to 16 kHz for the recognizer |
+| `src/audio-mel.h`, `src/parakeet-mel.h` | log mel frontends |
 | `src/silero.h` | VAD lib, C ABI |
 | `src/smart-turn.h` | end of turn lib, C ABI |
 | `src/parakeet.h` | ASR lib, C ABI |
+| `src/pipeline-asr.h`, `src/fastconformer-forward.h`, `src/tdt-decoder.h`, `src/sp-detok.h` | Parakeet internals |
 | `src/s2s-session.h` | turn state machine |
 | `src/llm-client.h` | chat completions SSE client |
-| `src/sentence-split.h` | streaming text to synthesis units |
+| `src/sentence-split.h`, `src/emoji.h` | streaming text to synthesis units |
+| `src/tts-bridge.h` | qwentts.cpp calls, per request voice, sampling and guards |
 | `src/realtime-proto.h` | Realtime event encode and decode |
+| `src/s2s-error.h`, `src/timer.h`, `src/utf8.h`, `src/wav.h` | log, timing, UTF-8 argv, wav io |
 | `tools/s2s-server.cpp` | the product binary |
+| `tools/parakeet-transcribe.cpp` | the recognizer alone, on a wav file |
+| `tools/quantize.cpp` | GGUF quantizer |
 | `tools/webui` | Svelte demo and the `s2s.js` client lib |
 
 Each model lib is self contained: its own GGUF, its own C ABI, no
@@ -139,15 +190,18 @@ same keys.
 
 ## Validation
 
-Every stage has a parity harness in `tests/`: the C++ target dumps
-tensors, the Python script loads the reference and reports cosine
-similarity.
+`tests/` holds one harness per layer: a C++ target or the binary itself,
+driven by a Python script that prints `[Parity]` or `[Check]` lines.
 
-| Stage | Reference |
+| Test | Checks |
 | --- | --- |
-| Silero VAD | onnxruntime |
-| Smart Turn | onnxruntime |
-| Parakeet mel, encoder, decoder | transformers `ParakeetForTDT` |
-| Full transcript | transformers, exact string match |
+| `test-silero` | probabilities and decisions against onnxruntime |
+| `test-smart-turn` | completion probabilities and decisions against onnxruntime |
+| `test-parakeet` | mel, encoder, projection and transcript against transformers `ParakeetForTDT` |
+| `test-session` | invariants of the turn state machine, which has no upstream reference |
+| `test-llm-client` | streaming, splitting and cancellation, against a mock endpoint |
+| `test-tts-bridge` | chunked streaming, first chunk latency and cancellation of the synthesis |
+| `test-server` | one loopback conversation end to end over the WebSocket |
 
-The sweep covers CUDA, Vulkan and CPU against F32, Q8_0 and Q4_K_M.
+The Parakeet sweep covers CUDA, Vulkan and CPU against F32, Q8_0 and
+Q4_K_M. The synthesis itself has its parity harnesses in qwentts.cpp.
