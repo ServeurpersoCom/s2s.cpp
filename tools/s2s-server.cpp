@@ -187,7 +187,7 @@ static void log_capture_stop() {
 // last write end so the reader drains everything to the real stderr before
 // the process goes. A crash on the reader itself writes straight out.
 static void log_capture_crash(const char * what) {
-    char      line[160];
+    char      line[512];
     const int n = snprintf(line, sizeof(line), "[Server] FATAL: %s\n", what);
     if (g_real_stderr_fd < 0) {
         fd_write(STDERR_FILENO, line, (size_t) n);
