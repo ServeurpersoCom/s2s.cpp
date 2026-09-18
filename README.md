@@ -10,6 +10,11 @@ completions endpoint. Runs on CUDA, Vulkan, SYCL, Metal and CPU.
 - Full duplex conversation loop: listen, detect the end of the turn,
   transcribe, query the LLM, speak, and yield the floor the moment the
   user speaks again
+- Universal echo cancellation: talk to it on laptop speakers, no
+  headphones, on every browser. The client streams the exact audio it
+  played next to the microphone, and LocalVQE v1.3, a DeepVQE derivative
+  ported to GGML, removes the assistant's voice (and the noise and the
+  reverberation) in the server before anything listens
 - Speaks as soon as the LLM has written its first sentence: the request
   streams over SSE, and each sentence is synthesized while the model
   writes the next one
@@ -32,16 +37,19 @@ completions endpoint. Runs on CUDA, Vulkan, SYCL, Metal and CPU.
 
 ## Architecture
 
-```
-mic -> WebSocket -> 24 to 16 kHz -> Silero VAD -> Smart Turn -> Parakeet TDT -+
-                                                                              |
-                                                  OpenAI chat completions (external)
-                                                                              |
-speaker <- WebSocket <- qwentts.cpp <- sentence split + text clean <----------+
-```
+1. Microphone and played reference, PCM16 at 24 kHz over the Realtime WebSocket
+2. Decimation to 16 kHz
+3. LocalVQE: echo, noise and reverberation removed
+4. Silero VAD: speech detected window by window
+5. Smart Turn: end of turn decided
+6. Parakeet TDT: turn transcribed
+7. OpenAI chat completions endpoint (external): answer streamed
+8. Sentence split and text clean: synthesis units
+9. qwentts.cpp: answer spoken, unit by unit
+10. WebSocket back to the speaker
 
-Everything except the LLM runs inside `s2s-server`. Parakeet and Qwen3-TTS
-run on the best GPU found, Silero and Smart Turn on the CPU. See
+Everything except the LLM runs inside `s2s-server`. LocalVQE, Parakeet and
+Qwen3-TTS run on the best GPU found, Silero and Smart Turn on the CPU. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the threads, the turn
 state machine and the protocol.
 
@@ -106,18 +114,6 @@ then press "Copy the client code with your current settings". You get a
 ready to paste snippet that loads `s2s.js` from your server with exactly
 the options you changed, the base of your own Jarvis-like assistant at
 home.
-
-## TODO
-
-- Universal echo cancellation, in development. The native one only works
-  on Chrome: other browsers do not remove the page's own playback from the
-  microphone, so on speakers the assistant hears itself and interrupts its
-  own answer. The fix moves it to the server, where the exact reference is
-  known: the client sends each microphone frame together with the audio it
-  played during the same render quanta, and a neural echo canceller
-  (LocalVQE, a DeepVQE derivative, ported to GGML) cleans the microphone
-  before the VAD. Same result on every browser, and for every page that
-  embeds `s2s.js`.
 
 ## License
 

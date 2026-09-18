@@ -22,6 +22,7 @@
 #include "httplib.h"
 #include "index.html.gz.hpp"
 #include "llm-client.h"
+#include "localvqe.h"
 #include "parakeet.h"
 #include "realtime-proto.h"
 #include "s2s-error.h"
@@ -97,6 +98,7 @@ static void fd_close(int fd) {
 #endif
 
 #include <atomic>
+#include <cmath>
 #include <condition_variable>
 #include <csignal>
 #include <cstdio>
@@ -245,6 +247,7 @@ struct ServerModels {
     st_context * turn = nullptr;
     pk_context * asr  = nullptr;
     tts_bridge * tts  = nullptr;
+    lv_context * aec  = nullptr;
 };
 
 static ServerModels      g_models;
@@ -299,6 +302,7 @@ struct Connection {
     s2s_session_params params;
 
     std::string mode = "conversation";
+    std::string echo = "native";
     tts_request tts;
 
     llm_client_params llm;
@@ -321,9 +325,31 @@ struct Connection {
 
     // Input resampling state: the protocol carries 24 kHz, the models want
     // 16 kHz, and the ratio is 3 to 2, so the decimation carries a remainder
-    // across frames.
+    // across frames. The reference follows the microphone sample for sample.
     std::vector<float> input_tail;
+    std::vector<float> reference_tail;
+
+    // Server side echo cancellation, alive while the client asks for it. The
+    // canceller works in hops, so what does not fill one waits here.
+    lv_state *         aec = nullptr;
+    std::vector<float> aec_mic;
+    std::vector<float> aec_ref;
+
+    // Energy in and out of the canceller over one run of playback, and the
+    // compute of every hop since the last report, for the log lines that
+    // close the run.
+    double aec_in     = 0.0;
+    double aec_out    = 0.0;
+    size_t aec_played = 0;
+    int    aec_quiet  = 0;
+    size_t aec_hops   = 0;
+    double aec_ms     = 0.0;
+    double aec_peak   = 0.0;
 };
+
+// Frames without playback that close a run of it, 0.5 s of client frames: a
+// shorter gap is a pause between two sentences of the same answer.
+#define AEC_QUIET_FRAMES 25
 
 static void conn_send(Connection * conn, const std::string & frame) {
     if (conn->ws && conn->ws->is_open()) {
@@ -334,8 +360,8 @@ static void conn_send(Connection * conn, const std::string & frame) {
 // 24 kHz to 16 kHz: three samples in, two out, with a short averaging window
 // instead of a full polyphase bank. The VAD and the recognizer both tolerate
 // it, and it costs nothing on the reader thread.
-static void conn_resample_in(Connection * conn, const std::vector<float> & input, std::vector<float> & out) {
-    std::vector<float> buffer = conn->input_tail;
+static void resample_in(std::vector<float> & tail, const std::vector<float> & input, std::vector<float> & out) {
+    std::vector<float> buffer = tail;
     buffer.insert(buffer.end(), input.begin(), input.end());
 
     const size_t groups = buffer.size() / 3;
@@ -348,7 +374,59 @@ static void conn_resample_in(Connection * conn, const std::vector<float> & input
         out[2 * i + 1] = b * 0.25f + c * 0.75f;
     }
 
-    conn->input_tail.assign(buffer.begin() + (ptrdiff_t) (groups * 3), buffer.end());
+    tail.assign(buffer.begin() + (ptrdiff_t) (groups * 3), buffer.end());
+}
+
+// Runs the canceller over every complete hop and hands back in pcm what is
+// clean so far. The canceller is one hop late and its hops of 256 samples do
+// not line up with the client frames, so the cleaned stream trails the raw
+// one by one to two hops, about 16 to 32 ms.
+static void conn_cancel_echo(Connection * conn, std::vector<float> & pcm, const std::vector<float> & ref, bool played) {
+    conn->aec_mic.insert(conn->aec_mic.end(), pcm.begin(), pcm.end());
+    conn->aec_ref.insert(conn->aec_ref.end(), ref.begin(), ref.end());
+
+    const size_t hop  = (size_t) lv_hop(g_models.aec);
+    size_t       done = 0;
+    pcm.clear();
+    for (; done + hop <= conn->aec_mic.size(); done += hop) {
+        const size_t base = pcm.size();
+        pcm.resize(base + hop);
+        Timer t_hop;
+        if (lv_process(conn->aec, conn->aec_mic.data() + done, conn->aec_ref.data() + done, pcm.data() + base) != 0) {
+            s2s_log(S2S_LOG_ERROR, "[AEC] %s", lv_last_error());
+            conn_send(conn, rt_event_error(lv_last_error()));
+        }
+        const double ms = t_hop.ms();
+        conn->aec_ms += ms;
+        conn->aec_peak = ms > conn->aec_peak ? ms : conn->aec_peak;
+        conn->aec_hops++;
+        if (played) {
+            for (size_t i = 0; i < hop; i++) {
+                conn->aec_in += (double) conn->aec_mic[done + i] * conn->aec_mic[done + i];
+                conn->aec_out += (double) pcm[base + i] * pcm[base + i];
+            }
+            conn->aec_played += hop;
+        }
+    }
+    conn->aec_mic.erase(conn->aec_mic.begin(), conn->aec_mic.begin() + (ptrdiff_t) done);
+    conn->aec_ref.erase(conn->aec_ref.begin(), conn->aec_ref.begin() + (ptrdiff_t) done);
+
+    conn->aec_quiet = played ? 0 : conn->aec_quiet + 1;
+    if (conn->aec_played > 0 && conn->aec_quiet == AEC_QUIET_FRAMES) {
+        s2s_log(S2S_LOG_INFO, "[AEC] Microphone %.1f dB above the cleaned signal over %.2fs of playback",
+                10.0 * log10((conn->aec_in + 1e-12) / (conn->aec_out + 1e-12)),
+                (double) conn->aec_played / S2S_MODEL_RATE);
+        const double hop_ms = (double) hop * 1000.0 / S2S_MODEL_RATE;
+        const double mean   = conn->aec_ms / (double) conn->aec_hops;
+        s2s_log(S2S_LOG_INFO, "[Perf] AEC %zu hops, %.2f ms per hop, peak %.2f ms, %.1fx real time", conn->aec_hops,
+                mean, conn->aec_peak, hop_ms / mean);
+        conn->aec_in     = 0.0;
+        conn->aec_out    = 0.0;
+        conn->aec_played = 0;
+        conn->aec_hops   = 0;
+        conn->aec_ms     = 0.0;
+        conn->aec_peak   = 0.0;
+    }
 }
 
 // Speaks one unit and streams it to the client. The transcript of the unit
@@ -562,6 +640,29 @@ static std::vector<std::string> g_llm_hosts;
 static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) {
     if (!patch.mode.empty()) {
         conn->mode = patch.mode;
+    }
+    if (!patch.echo.empty() && patch.echo != conn->echo) {
+        // A fresh canceller learns the echo path of the new setup from
+        // nothing; the previous one would start from a stale path.
+        conn->echo = patch.echo;
+        if (conn->aec) {
+            s2s_log(S2S_LOG_INFO, "[AEC] Canceller off");
+        }
+        lv_state_free(conn->aec);
+        conn->aec = conn->echo == "server" ? lv_state_new(g_models.aec) : nullptr;
+        if (conn->aec) {
+            s2s_log(S2S_LOG_INFO, "[AEC] Canceller on, fresh echo path");
+        }
+        conn->aec_mic.clear();
+        conn->aec_ref.clear();
+        conn->reference_tail.clear();
+        conn->aec_in     = 0.0;
+        conn->aec_out    = 0.0;
+        conn->aec_played = 0;
+        conn->aec_quiet  = 0;
+        conn->aec_hops   = 0;
+        conn->aec_ms     = 0.0;
+        conn->aec_peak   = 0.0;
     }
     if (!patch.llm_url.empty()) {
         if (host_allowed(g_llm_hosts, patch.llm_url)) {
@@ -840,8 +941,10 @@ int main(int argc, char ** argv) {
     const std::string asr_path    = find_model(models_dir, "parakeet", "");
     const std::string talker_path = find_model(models_dir, "qwen-talker", "-customvoice-");
     const std::string codec_path  = find_model(models_dir, "qwen-tokenizer", "");
+    const std::string aec_path    = find_model(models_dir, "localvqe", "");
 
-    if (vad_path.empty() || turn_path.empty() || asr_path.empty() || talker_path.empty() || codec_path.empty()) {
+    if (vad_path.empty() || turn_path.empty() || asr_path.empty() || talker_path.empty() || codec_path.empty() ||
+        aec_path.empty()) {
         fprintf(stderr, "[Server] FATAL: missing models in %s, run ./models.sh\n", models_dir.c_str());
         return 1;
     }
@@ -850,6 +953,7 @@ int main(int argc, char ** argv) {
     s2s_log(S2S_LOG_INFO, "[Load] Turn %s", turn_path.c_str());
     s2s_log(S2S_LOG_INFO, "[Load] ASR %s", asr_path.c_str());
     s2s_log(S2S_LOG_INFO, "[Load] TTS %s + %s", talker_path.c_str(), codec_path.c_str());
+    s2s_log(S2S_LOG_INFO, "[Load] AEC %s", aec_path.c_str());
 
     g_models.vad = sv_init(vad_path.c_str(), 1);
     if (!g_models.vad) {
@@ -883,6 +987,12 @@ int main(int argc, char ** argv) {
     g_models.tts = tts_bridge_load(tts_init);
     if (!g_models.tts) {
         fprintf(stderr, "[Server] FATAL: %s\n", tts_bridge_last_error());
+        return 1;
+    }
+
+    g_models.aec = lv_init(aec_path.c_str(), 1, 0);
+    if (!g_models.aec) {
+        fprintf(stderr, "[Server] FATAL: %s\n", lv_last_error());
         return 1;
     }
 
@@ -945,7 +1055,8 @@ int main(int argc, char ** argv) {
         body += "\"turn\":\"" + rt_escape(turn_path) + "\",";
         body += "\"asr\":\"" + rt_escape(asr_path) + "\",";
         body += "\"talker\":\"" + rt_escape(talker_path) + "\",";
-        body += "\"codec\":\"" + rt_escape(codec_path) + "\"";
+        body += "\"codec\":\"" + rt_escape(codec_path) + "\",";
+        body += "\"aec\":\"" + rt_escape(aec_path) + "\"";
         body += "},";
         body += "\"defaults\":{";
         body += "\"mode\":\"" + rt_escape(mode) + "\",";
@@ -1133,6 +1244,8 @@ int main(int argc, char ** argv) {
 
         std::string        frame;
         std::vector<float> resampled;
+        std::vector<float> reference;
+        std::vector<float> silence;
         bool               receiving = false;
 
         for (;;) {
@@ -1149,8 +1262,8 @@ int main(int argc, char ** argv) {
                 case RT_CLIENT_SESSION_UPDATE:
                     conn_apply_patch(&conn, message.patch);
                     s2s_log(S2S_LOG_INFO,
-                            "[Realtime] Session update: mode %s, endpoint %s, model %s, voice %s, language %s",
-                            conn.mode.c_str(), conn.llm.base_url.c_str(), conn.llm.model.c_str(),
+                            "[Realtime] Session update: mode %s, echo %s, endpoint %s, model %s, voice %s, language %s",
+                            conn.mode.c_str(), conn.echo.c_str(), conn.llm.base_url.c_str(), conn.llm.model.c_str(),
                             conn.tts.speaker.empty() ? "default" : conn.tts.speaker.c_str(),
                             conn.tts.language.empty() ? "default" : conn.tts.language.c_str());
                     conn_send(&conn, rt_event("session.updated"));
@@ -1162,7 +1275,16 @@ int main(int argc, char ** argv) {
                         s2s_log(S2S_LOG_INFO, "[Realtime] Microphone streaming, %zu samples per frame",
                                 message.audio.size());
                     }
-                    conn_resample_in(&conn, message.audio, resampled);
+                    resample_in(conn.input_tail, message.audio, resampled);
+                    if (conn.aec) {
+                        // a frame without reference is a frame where nothing played
+                        const bool played = message.reference.size() == message.audio.size();
+                        if (!played) {
+                            silence.assign(message.audio.size(), 0.0f);
+                        }
+                        resample_in(conn.reference_tail, played ? message.reference : silence, reference);
+                        conn_cancel_echo(&conn, resampled, reference, played);
+                    }
                     s2s_session_push(conn.session, resampled.data(), resampled.size());
                     break;
 
@@ -1202,6 +1324,7 @@ int main(int argc, char ** argv) {
         }
         responder.join();
         s2s_session_free(conn.session);
+        lv_state_free(conn.aec);
         s2s_log(S2S_LOG_INFO, "[Server] Connection closed");
     });
 
@@ -1217,6 +1340,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    lv_free(g_models.aec);
     tts_bridge_free(g_models.tts);
     pk_free(g_models.asr);
     st_free(g_models.turn);

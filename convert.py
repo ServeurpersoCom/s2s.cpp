@@ -5,6 +5,7 @@
 #   silero      checkpoints/silero-vad/onnx/model.onnx -> models/silero-vad-F32.gguf
 #   smart-turn  checkpoints/smart-turn/smart-turn-v3.2-gpu.onnx -> models/smart-turn-v3.2-F32.gguf
 #   parakeet    checkpoints/parakeet/model.safetensors -> models/parakeet-tdt-0.6b-v3-F32.gguf
+#   localvqe    checkpoints/localvqe/localvqe-v1.3-4.8M.pt -> models/localvqe-v1.3-F32.gguf
 #
 # Every model of the pipeline gets a subcommand here so the whole project
 # converts from one entry point. Outputs that already exist are skipped.
@@ -373,6 +374,55 @@ def convert_parakeet(src, dst):
     writer.close()
 
 
+# LocalVQE v1.3 is a DeepVQE derivative: a 512 point analysis with a sqrt-Hann
+# window folded into the weights, hop 256 at 16 kHz, mic and far end conv
+# encoders, a soft delay cross-attention over dmax frames, a diagonal state
+# space bottleneck, a subpixel decoder and a 3x3 complex convolving mask. The
+# channel widths are pruned and uneven, so the runtime reads every one of them
+# from the tensor shapes; only the fixed signal geometry goes to metadata.
+#
+# Two things are baked here so the runtime has no knob for them: the softmax
+# temperature of the alignment is folded into its smoothing conv, and the
+# polar state matrix of the bottleneck is turned into its cartesian a_real,
+# a_imag pair. Torch conv weights [OC, IC, KH, KW] land as [KW, KH, IC, OC] in
+# ne terms, the layout the im2col matmul takes; linear and 1x1 conv weights
+# land as [in, out].
+def convert_localvqe(src, dst):
+    import torch
+
+    checkpoint = torch.load(src, map_location="cpu", weights_only=False)
+    state = {k: v.float().numpy() for k, v in checkpoint["model_state_dict"].items()}
+
+    writer = gguf.GGUFWriter(dst, "localvqe")
+    writer.add_uint32("lv.sample_rate", 16000)
+    writer.add_uint32("lv.n_fft", 512)
+    writer.add_uint32("lv.hop", 256)
+    writer.add_uint32("lv.dmax", 64)
+    writer.add_float32("lv.power_law_c", 0.3)
+    writer.add_float32("lv.norm_eps", 1e-5)
+
+    temperature = float(state.pop("align.temperature"))
+    state["align.conv.1.weight"] /= temperature
+    state["align.conv.1.bias"] /= temperature
+
+    rate = np.log1p(np.exp(state.pop("bottleneck.A_log_rate")))
+    radius = np.exp(-np.maximum(rate, 0.01))
+    theta = state.pop("bottleneck.A_theta")
+    state["bottleneck.a_real"] = radius * np.cos(theta)
+    state["bottleneck.a_imag"] = radius * np.sin(theta)
+
+    state["encoder.conv.weight"] = state["encoder.conv.weight"].reshape(512, 512)
+    for name, value in state.items():
+        if value.ndim == 4 and value.shape[2:] == (1, 1):
+            value = value.reshape(value.shape[0], value.shape[1])
+        writer.add_tensor(name, np.ascontiguousarray(value.astype(np.float32)))
+
+    writer.write_header_to_file()
+    writer.write_kv_data_to_file()
+    writer.write_tensors_to_file()
+    writer.close()
+
+
 MODEL_TABLE = {
     "silero": (
         os.path.join(CHECKPOINTS, "silero-vad", "onnx", "model.onnx"),
@@ -388,6 +438,11 @@ MODEL_TABLE = {
         os.path.join(CHECKPOINTS, "parakeet", "model.safetensors"),
         os.path.join(MODELS, "parakeet-tdt-0.6b-v3-F32.gguf"),
         convert_parakeet,
+    ),
+    "localvqe": (
+        os.path.join(CHECKPOINTS, "localvqe", "localvqe-v1.3-4.8M.pt"),
+        os.path.join(MODELS, "localvqe-v1.3-F32.gguf"),
+        convert_localvqe,
     ),
 }
 

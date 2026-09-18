@@ -9,6 +9,7 @@ while staying ready to be interrupted at any instant.
 
 | Stage | Model | Source | Device |
 | --- | --- | --- | --- |
+| Echo cancellation | LocalVQE v1.3 | LocalAI-io/LocalVQE | best GPU |
 | Voice activity | Silero VAD v5 | onnx-community/silero-vad | CPU, 1 thread |
 | End of turn | Smart Turn v3.2 | pipecat-ai/smart-turn-v3 | CPU |
 | Recognition | Parakeet TDT 0.6B v3 | nvidia/parakeet-tdt-0.6b-v3 | best GPU |
@@ -18,19 +19,19 @@ while staying ready to be interrupted at any instant.
 The VAD runs on every 32 ms window, so it stays on the CPU with a single
 thread: the model is 2 MB and a GPU dispatch would cost more than the
 work. Smart Turn runs once per speech to silence boundary, on the CPU as
-well. Parakeet and Qwen3-TTS take the best device `ggml_backend_init_best`
-finds, or the one `GGML_BACKEND` names.
+well. LocalVQE, Parakeet and Qwen3-TTS take the best device
+`ggml_backend_init_best` finds, or the one `GGML_BACKEND` names.
 
 The models are found in `--models` by file name. For each one the server
 takes the largest model present, then the best quant up to Q8_0, F32 and
-BF16 last; the talker must be a `customvoice` one. The five files really
+BF16 last; the talker must be a `customvoice` one. The six files really
 loaded are logged at startup and published on `/props`.
 
 ## Threading
 
 | Thread | Owns |
 | --- | --- |
-| reader, one per connection | the socket, frame decode, 24 to 16 kHz decimation, the turn session, incoming events |
+| reader, one per connection | the socket, frame decode, 24 to 16 kHz decimation, the echo canceller, the turn session, incoming events |
 | responder, one per connection | recognition, the LLM stream, the sentence splitter, synthesis, outgoing audio |
 | TTS worker, inside qwentts.cpp | the Qwen3-TTS backend and its queue, up to `--max-batch` syntheses per step |
 | log reader, one per process | stderr capture, the ring behind `/logs` |
@@ -39,9 +40,9 @@ The reader keeps consuming audio while the responder talks, which is what
 makes the barge-in possible. The responder takes committed turns from a
 queue, so a turn spoken during an answer waits for the next one.
 
-Silero, Smart Turn and Parakeet each keep one context for the whole
-process and serialize their compute behind a mutex. Only the TTS batches
-sessions together.
+LocalVQE, Silero, Smart Turn and Parakeet each keep one context for the
+whole process and serialize their compute behind a mutex. Only the TTS
+batches sessions together.
 
 ## Turn state machine
 
@@ -116,18 +117,33 @@ parameters.
 
 ## Echo cancellation
 
-The client picks it with `echo`. `native` asks the browser for
-`echoCancellation: "all"`, which cancels everything the system plays,
-this page included; plain `true` would only cover WebRTC remote tracks.
-`off` hands over the raw microphone. The client logs what the browser
-really applied.
+The client picks it with `echo`, `server` by default.
+
+`server` works on every browser. The client plays and captures through one
+duplex AudioWorklet, so each 20 ms microphone frame leaves with the samples
+played during the same render quanta: the exact echo reference, with only
+the loudspeaker to microphone path left to estimate. The microphone is
+taken raw, no browser echo cancellation, noise suppression or gain control
+bending the path. The server decimates the reference beside the
+microphone and runs LocalVQE v1.3 on hops of 256 samples before the VAD.
+The model estimates the echo delay itself by a soft cross-attention over
+the last 64 frames, about one second, and removes noise and reverberation
+in the same pass. It costs 16 to 32 ms of latency before the VAD, and each
+connection carries 2.3 MB of layer history. A log line closes every run of
+playback with the level of the microphone above the cleaned signal.
+
+`native` asks the browser for `echoCancellation: "all"`, which only
+Chrome based browsers honor for a page's own playback. `off` hands over
+the raw microphone.
 
 ## Protocol
 
 `WS /v1/realtime`, a subset of the OpenAI Realtime API. Audio is PCM16
 at 24 kHz, base64 encoded, in both directions: it matches the codec
-output, and the input is decimated 3 to 2 to the 16 kHz the VAD and the
-recognizer work at.
+output, and the input is decimated 3 to 2 to the 16 kHz the canceller,
+the VAD and the recognizer work at. `input_audio_buffer.append` carries
+an extra `reference` field, the audio played during the same samples,
+when the echo cancellation runs on the server and something played.
 
 Client to server: `session.update`, `input_audio_buffer.append`,
 `input_audio_buffer.commit`, `response.cancel`, `conversation.history`.
@@ -167,6 +183,7 @@ log carries no conversation text, only character counts and timings.
 | `src/conv-f32.h` | f32 convolutions, no f16 im2col staging |
 | `src/audio-resample.h` | polyphase resampler, any rate to 16 kHz for the recognizer |
 | `src/audio-mel.h`, `src/parakeet-mel.h` | log mel frontends |
+| `src/localvqe.h` | echo canceller lib, C ABI |
 | `src/silero.h` | VAD lib, C ABI |
 | `src/smart-turn.h` | end of turn lib, C ABI |
 | `src/parakeet.h` | ASR lib, C ABI |
@@ -200,6 +217,7 @@ driven by a Python script that prints `[Parity]` or `[Check]` lines.
 
 | Test | Checks |
 | --- | --- |
+| `test-localvqe` | streamed output against the upstream PyTorch model, and the echo removed on a synthetic call |
 | `test-silero` | probabilities and decisions against onnxruntime |
 | `test-smart-turn` | completion probabilities and decisions against onnxruntime |
 | `test-parakeet` | mel, encoder, projection and transcript against transformers `ParakeetForTDT` |

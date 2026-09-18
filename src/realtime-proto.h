@@ -7,7 +7,9 @@
 //
 // Client to server:
 //   session.update                   settings: mode, endpoint, voice, thresholds
-//   input_audio_buffer.append        base64 PCM16 from the microphone
+//   input_audio_buffer.append        base64 PCM16 from the microphone, plus
+//                                    the reference the client played during
+//                                    the same samples when it is not silent
 //   input_audio_buffer.commit        push to talk release, commits the turn
 //   response.cancel                  barge-in raised by the client
 //   conversation.history             the conversation, owned by the client
@@ -54,6 +56,7 @@ struct rt_message {
 // numbers mean "leave as is", so a partial session.update is legal.
 struct rt_session_patch {
     std::string mode;  // conversation or loopback
+    std::string echo;  // native, server or off
     std::string llm_url;
     std::string llm_model;
     std::string llm_key;
@@ -95,7 +98,8 @@ struct rt_session_patch {
 struct rt_client_message {
     rt_client_event         type = RT_CLIENT_UNKNOWN;
     rt_session_patch        patch;
-    std::vector<float>      audio;  // decoded from base64 PCM16
+    std::vector<float>      audio;      // decoded from base64 PCM16
+    std::vector<float>      reference;  // same length as audio, empty while nothing plays
     std::vector<rt_message> messages;
 };
 
@@ -210,6 +214,7 @@ static rt_client_message rt_parse(const std::string & frame) {
         yyjson_val * session        = yyjson_obj_get(root, "session");
         yyjson_val * fields         = session ? session : root;
         message.patch.mode          = rt_json_str(fields, "mode");
+        message.patch.echo          = rt_json_str(fields, "echo");
         message.patch.llm_url       = rt_json_str(fields, "llm_url");
         message.patch.llm_model     = rt_json_str(fields, "llm_model");
         message.patch.llm_key       = rt_json_str(fields, "llm_key");
@@ -258,9 +263,11 @@ static rt_client_message rt_parse(const std::string & frame) {
             message.patch.turn_max_wait_ms = (int) rt_json_num(turn, "max_wait_ms", -1.0f);
         }
     } else if (type == "input_audio_buffer.append") {
-        message.type            = RT_CLIENT_AUDIO_APPEND;
-        const std::string audio = rt_json_str(root, "audio");
+        message.type                = RT_CLIENT_AUDIO_APPEND;
+        const std::string audio     = rt_json_str(root, "audio");
+        const std::string reference = rt_json_str(root, "reference");
         rt_pcm16_to_float(rt_base64_decode(audio.c_str(), audio.size()), message.audio);
+        rt_pcm16_to_float(rt_base64_decode(reference.c_str(), reference.size()), message.reference);
     } else if (type == "input_audio_buffer.commit") {
         message.type = RT_CLIENT_AUDIO_COMMIT;
     } else if (type == "response.cancel") {

@@ -4,6 +4,7 @@
 #   silero-vad    ONNX from onnx-community/silero-vad
 #   smart-turn    ONNX from pipecat-ai/smart-turn-v3 (v3.2 GPU export, FP32)
 #   parakeet      safetensors and tokenizer from nvidia/parakeet-tdt-0.6b-v3
+#   localvqe      v1.3 PyTorch checkpoint from LocalAI-io/LocalVQE
 #
 # The TTS checkpoints belong to the qwentts submodule: run qwentts/checkpoints.sh
 # there, or fetch the prebuilt GGUF with ./models.sh.
@@ -31,6 +32,8 @@ dl_file "pipecat-ai/smart-turn-v3" "smart-turn-v3.2-gpu.onnx" "smart-turn"
 for file in config.json generation_config.json processor_config.json model.safetensors tokenizer.json tokenizer_config.json; do
     dl_file "nvidia/parakeet-tdt-0.6b-v3" "$file" "parakeet"
 done
+
+dl_file "LocalAI-io/LocalVQE" "localvqe-v1.3-4.8M.pt" "localvqe"
 
 find "$DIR" -name '.cache' -type d -exec rm -rf {} + 2>/dev/null
 echo "[Done] Checkpoints ready in $DIR"

@@ -10,7 +10,8 @@
 #              speech, so the default stays Q8_0.
 #
 # The server loads the largest talker present, at the best quant up to Q8_0.
-# The VAD and the turn detector are tiny and always ship as F32.
+# The VAD, the turn detector and the echo canceller are small and always ship
+# as F32.
 
 set -eu
 
@@ -19,6 +20,7 @@ ASR_REPO="Serveurperso/Parakeet-TDT-0.6b-v3-GGUF"
 VAD_REPO="Serveurperso/Silero-VAD-GGUF"
 TURN_REPO="Serveurperso/Smart-Turn-v3-GGUF"
 TTS_REPO="Serveurperso/Qwen3-TTS-GGUF"
+AEC_REPO="Serveurperso/LocalVQE-GGUF"
 QUANT="Q8_0"
 TTS_QUANT="Q8_0"
 TALKER="1.7b"
@@ -50,3 +52,4 @@ dl "$TURN_REPO" "smart-turn-v3.2-F32.gguf"
 dl "$ASR_REPO"  "parakeet-tdt-0.6b-v3-${QUANT}.gguf"
 dl "$TTS_REPO"  "qwen-talker-${TALKER}-customvoice-${TTS_QUANT}.gguf"
 dl "$TTS_REPO"  "qwen-tokenizer-12hz-Q8_0.gguf"
+dl "$AEC_REPO"  "localvqe-v1.3-F32.gguf"

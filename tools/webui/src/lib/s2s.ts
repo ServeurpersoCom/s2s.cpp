@@ -8,11 +8,13 @@
 //     s2s.on('state', (state) => console.log(state));
 //     button.onclick = () => s2s.start();
 //
-// Two AudioWorklets carry the audio. The capture worklet ships 20 ms frames
-// of the microphone, the playback worklet holds a ring buffer and counts the
-// frames it has really played, which is what a truncation needs. Both are
-// inlined as source strings and loaded through a blob URL, so the module
-// stays a single file.
+// One duplex AudioWorklet carries the audio both ways. It plays the answer
+// from a queue and counts the samples really played, which is what closing
+// an answer on a barge-in needs, and it ships 20 ms frames of the microphone
+// together with the samples it played during the same render quanta: the
+// exact echo reference a server side canceller needs. It is inlined as a
+// source string and loaded through a blob URL, so the module stays a single
+// file.
 //
 // The AudioContext is created at the rate the protocol carries, 24 kHz, and
 // the browser resamples the microphone into it. That removes the only
@@ -31,9 +33,11 @@ const SAMPLE_RATE = 24000;
 const FRAME_SAMPLES = 480; // 20 ms
 
 // Who removes the assistant voice from the microphone. native asks the
-// browser to cancel everything the system plays, this page included, off
-// hands over the raw microphone.
-export const ECHO_MODES = ['native', 'off'] as const;
+// browser to cancel everything the system plays, this page included, server
+// hands the raw microphone and the played reference to s2s-server, off hands
+// over the raw microphone and nothing else.
+export const ECHO_MODES = ['server', 'native', 'off'] as const;
+export const ECHO_DEFAULT: S2SEcho = 'server';
 export type S2SEcho = (typeof ECHO_MODES)[number];
 
 // Plain true only covers WebRTC remote tracks, which this component never
@@ -118,7 +122,7 @@ export interface S2SOptions {
 	llmTimeoutSec?: number;
 	vad?: S2SVad;
 	turn?: S2STurn;
-	// native unless set. Read at start().
+	// ECHO_DEFAULT unless set. Read at start().
 	echo?: S2SEcho;
 }
 
@@ -137,72 +141,71 @@ export interface S2SEvents {
 	error: (message: string) => void;
 }
 
-const CAPTURE_WORKLET = `
-class CaptureProcessor extends AudioWorkletProcessor {
+const DUPLEX_WORKLET = `
+class DuplexProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
-		this.buffer = new Float32Array(${FRAME_SAMPLES});
+		this.mic = new Float32Array(${FRAME_SAMPLES});
+		this.ref = new Float32Array(${FRAME_SAMPLES});
 		this.filled = 0;
 		this.muted = false;
-		this.port.onmessage = (e) => { this.muted = !!e.data.muted; };
-	}
-	process(inputs) {
-		const input = inputs[0] && inputs[0][0];
-		if (!input) return true;
-		for (let i = 0; i < input.length; i++) {
-			this.buffer[this.filled++] = this.muted ? 0 : input[i];
-			if (this.filled === this.buffer.length) {
-				this.port.postMessage(this.buffer.slice());
-				this.filled = 0;
-			}
-		}
-		return true;
-	}
-}
-registerProcessor('s2s-capture', CaptureProcessor);
-`;
-
-const PLAYBACK_WORKLET = `
-class PlaybackProcessor extends AudioWorkletProcessor {
-	constructor() {
-		super();
+		this.volume = 1;
 		this.queue = [];
 		this.offset = 0;
 		this.played = 0;
 		this.generation = 0;
 		this.port.onmessage = (e) => {
-			if (e.data.flush) {
+			const data = e.data;
+			if (data instanceof Float32Array) {
+				this.queue.push(data);
+			} else if (data.flush) {
 				this.queue = [];
 				this.offset = 0;
-			} else if (e.data.reset !== undefined) {
+			} else if (data.reset !== undefined) {
 				this.played = 0;
-				this.generation = e.data.reset;
-			} else {
-				this.queue.push(e.data);
+				this.generation = data.reset;
+			} else if (data.muted !== undefined) {
+				this.muted = data.muted;
+			} else if (data.volume !== undefined) {
+				this.volume = data.volume;
 			}
 		};
 	}
-	process(_inputs, outputs) {
+	process(inputs, outputs) {
 		const output = outputs[0][0];
 		let written = 0;
 		while (written < output.length && this.queue.length > 0) {
 			const chunk = this.queue[0];
 			const take = Math.min(chunk.length - this.offset, output.length - written);
-			output.set(chunk.subarray(this.offset, this.offset + take), written);
+			for (let i = 0; i < take; i++) {
+				output[written + i] = chunk[this.offset + i] * this.volume;
+			}
 			this.offset += take;
 			written += take;
-			this.played += take;
 			if (this.offset === chunk.length) {
 				this.queue.shift();
 				this.offset = 0;
 			}
 		}
 		output.fill(0, written);
-		if (written > 0) this.port.postMessage({ played: this.played, generation: this.generation });
+		if (written > 0) {
+			this.played += written;
+			this.port.postMessage({ played: this.played, generation: this.generation });
+		}
+
+		const input = inputs[0] && inputs[0][0];
+		for (let i = 0; i < output.length; i++) {
+			this.mic[this.filled] = input && !this.muted ? input[i] : 0;
+			this.ref[this.filled] = output[i];
+			if (++this.filled === this.mic.length) {
+				this.port.postMessage({ mic: this.mic.slice(), ref: this.ref.slice() });
+				this.filled = 0;
+			}
+		}
 		return true;
 	}
 }
-registerProcessor('s2s-playback', PlaybackProcessor);
+registerProcessor('s2s-duplex', DuplexProcessor);
 `;
 
 // v1/realtime next to the page, with the scheme the page was loaded with, so
@@ -253,9 +256,7 @@ export class S2S {
 	private ws: WebSocket | null = null;
 	private context: AudioContext | null = null;
 	private stream: MediaStream | null = null;
-	private capture: AudioWorkletNode | null = null;
-	private playback: AudioWorkletNode | null = null;
-	private gain: GainNode | null = null;
+	private duplex: AudioWorkletNode | null = null;
 	private volume = 1;
 
 	private state: S2SState = 'idle';
@@ -310,31 +311,39 @@ export class S2S {
 		this.log('Start requested');
 
 		this.context = new AudioContext({ sampleRate: SAMPLE_RATE });
-		await this.context.audioWorklet.addModule(workletUrl(CAPTURE_WORKLET));
-		await this.context.audioWorklet.addModule(workletUrl(PLAYBACK_WORKLET));
+		await this.context.audioWorklet.addModule(workletUrl(DUPLEX_WORKLET));
 
 		this.log(`Audio context at ${this.context.sampleRate} Hz`);
 
 		// Echo cancellation matters more than anything else here: on laptop
 		// speakers the assistant would otherwise hear itself and barge in on
 		// its own voice.
-		const echo: S2SEcho = this.options.echo ?? 'native';
+		// The server canceller wants the raw microphone: a browser processing
+		// in front of it would bend the echo path it models.
+		const echo = this.echo();
+		const raw = echo === 'server';
 		this.stream = await navigator.mediaDevices.getUserMedia({
 			audio: {
 				echoCancellation: echo === 'native' ? ECHO_CANCELLATION_ALL : false,
-				noiseSuppression: true,
-				autoGainControl: true,
+				noiseSuppression: !raw,
+				autoGainControl: !raw,
 				channelCount: 1
 			}
 		});
 
 		this.log('Microphone granted');
 
-		this.playback = new AudioWorkletNode(this.context, 's2s-playback', {
-			numberOfInputs: 0,
+		this.duplex = new AudioWorkletNode(this.context, 's2s-duplex', {
+			numberOfInputs: 1,
+			numberOfOutputs: 1,
 			outputChannelCount: [1]
 		});
-		this.playback.port.onmessage = (e) => {
+		this.duplex.port.postMessage({ volume: this.volume });
+		this.duplex.port.onmessage = (e) => {
+			if (e.data.mic) {
+				this.sendAudio(e.data.mic as Float32Array, e.data.ref as Float32Array);
+				return;
+			}
 			if (e.data.generation !== this.generation) {
 				return;
 			}
@@ -344,13 +353,8 @@ export class S2S {
 				this.setState('listening');
 			}
 		};
-		this.gain = this.context.createGain();
-		this.gain.gain.value = this.volume;
-		this.playback.connect(this.gain).connect(this.context.destination);
-
-		this.capture = new AudioWorkletNode(this.context, 's2s-capture');
-		this.context.createMediaStreamSource(this.stream).connect(this.capture);
-		this.capture.port.onmessage = (e) => this.sendAudio(e.data as Float32Array);
+		this.context.createMediaStreamSource(this.stream).connect(this.duplex);
+		this.duplex.connect(this.context.destination);
 
 		await this.connect();
 		this.setState('listening');
@@ -364,21 +368,17 @@ export class S2S {
 		this.stream = null;
 		this.context?.close();
 		this.context = null;
-		this.capture = null;
-		this.playback = null;
-		this.gain = null;
+		this.duplex = null;
 		this.setState('idle');
 	}
 
 	setVolume(volume: number) {
 		this.volume = volume;
-		if (this.gain) {
-			this.gain.gain.value = volume;
-		}
+		this.duplex?.port.postMessage({ volume });
 	}
 
 	mute(muted: boolean) {
-		this.capture?.port.postMessage({ muted });
+		this.duplex?.port.postMessage({ muted });
 	}
 
 	// Client side barge-in: the user took the floor, so playback stops now and
@@ -429,8 +429,19 @@ export class S2S {
 		}
 	}
 
-	private sendAudio(pcm: Float32Array) {
-		this.send({ type: 'input_audio_buffer.append', audio: toBase64(pcm) });
+	// The reference only travels to a server canceller, and only when the
+	// frame played something: silence is what its absence means.
+	private sendAudio(mic: Float32Array, ref: Float32Array) {
+		const reference = this.echo() === 'server' && ref.some((sample) => sample !== 0);
+		this.send({
+			type: 'input_audio_buffer.append',
+			audio: toBase64(mic),
+			...(reference ? { reference: toBase64(ref) } : {})
+		});
+	}
+
+	private echo(): S2SEcho {
+		return this.options.echo ?? ECHO_DEFAULT;
 	}
 
 	private sendSessionUpdate() {
@@ -438,6 +449,7 @@ export class S2S {
 			type: 'session.update',
 			session: {
 				mode: this.options.mode,
+				echo: this.echo(),
 				instructions: this.options.instructions,
 				llm_url: this.options.llmUrl,
 				llm_model: this.options.llmModel,
@@ -487,7 +499,7 @@ export class S2S {
 	}
 
 	private flushPlayback() {
-		this.playback?.port.postMessage({ flush: true });
+		this.duplex?.port.postMessage({ flush: true });
 	}
 
 	private pushHistory() {
@@ -572,7 +584,7 @@ export class S2S {
 				this.generation++;
 				this.queuedSamples = 0;
 				this.playedSamples = 0;
-				this.playback?.port.postMessage({ reset: this.generation });
+				this.duplex?.port.postMessage({ reset: this.generation });
 				this.setState('thinking');
 				break;
 
@@ -594,7 +606,7 @@ export class S2S {
 				{
 					const pcm = fromBase64(String(message.delta ?? ''));
 					this.queuedSamples += pcm.length;
-					this.playback?.port.postMessage(pcm);
+					this.duplex?.port.postMessage(pcm);
 					this.setState('speaking');
 				}
 				break;

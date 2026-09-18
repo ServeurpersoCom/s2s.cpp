@@ -9,6 +9,10 @@ link_ggml_backends(test-silero)
 add_executable(test-smart-turn test-smart-turn.cpp ${CMAKE_SOURCE_DIR}/src/smart-turn.cpp)
 link_ggml_backends(test-smart-turn)
 
+# test-localvqe: echo canceller output against the PyTorch reference.
+add_executable(test-localvqe test-localvqe.cpp ${CMAKE_SOURCE_DIR}/src/localvqe.cpp)
+link_ggml_backends(test-localvqe)
+
 # The Parakeet parity harness drives parakeet-transcribe --dump directly, so
 # it needs no target of its own.
 

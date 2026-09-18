@@ -6,7 +6,7 @@
 	import { snippet } from '../lib/snippet.js';
 	import { ph } from '../lib/fields.js';
 	import { MODES, type Mode } from '../lib/config.js';
-	import { ECHO_MODES, realtimeUrl, type S2SEcho } from '../lib/s2s.js';
+	import { ECHO_DEFAULT, ECHO_MODES, realtimeUrl, type S2SEcho } from '../lib/s2s.js';
 	import { clearContext, getClient, voice } from '../lib/voice.svelte.js';
 
 	let models = $state<string[]>([]);
@@ -48,8 +48,9 @@
 	}
 
 	const ECHO_LABELS: Record<S2SEcho, string> = {
-		native: 'Browser native',
-		off: 'Off, raw microphone'
+		server: 'Server, every browser',
+		native: 'Native, Chrome only',
+		off: 'Off, use headphones'
 	};
 
 	function onEcho(e: Event) {
@@ -203,7 +204,7 @@
 		<div class="details-body">
 			<div class="model-row">
 				<span class="model-label">Method</span>
-				<select class="model-select" value={settings.echo || 'native'} onchange={onEcho}>
+				<select class="model-select" value={settings.echo || ECHO_DEFAULT} onchange={onEcho}>
 					{#each ECHO_MODES as echo (echo)}
 						<option value={echo}>{ECHO_LABELS[echo]}</option>
 					{/each}
