@@ -34,7 +34,7 @@ mic -> WebSocket -> 24 to 16 kHz -> Silero VAD -> Smart Turn -> Parakeet TDT -+
                                                                               |
                                                   OpenAI chat completions (external)
                                                                               |
-speaker <- WebSocket <- qwentts.cpp <- sentence split <-----------------------+
+speaker <- WebSocket <- qwentts.cpp <- sentence split + text clean <----------+
 ```
 
 Everything except the LLM runs inside `s2s-server`. Parakeet and Qwen3-TTS
