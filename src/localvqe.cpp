@@ -571,6 +571,7 @@ static void lv_load_decoder(lv_context * ctx, const GGUFModel & gf, LvDecoder & 
 // One pass over every hop waiting: the batch is laid out under the lock, the
 // device runs off it, and the results go back under it.
 static void lv_worker(lv_context * ctx) {
+    s2s_log_thread("AEC");
     const size_t            n_fft = (size_t) ctx->n_fft;
     std::vector<lv_state *> batch;
     for (;;) {

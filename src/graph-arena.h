@@ -6,6 +6,7 @@
 // instead of thrashing on fresh allocations.
 
 #include "ggml.h"
+#include "s2s-error.h"
 
 #include <cstddef>
 #include <cstdio>
@@ -21,7 +22,7 @@ static bool graph_arena_init(GraphArena * a, int max_nodes) {
     struct ggml_init_params gp = { bytes, NULL, true };
     a->ctx                     = ggml_init(gp);
     if (!a->ctx) {
-        fprintf(stderr, "[GraphArena] FATAL: ggml_init failed (%zu bytes)\n", bytes);
+        s2s_log(S2S_LOG_ERROR, "[GraphArena] FATAL: ggml_init failed (%zu bytes)", bytes);
         return false;
     }
     return true;

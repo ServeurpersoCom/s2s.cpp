@@ -4,12 +4,18 @@
 // Header only so the vad, turn and asr libs pull the same helpers without
 // a translation unit of their own. The functions are inline, so the sink and
 // the error slot they hold are one for the whole program, whichever file
-// sets or reads them. Three entry points:
+// sets or reads them. Four entry points:
 //
 //   s2s_log       routes a formatted message to the installed callback, or
 //                 to stderr when none is set. A wrapper (Python logging,
 //                 a systemd journal, the server access log) installs its
 //                 own sink once and every module follows.
+//   s2s_log_thread names the calling thread. A message opens with the tag
+//                 of its component, [Session]; on a named thread it becomes
+//                 [Reader-4-Session], the thread first, so a log mixing
+//                 several threads and connections reads by who wrote what.
+//                 A component name never holds a hyphen, a thread name
+//                 may: the component is what follows the last one.
 //   s2s_set_error records a diagnostic on the calling thread. Storage is
 //                 thread_local so concurrent sessions never race on each
 //                 other's message. Passing NULL clears the slot.
@@ -62,6 +68,51 @@ inline std::string s2s_format_v(const char * fmt, va_list ap) {
     return std::string(buf, (size_t) n < sizeof(buf) ? (size_t) n : sizeof(buf) - 1);
 }
 
+inline std::string & s2s_log_thread_name(void) {
+    static thread_local std::string name;
+    return name;
+}
+
+// Names the calling thread for the log; an empty name removes it.
+inline void s2s_log_thread(const char * name) {
+    s2s_log_thread_name() = name ? name : "";
+}
+
+// The name of the threads that never named themselves. A host that names
+// every thread it starts knows who the others are, a library worker for
+// instance, and says so once.
+inline std::string & s2s_log_default_name(void) {
+    static std::string name;
+    return name;
+}
+
+inline void s2s_log_thread_default(const char * name) {
+    s2s_log_default_name() = name ? name : "";
+}
+
+// Scoped name, for a thread that serves several roles in turn: the pool
+// thread of an HTTP server that runs a WebSocket connection, then requests.
+struct S2SLogThread {
+    std::string previous;
+
+    explicit S2SLogThread(const std::string & name) : previous(s2s_log_thread_name()) { s2s_log_thread_name() = name; }
+
+    ~S2SLogThread() { s2s_log_thread_name() = previous; }
+};
+
+// The message with the name of the calling thread folded into its tag.
+inline std::string s2s_log_named(const std::string & msg) {
+    const std::string & own    = s2s_log_thread_name();
+    const std::string & thread = own.empty() ? s2s_log_default_name() : own;
+    if (thread.empty()) {
+        return msg;
+    }
+    if (!msg.empty() && msg[0] == '[') {
+        return "[" + thread + "-" + msg.substr(1);
+    }
+    return "[" + thread + "] " + msg;
+}
+
 inline void s2s_log(enum s2s_log_level level, const char * fmt, ...)
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((format(printf, 2, 3)))
@@ -71,7 +122,7 @@ inline void s2s_log(enum s2s_log_level level, const char * fmt, ...)
 inline void s2s_log(enum s2s_log_level level, const char * fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    const std::string msg = s2s_format_v(fmt, ap);
+    const std::string msg = s2s_log_named(s2s_format_v(fmt, ap));
     va_end(ap);
 
     const S2SLogSink sink = s2s_log_sink();

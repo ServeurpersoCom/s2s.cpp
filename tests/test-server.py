@@ -216,7 +216,7 @@ def spoken_back(out):
 def check_grace(path):
     commits, graced, forced, ok = {}, 0, 0, True
     for line in open(path, errors="replace"):
-        if "[Server] Connection from" in line:
+        if "Server] Connection from" in line:
             commits = {}
         m = re.search(r"Turn committed at ([\d.]+)s \(turn (\d+) .*completion ([\d.]+)", line)
         if m:

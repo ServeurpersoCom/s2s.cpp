@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -60,36 +61,45 @@ static ggml_backend_t cpu_backend_new(int n_threads) {
     return cpu;
 }
 
+// ggml may hand a line over in pieces: the pieces gather until the line
+// ends, and each whole line goes out once through s2s_log, tagged, with a
+// run of identical lines collapsed into a count (the CUDA graph capture
+// repeats itself).
+static void s2s_ggml_log(enum ggml_log_level level, const char * text, void * user_data) {
+    (void) user_data;
+    static std::mutex  mutex;
+    static std::string pending;
+    static std::string last;
+    static int         count = 0;
+
+    std::lock_guard<std::mutex> lock(mutex);
+    pending += text;
+    size_t end;
+    while ((end = pending.find('\n')) != std::string::npos) {
+        const std::string line = pending.substr(0, end);
+        pending.erase(0, end + 1);
+        if (count > 0 && line == last) {
+            count++;
+            continue;
+        }
+        if (count > 1) {
+            s2s_log(S2S_LOG_INFO, "[Dedup] Previous line repeated %d times total", count);
+        }
+        s2s_log(level == GGML_LOG_LEVEL_ERROR ? S2S_LOG_ERROR :
+                level == GGML_LOG_LEVEL_WARN  ? S2S_LOG_WARN :
+                                                S2S_LOG_INFO,
+                "[GGML] %s", line.c_str());
+        last  = line;
+        count = 1;
+    }
+}
+
 // Initialize backends: load all available (CUDA, Metal, Vulkan...),
 // pick the best one, keep CPU as fallback.
 // label: log prefix, e.g. "Pipeline", "Audio", "Thinker"
 // Each call returns a fresh backend pair with its own memory pool.
 // Returns a BackendPair with .backend == NULL when initialisation fails;
 // the caller must check this before passing it to any pipeline_*_load.
-// Collapse exact consecutive duplicate ggml log lines and report the total
-// count when the run ends (tames the CUDA graph capture "reused" flood).
-static void s2s_ggml_log(enum ggml_log_level level, const char * text, void * user_data) {
-    (void) level;
-    (void) user_data;
-    static char last[256] = { 0 };
-    static int  count     = 0;
-
-    if (count > 0 && strcmp(text, last) == 0) {
-        count++;
-        return;
-    }
-
-    if (count > 1) {
-        fprintf(stderr, "[Dedup] Previous line repeated %d times total\n", count);
-    }
-
-    fputs(text, stderr);
-    strncpy(last, text, sizeof(last) - 1);
-    last[sizeof(last) - 1] = 0;
-    count                  = 1;
-    fflush(stderr);
-}
-
 static BackendPair backend_init(const char * label) {
     // Magic static: log callback install and dynamic backend loading
     // happen exactly once, safe under concurrent init calls.

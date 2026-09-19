@@ -201,7 +201,7 @@ static void log_capture_stop() {
 // not hang it.
 static void log_capture_crash(const char * what) {
     char      line[512];
-    const int n = snprintf(line, sizeof(line), "[Server] FATAL: %s\n", what);
+    const int n = snprintf(line, sizeof(line), "%s\n", s2s_log_named(std::string("[Server] FATAL: ") + what).c_str());
     if (g_real_stderr_fd < 0) {
         fd_write(STDERR_FILENO, line, (size_t) n);
         return;
@@ -382,6 +382,10 @@ struct ClientSettings {
 
 struct Connection {
     httplib::ws::WebSocket * ws = nullptr;
+
+    // Numbers the connection in the log: its three threads write as
+    // Reader-N, Responder-N and Writer-N, so one grep follows one client.
+    int id = 0;
 
     s2s_session *      session = nullptr;
     s2s_session_params params;
@@ -594,6 +598,7 @@ static void conn_stop(Connection * conn) {
 // or stopped reading for longer than the write timeout: the answer in flight
 // stops, and nothing more is queued for it.
 static void conn_writer(Connection * conn) {
+    s2s_log_thread(("Writer-" + std::to_string(conn->id)).c_str());
     for (;;) {
         std::string frame;
         {
@@ -868,6 +873,7 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
 }
 
 static void conn_responder(Connection * conn) {
+    s2s_log_thread(("Responder-" + std::to_string(conn->id)).c_str());
     for (;;) {
         TurnAudio turn;
         {
@@ -976,6 +982,10 @@ static void conn_on_session_event(const s2s_session_report * report, void * user
 }
 
 static std::vector<std::string> g_llm_hosts;
+
+// Connections opened since the start, which numbers the next one: a number
+// is never given twice, so a reconnection reads apart in the log.
+static std::atomic<int> g_connections{ 0 };
 
 // The endpoint belongs to the server once it names one on the command line:
 // sessions neither see it nor change it. Otherwise the server has none, and
@@ -1262,6 +1272,11 @@ static std::string find_model(const std::string & dir, const char * prefix, cons
 }
 
 int main(int argc, char ** argv) {
+    // Every thread this server starts names itself; the one that logs
+    // without a name is the compute worker of qwentts.
+    s2s_log_thread("Main");
+    s2s_log_thread_default("TTS");
+
     std::string models_dir = "models";
     std::string host       = "127.0.0.1";
     int         port       = 8088;
@@ -1308,7 +1323,7 @@ int main(int argc, char ** argv) {
             // The key is the first line of the file.
             std::ifstream in(argv[++i]);
             if (!std::getline(in, llm_defaults.api_key) || llm_defaults.api_key.empty()) {
-                fprintf(stderr, "[Server] FATAL: no key in %s\n", argv[i]);
+                s2s_log(S2S_LOG_ERROR, "[Server] FATAL: no key in %s", argv[i]);
                 return 1;
             }
             g_llm_fixed = true;
@@ -1335,7 +1350,7 @@ int main(int argc, char ** argv) {
 
     if (vad_path.empty() || turn_path.empty() || asr_path.empty() || talker_path.empty() || codec_path.empty() ||
         aec_path.empty()) {
-        fprintf(stderr, "[Server] FATAL: missing models in %s, run ./models.sh\n", models_dir.c_str());
+        s2s_log(S2S_LOG_ERROR, "[Server] FATAL: missing models in %s, run ./models.sh", models_dir.c_str());
         return 1;
     }
 
@@ -1347,13 +1362,13 @@ int main(int argc, char ** argv) {
 
     g_models.vad = sv_init(vad_path.c_str(), 1);
     if (!g_models.vad) {
-        fprintf(stderr, "[Server] FATAL: %s\n", sv_last_error());
+        s2s_log(S2S_LOG_ERROR, "[Server] FATAL: %s", sv_last_error());
         return 1;
     }
 
     g_models.turn = st_init(turn_path.c_str(), 0);
     if (!g_models.turn) {
-        fprintf(stderr, "[Server] FATAL: %s\n", st_last_error());
+        s2s_log(S2S_LOG_ERROR, "[Server] FATAL: %s", st_last_error());
         return 1;
     }
 
@@ -1362,7 +1377,7 @@ int main(int argc, char ** argv) {
 
     g_models.asr = pk_init(&asr_init);
     if (!g_models.asr) {
-        fprintf(stderr, "[Server] FATAL: %s\n", pk_last_error());
+        s2s_log(S2S_LOG_ERROR, "[Server] FATAL: %s", pk_last_error());
         return 1;
     }
 
@@ -1376,13 +1391,13 @@ int main(int argc, char ** argv) {
 
     g_models.tts = tts_bridge_load(tts_init);
     if (!g_models.tts) {
-        fprintf(stderr, "[Server] FATAL: %s\n", tts_bridge_last_error());
+        s2s_log(S2S_LOG_ERROR, "[Server] FATAL: %s", tts_bridge_last_error());
         return 1;
     }
 
     g_models.aec = lv_init(aec_path.c_str(), 1, 0);
     if (!g_models.aec) {
-        fprintf(stderr, "[Server] FATAL: %s\n", lv_last_error());
+        s2s_log(S2S_LOG_ERROR, "[Server] FATAL: %s", lv_last_error());
         return 1;
     }
 
@@ -1400,6 +1415,13 @@ int main(int argc, char ** argv) {
 
     httplib::Server server;
     g_server = &server;
+
+    // The pool threads serve requests, and a WebSocket connection names its
+    // reader for as long as it lasts.
+    server.set_pre_routing_handler([](const httplib::Request &, httplib::Response &) {
+        s2s_log_thread("HTTP");
+        return httplib::Server::HandlerResponse::Unhandled;
+    });
 
     // SO_REUSEADDR lets us rebind a port still in TIME_WAIT after a restart.
     // SO_REUSEPORT is deliberately not set: a second instance on the same port
@@ -1618,6 +1640,10 @@ int main(int argc, char ** argv) {
     });
 
     server.WebSocket("/v1/realtime", [&](const httplib::Request & req, httplib::ws::WebSocket & ws) {
+        // The pool thread is this connection's reader until it closes.
+        const int    id = ++g_connections;
+        S2SLogThread named("Reader-" + std::to_string(id));
+
         // WebSocket handshakes bypass CORS, so the origin is checked here.
         const std::string origin = req.get_header_value("Origin");
         if (!origin_allowed(origins, req)) {
@@ -1629,6 +1655,7 @@ int main(int argc, char ** argv) {
         s2s_log(S2S_LOG_INFO, "[Server] Connection from %s", origin.empty() ? "unknown origin" : origin.c_str());
 
         Connection conn;
+        conn.id      = id;
         conn.ws      = &ws;
         conn.client  = g_client_defaults;
         conn.session = s2s_session_new(g_models.vad, g_models.turn, conn.params, conn_on_session_event, &conn);
@@ -1734,13 +1761,13 @@ int main(int argc, char ** argv) {
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
 
-    fprintf(stderr, "[Server] s2s-server %s\n", S2S_VERSION);
-    fprintf(stderr, "[Server] Mode: %s, endpoint %s\n", mode.c_str(),
+    s2s_log(S2S_LOG_INFO, "[Server] s2s-server %s", S2S_VERSION);
+    s2s_log(S2S_LOG_INFO, "[Server] Mode: %s, endpoint %s", mode.c_str(),
             g_llm_fixed ? "set by the command line" : "named by the session");
-    fprintf(stderr, "[Server] Listening on http://%s:%d\n", host.c_str(), port);
+    s2s_log(S2S_LOG_INFO, "[Server] Listening on http://%s:%d", host.c_str(), port);
 
     if (!server.listen(host, port)) {
-        fprintf(stderr, "[Server] FATAL: cannot bind %s:%d\n", host.c_str(), port);
+        s2s_log(S2S_LOG_ERROR, "[Server] FATAL: cannot bind %s:%d", host.c_str(), port);
         return 1;
     }
 

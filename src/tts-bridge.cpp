@@ -57,11 +57,24 @@ static bool tts_bridge_chunk(const float * samples, int n_samples, void * user_d
     return call->cb(samples, (size_t) n_samples, call->user);
 }
 
+// qwentts reports through its own log: its lines join the log of the
+// project, tagged by thread like every other.
+static void tts_bridge_log(enum qt_log_level level, const char * msg, void * user_data) {
+    (void) user_data;
+    s2s_log(level == QT_LOG_ERROR ? S2S_LOG_ERROR :
+            level == QT_LOG_WARN  ? S2S_LOG_WARN :
+            level == QT_LOG_DEBUG ? S2S_LOG_DEBUG :
+                                    S2S_LOG_INFO,
+            "%s", msg);
+}
+
 tts_bridge * tts_bridge_load(const tts_bridge_params & params) {
     if (params.talker_path.empty() || params.codec_path.empty()) {
         s2s_set_error("[TTS] Talker or codec path is empty");
         return nullptr;
     }
+
+    qt_log_set(tts_bridge_log, nullptr);
 
     qt_init_params init;
     qt_init_default_params(&init);

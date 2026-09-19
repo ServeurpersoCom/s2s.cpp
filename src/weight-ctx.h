@@ -12,6 +12,7 @@
 
 #include "ggml-backend.h"
 #include "ggml.h"
+#include "s2s-error.h"
 
 #include <cstddef>
 #include <cstdio>
@@ -53,7 +54,7 @@ static void wctx_init(WeightCtx * wctx, int n_tensors) {
 static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend) {
     wctx->buffer = ggml_backend_alloc_ctx_tensors(wctx->ctx, backend);
     if (!wctx->buffer) {
-        fprintf(stderr, "[WeightCtx] FATAL: failed to allocate backend buffer\n");
+        s2s_log(S2S_LOG_ERROR, "[WeightCtx] FATAL: failed to allocate backend buffer");
         return false;
     }
     size_t total = 0;
@@ -61,7 +62,7 @@ static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend) {
         ggml_backend_tensor_set(pc.tensor, pc.src, pc.offset, pc.nbytes);
         total += pc.nbytes;
     }
-    fprintf(stderr, "[WeightCtx] Loaded %zu tensors, %.1f MB into backend\n", wctx->pending.size(),
+    s2s_log(S2S_LOG_INFO, "[WeightCtx] Loaded %zu tensors, %.1f MB into backend", wctx->pending.size(),
             (float) total / (1024 * 1024));
     wctx->pending.clear();
     wctx->staging.clear();

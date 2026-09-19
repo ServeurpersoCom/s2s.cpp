@@ -29,13 +29,22 @@ loaded are logged at startup and published on `/props`.
 
 ## Threading
 
-| Thread | Owns |
-| --- | --- |
-| reader, one per connection | the socket, frame decode, 24 to 16 kHz decimation, the echo canceller, the turn session, incoming events |
-| responder, one per connection | recognition, the LLM stream, the sentence splitter, synthesis |
-| writer, one per connection | every outgoing frame, in order: a slow client stalls its own writer, never the TTS worker |
-| TTS worker, inside qwentts.cpp | the Qwen3-TTS backend and its queue, up to `--max-batch` syntheses per step |
-| log reader, one per process | stderr capture, the ring behind `/logs` |
+| Thread | Log name | Owns |
+| --- | --- | --- |
+| main | `Main` | loading, then the listening socket |
+| HTTP pool | `HTTP` | the page, `/props`, `/v1/models`, `/log` |
+| reader, one per connection | `Reader-N` | the socket, frame decode, 24 to 16 kHz decimation, the echo canceller, the turn session, incoming events |
+| responder, one per connection | `Responder-N` | recognition, the LLM stream, the sentence splitter, synthesis |
+| writer, one per connection | `Writer-N` | every outgoing frame, in order: a slow client stalls its own writer, never the TTS worker |
+| TTS worker, inside qwentts.cpp | `TTS` | the Qwen3-TTS backend and its queue, up to `--max-batch` syntheses per step |
+| echo canceller worker | `AEC` | every hop waiting from every connection, in one pass |
+| log reader, one per process | | stderr capture, the ring behind `/logs` |
+
+A log line opens with its thread, then its component: `[Reader-4-Session]`
+is the turn session of connection 4 on its reader. N numbers the
+connections from the start and is never given twice, so one grep follows
+one client, reconnections apart. Component names hold no hyphen: the
+component is what follows the last one.
 
 The reader keeps consuming audio while the responder talks, which is what
 makes the barge-in possible. The responder takes committed turns from a
@@ -45,9 +54,9 @@ the session settings and the conversation when it answers a turn: a
 turn that a later one superseded during its recognition gets no answer, and
 a closed connection drops the turns still queued.
 
-LocalVQE, Silero, Smart Turn and Parakeet each keep one context for the
-whole process and serialize their compute behind a mutex. Only the TTS
-batches sessions together.
+Every model keeps one context for the whole process. Silero, Smart Turn
+and Parakeet serialize their compute behind a mutex; LocalVQE and the TTS
+batch the connections together, each through its worker.
 
 ## Turn state machine
 
