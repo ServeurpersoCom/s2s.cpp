@@ -132,7 +132,8 @@ export interface S2SOptions {
 	llmTimeoutSec?: number;
 	vad?: S2SVad;
 	turn?: S2STurn;
-	// ECHO_DEFAULT unless set. Read at start().
+	// ECHO_DEFAULT unless set. A change reaches a running session, the
+	// microphone constraints included.
 	echo?: S2SEcho;
 }
 
@@ -436,11 +437,16 @@ export class S2S {
 	}
 
 	// Client side barge-in: the user took the floor, so playback stops now and
-	// the server stops the response. The answer keeps what was actually heard
-	// once the server confirms with response.cancelled.
+	// the server stops the response. The answer keeps what was actually heard,
+	// closed on response.cancelled, or right here when the server had already
+	// sent response.done and only the playback was left.
 	cancel() {
 		this.send({ type: 'response.cancel' });
 		this.flushPlayback();
+		if (this.answerDone) {
+			this.closeAnswer();
+			this.setState('listening');
+		}
 	}
 
 	getHistory(): S2SMessage[] {

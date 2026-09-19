@@ -62,10 +62,6 @@ static uint32_t sentence_decode(const std::string & text, size_t i, size_t * len
     return cp;
 }
 
-// A code point a voice can say: an ASCII letter or digit, or a non ASCII code
-// point outside the Latin-1 symbols (U+0080 to U+00BF), the punctuation and
-// symbol blocks (U+2000 to U+2BFF) and the CJK punctuation (U+3000 to U+303F).
-// Accented letters and every script count.
 // UTF-16 length of UTF-8 text: one per code point, two above the BMP.
 static size_t sentence_utf16_len(const std::string & text) {
     size_t n = 0;
@@ -75,6 +71,10 @@ static size_t sentence_utf16_len(const std::string & text) {
     return n;
 }
 
+// A code point a voice can say: an ASCII letter or digit, or a non ASCII code
+// point outside the Latin-1 symbols (U+0080 to U+00BF), the punctuation and
+// symbol blocks (U+2000 to U+2BFF) and the CJK punctuation (U+3000 to U+303F).
+// Accented letters and every script count.
 static bool sentence_is_spoken(uint32_t cp) {
     if (cp < 0x80) {
         return (cp >= '0' && cp <= '9') || (cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z');

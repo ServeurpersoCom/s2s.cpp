@@ -5,12 +5,13 @@ import { app, settings, toast } from './state.svelte.js';
 
 // The one place the settings panel and the component meet. The panel edits a
 // Settings object, this turns it into the options the component takes, and a
-// host embedding the component elsewhere fills the same fields by hand.
+// host embedding the component elsewhere fills the same fields by hand. The
+// page talks to the server that served it: no url here, the snippet adds its
+// own.
 export function toOptions(): S2SOptions {
 	// a server that owns its endpoint takes none of it from the page
 	const fixed = app.props?.defaults.llm_fixed ?? false;
 	return {
-		url: settings.serverUrl,
 		mode: settings.mode || undefined,
 		instructions: settings.systemPrompt,
 		llmUrl: fixed ? undefined : settings.llmUrl,
@@ -172,11 +173,11 @@ export async function createVoice(): Promise<S2S> {
 	// everything the component reports goes to the server log, so the card on
 	// the right tells the whole story, and a failure also pops the toast
 	s2s.on('log', (line) => {
-		postLog(settings.serverUrl, line);
+		postLog(line);
 	});
 	s2s.on('error', (message) => {
 		voice.error = message;
-		postLog(settings.serverUrl, `Error: ${message}`);
+		postLog(`Error: ${message}`);
 		toast(message);
 	});
 
@@ -198,12 +199,10 @@ export function clearContext() {
 	voice.chat = [];
 }
 
-// Pushes a settings change to a running session. Everything but the server
-// URL applies live; a new URL needs a reconnection.
-// The options are built before the call: `client?.update(toOptions())` would
-// skip the argument entirely while the component is still loading, and an
-// effect that never reads the store never tracks it, so a later change would
-// go unnoticed. That optional call is what made mode switches need a reload.
+// Pushes a settings change to a running session. The options are built
+// before the call, so the effect reads the store even while the component is
+// loading: an optional call skips its argument, and an effect that reads
+// nothing never runs again.
 export function applySettings() {
 	const options = toOptions();
 	client?.update(options);

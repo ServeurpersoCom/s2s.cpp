@@ -81,7 +81,7 @@
 			return;
 		}
 		try {
-			models = await fetchModels(settings.serverUrl, settings.llmUrl, settings.llmKey);
+			models = await fetchModels(settings.llmUrl, settings.llmKey);
 			if (models.length > 0 && !models.includes(settings.llmModel)) {
 				settings.llmModel = models[0];
 			}
@@ -93,7 +93,7 @@
 	}
 
 	function loadProps() {
-		props(settings.serverUrl)
+		props()
 			.then((p) => (app.props = p))
 			.catch(() => (app.props = null));
 	}
@@ -181,7 +181,7 @@
 		<summary>Playground session</summary>
 		<div class="details-body">
 			<div class="model-row">
-				<span class="model-label">Server</span>
+				<span class="model-label">Snippet server</span>
 				<input
 					class="model-select"
 					type="text"

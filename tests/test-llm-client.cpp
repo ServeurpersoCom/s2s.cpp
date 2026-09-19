@@ -157,6 +157,14 @@ int main(int argc, char ** argv) {
         res.set_content("{\n  \"error\": {\n    \"message\": \"model not loaded\"\n  }\n}\n", "application/json");
     });
 
+    // Opens the stream with a 200, writes a little, then reports a failure
+    // inside it, the way an endpoint does when the context overflows.
+    mock.Post("/midstream/chat/completions", [](const httplib::Request &, httplib::Response & res) {
+        res.set_content(
+            frame("Once upon ") + frame("a time") + "data: {\"error\":{\"message\":\"context size exceeded\"}}\n\n",
+            "text/event-stream");
+    });
+
     // Says nothing for a while, like an endpoint in a long prefill.
     mock.Post("/silent/chat/completions", [](const httplib::Request &, httplib::Response & res) {
         std::this_thread::sleep_for(std::chrono::milliseconds(SILENT_MS));
@@ -297,6 +305,18 @@ int main(int argc, char ** argv) {
     std::string nothing;
     const bool  answered = llm_client_stream(broken, messages, nullptr, nullptr, nullptr, nothing);
     printf("[LLM] Broken endpoint returned %s: %s\n", answered ? "true" : "false", llm_client_last_error());
+
+    // A failure reported inside a stream that opened fine.
+    {
+        llm_client_params midstream_params = params;
+        midstream_params.base_url          = base + "/midstream";
+        llm_client * midstream             = llm_client_new(midstream_params);
+        std::string  partial_answer;
+        const bool   streamed = llm_client_stream(midstream, messages, nullptr, nullptr, nullptr, partial_answer);
+        printf("[LLM] Midstream error returned %s after %zu characters: %s\n", streamed ? "true" : "false",
+               partial_answer.size(), llm_client_last_error());
+        llm_client_free(midstream);
+    }
 
     // Cancellation while the endpoint says nothing yet.
     llm_client_params silent_params = params;

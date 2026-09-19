@@ -596,7 +596,9 @@ static void conn_stop(Connection * conn) {
 
 // Sends the queued frames in order. A failed send means the client is gone,
 // or stopped reading for longer than the write timeout: the answer in flight
-// stops, and nothing more is queued for it.
+// stops, nothing more is queued for it, and the connection is over. The
+// reader closes it: it is the one thread that reads the socket, closing
+// handshake included.
 static void conn_writer(Connection * conn) {
     s2s_log_thread(("Writer-" + std::to_string(conn->id)).c_str());
     for (;;) {
@@ -618,7 +620,6 @@ static void conn_writer(Connection * conn) {
                 std::queue<std::string>().swap(conn->out);
             }
             conn_stop(conn);
-            conn->ws->close();
             return;
         }
     }
@@ -1681,7 +1682,7 @@ int main(int argc, char ** argv) {
 
         for (;;) {
             const httplib::ws::ReadResult result = ws.read(frame);
-            if (result == httplib::ws::ReadResult::Fail) {
+            if (result == httplib::ws::ReadResult::Fail || conn.stop) {
                 break;
             }
             if (result != httplib::ws::ReadResult::Text) {

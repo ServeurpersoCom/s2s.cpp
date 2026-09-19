@@ -56,6 +56,7 @@ function object(value: Record<string, unknown>, indent: string): string {
 
 export function snippet(): string {
 	const options = (prune({
+		url: settings.serverUrl,
 		...toOptions(),
 		llmUrl: undefined,
 		llmModel: undefined,
@@ -67,7 +68,7 @@ export function snippet(): string {
 	// Everything stays relative to the page the snippet lands on: the module
 	// comes from the s2s-server that serves it, and the component resolves
 	// v1/realtime the same way. An integrator who hosts the page elsewhere
-	// fills the Server field, and only then does an absolute URL appear
+	// fills the Snippet server field, and only then does an absolute URL appear
 	// here. Pasting a foreign host would otherwise leech somebody else's
 	// server, or point at a 127.0.0.1 that only exists on the developer's
 	// machine.

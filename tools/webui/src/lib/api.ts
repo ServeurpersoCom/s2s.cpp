@@ -1,16 +1,13 @@
 import { FETCH_TIMEOUT_MS } from './config.js';
 import type { S2SProps } from './types.js';
 
-// relative to the page, so any reverse proxy prefix just works. An absolute
-// server URL in the settings points the call somewhere else.
-function url(path: string, serverUrl: string): string {
-	return serverUrl ? new URL(path, serverUrl.replace(/\/?$/, '/')).toString() : path;
-}
+// Every call goes to the server that served the page, relative to it, so any
+// reverse proxy prefix just works.
 
 // GET /props: version, audio rate and the defaults every empty field falls
 // back to.
-export async function props(serverUrl: string): Promise<S2SProps> {
-	const res = await fetch(url('props', serverUrl), {
+export async function props(): Promise<S2SProps> {
+	const res = await fetch('props', {
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
 	});
 	if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -20,12 +17,8 @@ export async function props(serverUrl: string): Promise<S2SProps> {
 // POST /v1/models: the model list, proxied by s2s-server. The browser never
 // calls the language model endpoint itself: no CORS to negotiate, an endpoint
 // on a loopback address stays reachable, and the API key stays on the server.
-export async function fetchModels(
-	serverUrl: string,
-	llmUrl: string,
-	apiKey: string
-): Promise<string[]> {
-	const res = await fetch(url('v1/models', serverUrl), {
+export async function fetchModels(llmUrl: string, apiKey: string): Promise<string[]> {
+	const res = await fetch('v1/models', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ url: llmUrl, key: apiKey }),
@@ -40,6 +33,6 @@ export async function fetchModels(
 
 // POST /log: browser side events, so they land in the same stream as the
 // server stages. Fire and forget: a failed log must never break a session.
-export function postLog(serverUrl: string, line: string) {
-	fetch(url('log', serverUrl), { method: 'POST', body: line }).catch(() => {});
+export function postLog(line: string) {
+	fetch('log', { method: 'POST', body: line }).catch(() => {});
 }

@@ -185,8 +185,9 @@ static std::string llm_client_reason(const std::string & body) {
 
 // Pulls the content delta out of one data frame. Returns false when the
 // frame carries nothing to say, which covers role only frames, usage frames
-// and reasoning traces.
-static bool llm_client_delta(const char * json, size_t size, std::string & delta) {
+// and reasoning traces. A frame that carries an error instead sets failed:
+// an endpoint can report a failure inside a stream it opened with a 200.
+static bool llm_client_delta(const char * json, size_t size, std::string & delta, bool & failed) {
     yyjson_doc * doc = yyjson_read(json, size, 0);
     if (!doc) {
         return false;
@@ -194,7 +195,10 @@ static bool llm_client_delta(const char * json, size_t size, std::string & delta
 
     bool found = false;
 
-    yyjson_val * choices = yyjson_obj_get(yyjson_doc_get_root(doc), "choices");
+    yyjson_val * root = yyjson_doc_get_root(doc);
+    failed            = yyjson_obj_get(root, "error") != nullptr;
+
+    yyjson_val * choices = yyjson_obj_get(root, "choices");
     yyjson_val * choice  = choices ? yyjson_arr_get_first(choices) : nullptr;
     yyjson_val * message = choice ? yyjson_obj_get(choice, "delta") : nullptr;
     yyjson_val * content = message ? yyjson_obj_get(message, "content") : nullptr;
@@ -235,8 +239,9 @@ bool llm_client_stream(llm_client *                     c,
 
     text.clear();
 
-    std::string body;  // everything received, the reason of an error status
+    std::string body;     // everything received, the reason of an error status
     std::string pending;
+    std::string failure;  // the reason of an error frame inside the stream
     bool        cancelled = false;
     bool        done      = false;
 
@@ -282,7 +287,12 @@ bool llm_client_stream(llm_client *                     c,
             }
 
             std::string delta;
-            if (!llm_client_delta(line.c_str() + start, line.size() - start, delta)) {
+            bool        failed = false;
+            if (!llm_client_delta(line.c_str() + start, line.size() - start, delta, failed)) {
+                if (failed) {
+                    failure = llm_client_reason(line.substr(start));
+                    return false;
+                }
                 continue;
             }
 
@@ -320,6 +330,10 @@ bool llm_client_stream(llm_client *                     c,
         watcher.join();
     }
 
+    if (!failure.empty()) {
+        s2s_set_error("[LLM] %s", failure.c_str());
+        return false;
+    }
     if (cancelled || (cancel && cancel->load())) {
         s2s_set_error("[LLM] Cancelled");
         return false;

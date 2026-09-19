@@ -73,7 +73,8 @@ void         llm_client_free(llm_client * c);
 bool llm_client_set_params(llm_client * c, const llm_client_params & params);
 
 // Streams one completion. text receives the full answer, deltas included.
-// Returns false on a transport error or on cancellation, with the reason in
+// Returns false on a transport error, on an error the endpoint reports, as a
+// status or inside the stream, or on cancellation, with the reason in
 // llm_client_last_error().
 bool llm_client_stream(llm_client *                     c,
                        const std::vector<llm_message> & messages,
