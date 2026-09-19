@@ -403,8 +403,12 @@ export class S2S {
 	}
 
 	// Releases the socket, the microphone and the audio context, whoever ends
-	// the session: the user, a failed start or the server closing.
+	// the session: the user, a failed start or the server closing. The answer
+	// in flight closes first, so what was heard stays in the conversation, and
+	// the turn identity goes: the next connection numbers its turns afresh.
 	private teardown() {
+		this.closeAnswer();
+		this.userItem = '';
 		this.run++;
 		const ws = this.ws;
 		this.ws = null;
@@ -414,9 +418,6 @@ export class S2S {
 		this.context?.close();
 		this.context = null;
 		this.duplex = null;
-		this.units = [];
-		this.answerDone = false;
-		this.answering = false;
 		this.setState('idle');
 	}
 

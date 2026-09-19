@@ -66,7 +66,7 @@ bool llm_client_set_params(llm_client * c, const llm_client_params & params) {
     std::string host;
     std::string path;
     if (!llm_client_split_url(params.base_url, host, path)) {
-        s2s_set_error("[LLM] Base URL '%s' has no scheme", params.base_url.c_str());
+        s2s_set_error("[LLM] The endpoint URL has no scheme");
         return false;
     }
     if (!c->http || host != c->host) {
@@ -199,7 +199,7 @@ bool llm_client_stream(llm_client *                     c,
 
     httplib::Client & client = *c->http;
     if (!client.is_valid()) {
-        s2s_set_error("[LLM] Cannot reach %s, https needs an OpenSSL build", c->host.c_str());
+        s2s_set_error("[LLM] The endpoint is https and this build has no TLS");
         return false;
     }
     client.set_read_timeout(c->params.timeout_sec, 0);
@@ -222,7 +222,14 @@ bool llm_client_stream(llm_client *                     c,
     bool        cancelled = false;
     bool        done      = false;
 
+    // [DONE] ends the answer, not the request: what follows it is left for
+    // httplib to read to the end of the body, so the connection stays open
+    // for the next turn. Returning false aborts the request and closes it,
+    // which only a cancellation does.
     auto receiver = [&](const char * data, size_t size) {
+        if (done) {
+            return true;
+        }
         if (cancel && cancel->load()) {
             cancelled = true;
             return false;
@@ -253,7 +260,7 @@ bool llm_client_stream(llm_client *                     c,
 
             if (line.compare(start, std::string::npos, "[DONE]") == 0) {
                 done = true;
-                return false;
+                return true;
             }
 
             std::string delta;
@@ -318,13 +325,13 @@ bool llm_client_models(const llm_client_params & params, std::vector<std::string
     std::string host;
     std::string path;
     if (!llm_client_split_url(params.base_url, host, path)) {
-        s2s_set_error("[LLM] Base URL '%s' has no scheme", params.base_url.c_str());
+        s2s_set_error("[LLM] The endpoint URL has no scheme");
         return false;
     }
 
     httplib::Client client(host.c_str());
     if (!client.is_valid()) {
-        s2s_set_error("[LLM] Cannot reach %s, https needs an OpenSSL build", host.c_str());
+        s2s_set_error("[LLM] The endpoint is https and this build has no TLS");
         return false;
     }
     client.set_read_timeout(params.timeout_sec, 0);

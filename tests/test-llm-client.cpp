@@ -5,7 +5,8 @@
 // the way llama-server does: one data frame per token, a role only frame
 // first, a usage frame at the end, and [DONE] to close.
 //
-// Four passes: a full stream cut into synthesis units, a cancellation after
+// Four passes: a full stream cut into synthesis units and a second one on the
+// same connection, a cancellation after
 // a few deltas, an endpoint that answers 500 with a pretty printed body, and
 // a cancellation while the endpoint says nothing yet. A pass feeds the splitter
 // alone with accents and an emoji, one byte per delta, so every multibyte
@@ -22,6 +23,8 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -115,7 +118,16 @@ int main(int argc, char ** argv) {
 
     httplib::Server mock;
 
-    mock.Post("/v1/chat/completions", [](const httplib::Request &, httplib::Response & res) {
+    // The client port of every completion: one port for several requests
+    // means they went over one kept alive connection.
+    std::mutex    ports_mutex;
+    std::set<int> ports;
+
+    mock.Post("/v1/chat/completions", [&](const httplib::Request & req, httplib::Response & res) {
+        {
+            std::lock_guard<std::mutex> lock(ports_mutex);
+            ports.insert(req.remote_port);
+        }
         res.set_chunked_content_provider("text/event-stream", [](size_t, httplib::DataSink & sink) {
             const std::string role = "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}\n\n";
             sink.write(role.data(), role.size());
@@ -202,6 +214,14 @@ int main(int argc, char ** argv) {
     printf("[LLM] Written %zu UTF-16 units, the last unit ends at %zu\n", sentence_utf16_len(text), tail.end);
     for (size_t i = 0; i < collector.units.size(); i++) {
         printf("[Unit] %zu: end %zu \"%s\"\n", i, collector.units[i].end, collector.units[i].text.c_str());
+    }
+
+    // A second completion on the same client, which reuses the connection.
+    {
+        std::string                 again;
+        const bool                  ok_again = llm_client_stream(client, messages, nullptr, nullptr, &cancel, again);
+        std::lock_guard<std::mutex> lock(ports_mutex);
+        printf("[LLM] Two completions over %zu connections, returned %s\n", ports.size(), ok_again ? "true" : "false");
     }
 
     // Accents and an emoji, one byte at a time.

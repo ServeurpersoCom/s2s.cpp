@@ -44,8 +44,9 @@ def main():
     parsed = re.search(r"\[Parse\] (.*)", log)
     silent = re.search(r"Silent endpoint cancelled after ([\d.]+) ms of (\d+), returned (\w+)", log)
     reason = re.search(r"Broken endpoint returned \w+: (.*)", log)
+    reused = re.search(r"Two completions over (\d+) connections, returned (\w+)", log)
 
-    ok = check("parsed", bool(streamed and first and cancelled and broken and written and parsed and silent),
+    ok = check("parsed", bool(streamed and first and cancelled and broken and written and parsed and silent and reused),
                "harness reported every stage")
     if not ok:
         return 1
@@ -80,6 +81,10 @@ def main():
     # Every sampling field the panel edits reaches the patch, with its value.
     sent = "temperature 0.7 top_p 0.9 top_k 40 min_p 0.05 max_tokens 256 presence 0.5 frequency 0.25 seed 42 timeout 30 reasoning low"
     ok = check("session sampling", parsed.group(1) == sent, parsed.group(1)) and ok
+
+    # [DONE] ends the answer, not the connection: the next turn reuses it.
+    ok = check("keep alive", reused.group(1) == "1" and reused.group(2) == "true",
+               "two completions over %s connection(s)" % reused.group(1)) and ok
 
     ok = check("cancel honored", returned == "false", "request reported cancelled") and ok
     ok = check("cancel truncates", cut_chars < n_chars, "%d of %d characters" % (cut_chars, n_chars)) and ok
