@@ -165,6 +165,12 @@ int main(int argc, char ** argv) {
             "text/event-stream");
     });
 
+    // Writes a little and closes cleanly, with neither [DONE] nor a
+    // finish_reason: an answer cut short that must not pass for a whole one.
+    mock.Post("/truncated/chat/completions", [](const httplib::Request &, httplib::Response & res) {
+        res.set_content(frame("Once upon ") + frame("a time"), "text/event-stream");
+    });
+
     // Says nothing for a while, like an endpoint in a long prefill.
     mock.Post("/silent/chat/completions", [](const httplib::Request &, httplib::Response & res) {
         std::this_thread::sleep_for(std::chrono::milliseconds(SILENT_MS));
@@ -316,6 +322,18 @@ int main(int argc, char ** argv) {
         printf("[LLM] Midstream error returned %s after %zu characters: %s\n", streamed ? "true" : "false",
                partial_answer.size(), llm_client_last_error());
         llm_client_free(midstream);
+    }
+
+    // A stream closed before its end.
+    {
+        llm_client_params truncated_params = params;
+        truncated_params.base_url          = base + "/truncated";
+        llm_client * truncated             = llm_client_new(truncated_params);
+        std::string  cut;
+        const bool   whole = llm_client_stream(truncated, messages, nullptr, nullptr, nullptr, cut);
+        printf("[LLM] Truncated stream returned %s after %zu characters: %s\n", whole ? "true" : "false", cut.size(),
+               llm_client_last_error());
+        llm_client_free(truncated);
     }
 
     // Cancellation while the endpoint says nothing yet.

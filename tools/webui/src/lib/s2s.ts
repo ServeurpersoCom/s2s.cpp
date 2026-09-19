@@ -440,16 +440,14 @@ export class S2S {
 	}
 
 	// Client side barge-in: the user took the floor, so playback stops now and
-	// the server stops the response. The answer keeps what was actually heard,
-	// closed on response.cancelled, or right here when the server had already
-	// sent response.done and only the playback was left.
+	// the server stops the response. The answer closes right here with what
+	// was actually heard; whatever the server still sends for it, audio, text
+	// or its terminal, finds it closed and changes nothing.
 	cancel() {
 		this.send({ type: 'response.cancel' });
 		this.flushPlayback();
-		if (this.answerDone) {
-			this.closeAnswer();
-			this.setState('listening');
-		}
+		this.closeAnswer();
+		this.setState('listening');
 	}
 
 	getHistory(): S2SMessage[] {
@@ -686,6 +684,7 @@ export class S2S {
 			case 'response.created':
 				this.closeAnswer();
 				this.answering = true;
+				this.answerDone = false;
 				this.generation++;
 				this.queuedSamples = 0;
 				this.playedSamples = 0;
@@ -693,14 +692,15 @@ export class S2S {
 				this.setState('thinking');
 				break;
 
+			// An answer the client already closed takes nothing more.
 			case 'response.output_text.delta':
-				{
+				if (this.answering) {
 					this.handlers.assistant_delta?.(String(message.delta ?? ''));
 				}
 				break;
 
 			case 'response.output_audio_transcript.delta':
-				{
+				if (this.answering) {
 					const delta = String(message.delta ?? '');
 					this.units.push({ text: delta, start: this.queuedSamples });
 					this.handlers.assistant_text?.(delta, Number(message.text_end ?? 0));
@@ -708,7 +708,7 @@ export class S2S {
 				break;
 
 			case 'response.output_audio.delta':
-				{
+				if (this.answering) {
 					const pcm = fromBase64(String(message.delta ?? ''));
 					this.queuedSamples += pcm.length;
 					this.duplex?.port.postMessage(pcm);

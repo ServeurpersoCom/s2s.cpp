@@ -183,33 +183,38 @@ static std::string llm_client_reason(const std::string & body) {
     return reason;
 }
 
-// Pulls the content delta out of one data frame. Returns false when the
-// frame carries nothing to say, which covers role only frames, usage frames
-// and reasoning traces. A frame that carries an error instead sets failed:
-// an endpoint can report a failure inside a stream it opened with a 200.
-static bool llm_client_delta(const char * json, size_t size, std::string & delta, bool & failed) {
+// What one data frame says: its content delta, whether it reports a
+// failure, an endpoint can do so inside a stream it opened with a 200, and
+// whether it ends the generation with a finish_reason. Role only frames,
+// usage frames and reasoning traces say none of it.
+struct LlmFrame {
+    std::string delta;
+    bool        failed   = false;
+    bool        finished = false;
+};
+
+static LlmFrame llm_client_frame(const char * json, size_t size) {
+    LlmFrame     frame;
     yyjson_doc * doc = yyjson_read(json, size, 0);
     if (!doc) {
-        return false;
+        return frame;
     }
 
-    bool found = false;
-
-    yyjson_val * root = yyjson_doc_get_root(doc);
-    failed            = yyjson_obj_get(root, "error") != nullptr;
-
+    yyjson_val * root    = yyjson_doc_get_root(doc);
     yyjson_val * choices = yyjson_obj_get(root, "choices");
     yyjson_val * choice  = choices ? yyjson_arr_get_first(choices) : nullptr;
+    yyjson_val * reason  = choice ? yyjson_obj_get(choice, "finish_reason") : nullptr;
     yyjson_val * message = choice ? yyjson_obj_get(choice, "delta") : nullptr;
     yyjson_val * content = message ? yyjson_obj_get(message, "content") : nullptr;
 
+    frame.failed   = yyjson_obj_get(root, "error") != nullptr;
+    frame.finished = reason && yyjson_is_str(reason);
     if (content && yyjson_is_str(content)) {
-        delta.assign(yyjson_get_str(content), yyjson_get_len(content));
-        found = !delta.empty();
+        frame.delta.assign(yyjson_get_str(content), yyjson_get_len(content));
     }
 
     yyjson_doc_free(doc);
-    return found;
+    return frame;
 }
 
 bool llm_client_stream(llm_client *                     c,
@@ -244,6 +249,7 @@ bool llm_client_stream(llm_client *                     c,
     std::string failure;  // the reason of an error frame inside the stream
     bool        cancelled = false;
     bool        done      = false;
+    bool        ended     = false;  // a frame gave the finish_reason of the generation
 
     // [DONE] ends the answer, not the request: what follows it is left for
     // httplib to read to the end of the body, so the connection stays open
@@ -286,18 +292,18 @@ bool llm_client_stream(llm_client *                     c,
                 return true;
             }
 
-            std::string delta;
-            bool        failed = false;
-            if (!llm_client_delta(line.c_str() + start, line.size() - start, delta, failed)) {
-                if (failed) {
-                    failure = llm_client_reason(line.substr(start));
-                    return false;
-                }
+            const LlmFrame frame = llm_client_frame(line.c_str() + start, line.size() - start);
+            if (frame.failed) {
+                failure = llm_client_reason(line.substr(start));
+                return false;
+            }
+            ended = ended || frame.finished;
+            if (frame.delta.empty()) {
                 continue;
             }
 
-            text += delta;
-            if (cb && !cb(delta.c_str(), user)) {
+            text += frame.delta;
+            if (cb && !cb(frame.delta.c_str(), user)) {
                 cancelled = true;
                 return false;
             }
@@ -348,6 +354,12 @@ bool llm_client_stream(llm_client *                     c,
     if (result->status < 200 || result->status >= 300) {
         // An error status carries no event stream: the body says why.
         s2s_set_error("[LLM] HTTP %d, %s", result->status, llm_client_reason(body).c_str());
+        return false;
+    }
+    // A stream that closes without [DONE] or a finish_reason was cut short:
+    // what came is not the whole answer.
+    if (!ended) {
+        s2s_set_error("[LLM] The stream ended before the answer did");
         return false;
     }
     return true;

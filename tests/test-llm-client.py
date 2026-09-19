@@ -47,9 +47,10 @@ def main():
     reused = re.search(r"Two completions over (\d+) connections, returned (\w+)", log)
     refused = re.search(r"\[Parse\] refused (\S+), min_speech_ms (-?\d+), temperature (\S+)", log)
     midstream = re.search(r"Midstream error returned (\w+) after (\d+) characters: (.*)", log)
+    truncated = re.search(r"Truncated stream returned (\w+) after (\d+) characters: (.*)", log)
     unreachable = re.search(r"Unreachable URLs refused (\d+) of 4, the client still answers: (\w+)", log)
 
-    ok = check("parsed", bool(streamed and first and cancelled and broken and written and parsed and silent and reused and refused and unreachable and midstream),
+    ok = check("parsed", bool(streamed and first and cancelled and broken and written and parsed and silent and reused and refused and unreachable and midstream and truncated),
                "harness reported every stage")
     if not ok:
         return 1
@@ -103,6 +104,11 @@ def main():
     # with its reason, not an empty answer taken for a success.
     ok = check("midstream error", midstream.group(1) == "false" and "context size exceeded" in midstream.group(3),
                midstream.group(3)) and ok
+
+    # A stream that closes without [DONE] or a finish_reason is cut short,
+    # reported as such rather than spoken as a whole answer.
+    ok = check("truncated stream", truncated.group(1) == "false" and "ended before" in truncated.group(3),
+               truncated.group(3)) and ok
 
     ok = check("cancel honored", returned == "false", "request reported cancelled") and ok
     ok = check("cancel truncates", cut_chars < n_chars, "%d of %d characters" % (cut_chars, n_chars)) and ok

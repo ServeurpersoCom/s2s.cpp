@@ -182,7 +182,7 @@
 		<summary>Playground session</summary>
 		<div class="details-body">
 			<div class="model-row">
-				<span class="model-label">Snippet server</span>
+				<span class="model-label">Server</span>
 				<input
 					class="model-select"
 					type="text"

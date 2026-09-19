@@ -598,7 +598,8 @@ static void conn_stop(Connection * conn) {
 // or stopped reading for longer than the write timeout: the answer in flight
 // stops, nothing more is queued for it, and the connection is over. The
 // reader closes it: it is the one thread that reads the socket, closing
-// handshake included.
+// handshake included. It sees the stop with the next frame the client sends,
+// or, from a client gone silent, when its read times out.
 static void conn_writer(Connection * conn) {
     s2s_log_thread(("Writer-" + std::to_string(conn->id)).c_str());
     for (;;) {
