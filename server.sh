@@ -15,5 +15,4 @@ set -eu
     --port 8088 \
     --models ./models \
     --origin http://localhost:8088 \
-    --origin http://127.0.0.1:8088 \
-    --llm-host 127.0.0.1:8080
+    --origin http://127.0.0.1:8088
