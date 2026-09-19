@@ -18,8 +18,9 @@ completions endpoint. Runs on CUDA, Vulkan, SYCL, Metal and CPU.
 - Speaks as soon as the LLM has written its first sentence: the request
   streams over SSE, and each sentence is synthesized while the model
   writes the next one
-- Silero VAD on CPU, one 32 ms window at a time, with hysteresis so a
-  breath never opens a turn
+- Silero VAD on CPU, one 32 ms window at a time, with two thresholds, so
+  a dip inside a word or a voice the echo canceller left fainter does not
+  cut the speech, and a minimum length, so a breath never opens a turn
 - Smart Turn v3.2 end of turn classifier, called only on a speech to
   silence boundary, on a sliding window of the stream, so a thinking
   pause is not mistaken for a finished sentence; the answer is computed

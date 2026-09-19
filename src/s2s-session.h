@@ -53,7 +53,8 @@ enum s2s_session_event {
 };
 
 struct s2s_session_params {
-    float vad_threshold              = 0.6f;
+    float vad_threshold              = 0.6f;   // speech starts at this probability
+    float vad_neg_threshold          = 0.45f;  // and lasts while it stays at or above this one
     int   min_speech_ms              = 384;
     int   min_speech_continuation_ms = 192;
     int   min_silence_ms             = 64;

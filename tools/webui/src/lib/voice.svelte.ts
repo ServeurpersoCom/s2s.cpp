@@ -49,6 +49,7 @@ export function toOptions(): S2SOptions {
 		},
 		vad: {
 			threshold: num(settings.vadThreshold),
+			negThreshold: num(settings.vadNegThreshold),
 			minSpeechMs: num(settings.minSpeechMs),
 			minSpeechContinuationMs: num(settings.minSpeechContinuationMs),
 			minSilenceMs: num(settings.minSilenceMs),

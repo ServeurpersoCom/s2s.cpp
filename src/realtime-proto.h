@@ -98,6 +98,7 @@ struct rt_session_patch {
     float       tts_margin_seconds         = -1.0f;
     int         llm_timeout_sec            = -1;
     float       vad_threshold              = -1.0f;
+    float       vad_neg_threshold          = -1.0f;
     int         min_speech_ms              = -1;
     int         min_speech_continuation_ms = -1;
     int         min_silence_ms             = -1;
@@ -325,6 +326,8 @@ static rt_client_message rt_parse(const std::string & frame) {
         if (vad) {
             message.patch.vad_threshold =
                 (float) rt_json_value(vad, "threshold", -1.0, 0.0, 1.0, message.patch.invalid);
+            message.patch.vad_neg_threshold =
+                (float) rt_json_value(vad, "neg_threshold", -1.0, 0.0, 1.0, message.patch.invalid);
             message.patch.min_speech_ms = rt_json_ms(vad, "min_speech_ms", message.patch.invalid);
             message.patch.min_speech_continuation_ms =
                 rt_json_ms(vad, "min_speech_continuation_ms", message.patch.invalid);

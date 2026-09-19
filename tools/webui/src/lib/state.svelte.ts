@@ -39,6 +39,7 @@ export interface Settings {
 	seed: string;
 	reasoningEffort: string;
 	vadThreshold: string;
+	vadNegThreshold: string;
 	minSpeechMs: string;
 	minSpeechContinuationMs: string;
 	minSilenceMs: string;
@@ -86,6 +87,7 @@ function defaults(): Settings {
 		seed: '',
 		reasoningEffort: '',
 		vadThreshold: '',
+		vadNegThreshold: '',
 		minSpeechMs: '',
 		minSpeechContinuationMs: '',
 		minSilenceMs: '',
@@ -172,6 +174,7 @@ $effect.root(() => {
 			seed: settings.seed,
 			reasoningEffort: settings.reasoningEffort,
 			vadThreshold: settings.vadThreshold,
+			vadNegThreshold: settings.vadNegThreshold,
 			minSpeechMs: settings.minSpeechMs,
 			minSpeechContinuationMs: settings.minSpeechContinuationMs,
 			minSilenceMs: settings.minSilenceMs,

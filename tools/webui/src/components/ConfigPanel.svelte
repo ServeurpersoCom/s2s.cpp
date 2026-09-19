@@ -136,6 +136,7 @@
 
 	function clearVad() {
 		settings.vadThreshold = '';
+		settings.vadNegThreshold = '';
 		settings.minSpeechMs = '';
 		settings.minSpeechContinuationMs = '';
 		settings.minSilenceMs = '';
@@ -238,7 +239,14 @@
 		<div class="details-body">
 			<div class="meta-grid">
 				<label
-					>Threshold <input
+					>Threshold min <input
+						type="text"
+						placeholder={ph(d?.vad_neg_threshold)}
+						bind:value={settings.vadNegThreshold}
+					/></label
+				>
+				<label
+					>Threshold max <input
 						type="text"
 						placeholder={ph(d?.vad_threshold)}
 						bind:value={settings.vadThreshold}

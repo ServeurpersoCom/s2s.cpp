@@ -4,9 +4,11 @@
 // threshold is converted to a window count once, so the loop only compares
 // integers.
 //
-// The hysteresis is what makes the loop usable in a room: opening a turn
-// needs min_speech_ms of speech, so a chair or a breath never starts one,
-// while reopening a turn that the classifier judged unfinished needs only
+// Two hystereses make the loop usable in a room. On the probability, speech
+// starts at vad_threshold and lasts down to vad_neg_threshold, so a dip in
+// the middle of a word does not break it. On time, opening a turn needs
+// min_speech_ms of speech, so a chair or a breath never starts one, while
+// reopening a turn that the classifier judged unfinished needs only
 // min_speech_continuation_ms, because the speaker is already talking and the
 // first syllable must not be lost.
 
@@ -98,8 +100,9 @@ struct s2s_session {
     int  turn_id    = 0;
     int  revision   = 0;
     bool speaking   = false;
+    bool in_speech  = false;  // the VAD side of the hysteresis
 
-    size_t n_windows = 0;  // windows consumed since the start of the stream
+    size_t n_windows = 0;     // windows consumed since the start of the stream
 };
 
 static int s2s_session_windows(int ms, int window, int sample_rate) {
@@ -206,6 +209,7 @@ void s2s_session_reset(s2s_session * s) {
     s->revision    = 0;
     s->grace_left  = 0;
     s->speaking    = false;
+    s->in_speech   = false;
 }
 
 static void s2s_session_emit(s2s_session * s, s2s_session_event event, float score) {
@@ -260,8 +264,14 @@ static void s2s_session_window(s2s_session * s, const float * window) {
         s2s_session_emit(s, S2S_EVENT_TURN_FINAL, 0.0f);
     }
 
-    const float prob      = sv_prob(s->state, window, s->window);
-    const bool  is_speech = prob >= s->params.vad_threshold;
+    // Two thresholds, the Silero hysteresis: speech starts at vad_threshold
+    // and lasts while the probability stays at or above vad_neg_threshold,
+    // so a dip inside a word, or a voice the echo canceller left fainter,
+    // does not cut it. A lower bound set above the upper one is the upper.
+    const float prob     = sv_prob(s->state, window, s->window);
+    const float stay     = std::min(s->params.vad_neg_threshold, s->params.vad_threshold);
+    s->in_speech         = prob >= (s->in_speech ? stay : s->params.vad_threshold);
+    const bool is_speech = s->in_speech;
 
     s->speech_run  = is_speech ? s->speech_run + 1 : 0;
     s->silence_run = is_speech ? 0 : s->silence_run + 1;

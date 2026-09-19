@@ -91,7 +91,8 @@ Defaults, published on `/props` and patchable per session:
 
 | Parameter | Default | Role |
 | --- | --- | --- |
-| `vad_threshold` | 0.6 | Silero speech probability |
+| `vad_threshold` | 0.6 | Silero probability where speech starts |
+| `vad_neg_threshold` | 0.45 | probability speech has to stay at or above to go on |
 | `min_speech_ms` | 384 | opens a turn, and arms a barge-in |
 | `min_speech_continuation_ms` | 192 | reopens a turn from `PENDING_END` |
 | `min_silence_ms` | 64 | speech to silence boundary |

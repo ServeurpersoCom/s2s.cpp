@@ -65,7 +65,10 @@ export interface S2SMessage {
 // Silero scores every 32 ms window, Smart Turn only scores a speech to
 // silence boundary, so the two are configured apart.
 export interface S2SVad {
+	// speech starts at threshold and lasts while the probability stays at or
+	// above negThreshold
 	threshold?: number;
+	negThreshold?: number;
 	minSpeechMs?: number;
 	minSpeechContinuationMs?: number;
 	minSilenceMs?: number;
@@ -567,6 +570,7 @@ export class S2S {
 				},
 				vad: {
 					threshold: this.options.vad?.threshold,
+					neg_threshold: this.options.vad?.negThreshold,
 					min_speech_ms: this.options.vad?.minSpeechMs,
 					min_speech_continuation_ms: this.options.vad?.minSpeechContinuationMs,
 					min_silence_ms: this.options.vad?.minSilenceMs,
