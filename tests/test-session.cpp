@@ -58,6 +58,8 @@ static const char * event_name(s2s_session_event event) {
             return "turn_committed";
         case S2S_EVENT_TURN_FINAL:
             return "turn_final";
+        case S2S_EVENT_TURN_RESUMED:
+            return "turn_resumed";
         case S2S_EVENT_BARGE_IN:
             return "barge_in";
     }

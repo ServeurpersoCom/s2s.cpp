@@ -94,7 +94,7 @@ struct s2s_session {
     int silence_run = 0;
     int pending_run = 0;          // windows spent in PENDING_END
 
-    int  grace_left = 0;          // windows before the last complete commit is final
+    int  grace_left = 0;          // windows before the last complete commit is final, the turn resumable until then
     int  turn_id    = 0;
     int  revision   = 0;
     bool speaking   = false;
@@ -236,15 +236,15 @@ static void s2s_session_open_turn(s2s_session * s) {
     s2s_session_emit(s, S2S_EVENT_SPEECH_STARTED, 0.0f);
 }
 
-// Hands the turn over. A final commit lets its answer be heard at once, the
-// others start the grace. The turn keeps its identity until the next one
-// opens, so the final that ends the grace names it.
+// Hands the turn over. A final commit lets its answer be heard at once and
+// lets the audio go; the others start the grace and keep the audio, which a
+// resumption continues.
 static void s2s_session_commit(s2s_session * s, float score, bool final) {
     s2s_session_emit(s, S2S_EVENT_TURN_COMMITTED, score);
-    s->turn_pcm.clear();
     s->phase       = S2S_SESSION_IDLE;
     s->pending_run = 0;
     if (final || s->grace_windows == 0) {
+        s->turn_pcm.clear();
         s2s_session_emit(s, S2S_EVENT_TURN_FINAL, score);
     } else {
         s->grace_left = s->grace_windows;
@@ -256,6 +256,7 @@ static void s2s_session_commit(s2s_session * s, float score, bool final) {
 // exactly reopen_grace_ms.
 static void s2s_session_window(s2s_session * s, const float * window) {
     if (s->grace_left > 0 && --s->grace_left == 0) {
+        s->turn_pcm.clear();
         s2s_session_emit(s, S2S_EVENT_TURN_FINAL, 0.0f);
     }
 
@@ -270,14 +271,21 @@ static void s2s_session_window(s2s_session * s, const float * window) {
     s->lookback.push(window, (size_t) s->window);
     s->stream.push(window, (size_t) s->window);
 
-    if (s->phase != S2S_SESSION_IDLE) {
+    if (s->phase != S2S_SESSION_IDLE || s->grace_left > 0) {
         s->turn_pcm.insert(s->turn_pcm.end(), window, window + s->window);
     }
 
     switch (s->phase) {
         case S2S_SESSION_IDLE:
             {
-                if (s->speech_run >= s->open_windows) {
+                // The speaker goes on before the grace ran out: the same turn,
+                // one revision further, its audio continuous.
+                if (s->grace_left > 0 && s->speech_run >= s->reopen_windows) {
+                    s->grace_left = 0;
+                    s->revision++;
+                    s->phase = S2S_SESSION_USER_SPEAKING;
+                    s2s_session_emit(s, S2S_EVENT_TURN_RESUMED, 0.0f);
+                } else if (s->speech_run >= s->open_windows) {
                     if (s->speaking) {
                         s2s_session_emit(s, S2S_EVENT_BARGE_IN, 0.0f);
                     }

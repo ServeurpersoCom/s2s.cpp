@@ -373,11 +373,11 @@ struct TurnAudio {
 // the client's, pushed when it changes, and nothing survives here between two
 // turns.
 struct ClientSettings {
-    std::string              mode = "conversation";
-    tts_request              tts;
-    llm_client_params        llm;
-    std::string              system_prompt;
-    std::vector<llm_message> history;
+    std::string             mode = "conversation";
+    tts_request             tts;
+    llm_client_params       llm;
+    std::string             system_prompt;
+    std::vector<rt_message> history;
 };
 
 struct Connection {
@@ -419,15 +419,19 @@ struct Connection {
 
     // The first sample of an answer waits for its turn to be final. The
     // session decides on the reader thread: the latest turn declared final,
-    // and the latest turn that opened, which makes every earlier one final.
+    // and the latest turn and revision that opened. An answer to anything
+    // older than what opened last is void.
     std::mutex              turn_mutex;
     std::condition_variable turn_cv;
-    int                     final_turn = 0;
-    int                     open_turn  = 0;
+    int                     final_turn    = 0;
+    int                     open_turn     = 0;
+    int                     open_revision = 0;
 
-    // The answer in flight, responder side: its turn, and whether its first
-    // unit has gone past the wait.
+    // The answer in flight: its turn and revision, written by the responder
+    // under turn_mutex and read there by the reader, and whether its first
+    // unit has gone past the wait, the responder's alone.
     int  answer_turn     = 0;
+    int  answer_revision = 0;
     bool answer_released = false;
 
     // Whether the assistant holds the floor: set by the responder, handed to
@@ -615,22 +619,29 @@ static void conn_writer(Connection * conn) {
     }
 }
 
-// Whether a turn opened after this one: the user spoke again, so an answer to
-// this turn that nobody heard yet has lost its point.
-static bool conn_superseded(Connection * conn, int turn_id) {
+// Whether something opened after this turn and revision: a later turn, or
+// the same turn resumed. The user spoke again, so an answer to it that
+// nobody heard yet has lost its point. Called with turn_mutex held.
+static bool conn_outdated(const Connection * conn, int turn_id, int revision) {
+    return conn->open_turn > turn_id || (conn->open_turn == turn_id && conn->open_revision > revision);
+}
+
+// Whether the same turn went on past this revision: its audio comes again,
+// whole, in a later commit.
+static bool conn_revised(Connection * conn, int turn_id, int revision) {
     std::lock_guard<std::mutex> lock(conn->turn_mutex);
-    return conn->open_turn > turn_id;
+    return conn->open_turn == turn_id && conn->open_revision > revision;
 }
 
 // Holds the first unit of the answer until its turn is final. Returns false
-// when the floor went back meanwhile, or when a later turn opened first.
+// when the floor went back meanwhile, or when something opened after it.
 static bool conn_wait_final(Connection * conn) {
     std::unique_lock<std::mutex> lock(conn->turn_mutex);
     conn->turn_cv.wait(lock, [conn]() {
         return conn->stop || conn->cancel.load() || conn->final_turn >= conn->answer_turn ||
-               conn->open_turn > conn->answer_turn;
+               conn_outdated(conn, conn->answer_turn, conn->answer_revision);
     });
-    if (conn->open_turn > conn->answer_turn) {
+    if (conn_outdated(conn, conn->answer_turn, conn->answer_revision)) {
         conn->cancel.store(true);
     }
     return !conn->stop && !conn->cancel.load();
@@ -703,6 +714,13 @@ static void llm_push(std::vector<llm_message> & messages, const llm_message & me
 static void conn_respond(Connection * conn, const TurnAudio & turn) {
     const std::vector<float> & pcm = turn.pcm;
 
+    // A later revision of the same turn carries this audio and more: only the
+    // last one is worth recognizing.
+    if (conn_revised(conn, turn.turn_id, turn.revision)) {
+        s2s_log(S2S_LOG_INFO, "[Turn] Turn %d rev %d resumed before its recognition", turn.turn_id, turn.revision);
+        return;
+    }
+
     // A cancel raised from here on belongs to this turn.
     conn->cancel.store(false);
 
@@ -729,17 +747,11 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
 
     s2s_log(S2S_LOG_INFO, "[Turn] Heard %zu characters in %.2fs of audio (turn %d rev %d)", transcript.size(),
             (double) pcm.size() / S2S_MODEL_RATE, turn.turn_id, turn.revision);
-    conn_send(conn, rt_event_transcript("turn_" + std::to_string(turn.turn_id), transcript));
+    const std::string item = "turn_" + std::to_string(turn.turn_id);
+    conn_send(conn, rt_event_transcript(item, transcript));
 
     if (conn->stop) {
         return;
-    }
-
-    // The user spoke again during the recognition: the answer is void before
-    // it starts, and still opens and closes like any other, so the client
-    // files the turn in its conversation all the same.
-    if (conn_superseded(conn, turn.turn_id)) {
-        conn->cancel.store(true);
     }
 
     // The settings and the list as they stand now: a change that arrives
@@ -750,9 +762,21 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
         client = conn->client;
     }
 
-    conn->answer_turn     = turn.turn_id;
-    conn->answer_released = false;
-    conn->speaking.store(true);
+    // The answer in flight, published with the floor under the turn lock: from
+    // here on a turn or a revision that opens voids it at once. If the user
+    // spoke again during the recognition, it is void before it starts, and
+    // still opens and closes like any other, so the client files the turn in
+    // its conversation all the same.
+    {
+        std::lock_guard<std::mutex> lock(conn->turn_mutex);
+        conn->answer_turn     = turn.turn_id;
+        conn->answer_revision = turn.revision;
+        conn->answer_released = false;
+        conn->speaking.store(true);
+        if (conn_outdated(conn, turn.turn_id, turn.revision)) {
+            conn->cancel.store(true);
+        }
+    }
     conn_send(conn, rt_event("response.created"));
 
     std::string answer;
@@ -771,8 +795,12 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
         if (!client.system_prompt.empty()) {
             messages.push_back({ "system", client.system_prompt });
         }
-        for (const llm_message & message : client.history) {
-            llm_push(messages, message);
+        // An earlier revision of this turn may sit in the list, pushed when
+        // its answer closed unheard: the transcript below replaces it.
+        for (const rt_message & message : client.history) {
+            if (message.role != "user" || message.item != item) {
+                llm_push(messages, { message.role, message.content });
+            }
         }
         llm_push(messages, { "user", transcript });
 
@@ -855,6 +883,22 @@ static void conn_responder(Connection * conn) {
     }
 }
 
+// The latest turn and revision that opened. An answer in flight to anything
+// older is void from this moment: its synthesis and its endpoint request
+// stop now instead of at their first unit, and the responder is free for
+// what just opened.
+static void conn_opened(Connection * conn, int turn_id, int revision) {
+    std::lock_guard<std::mutex> lock(conn->turn_mutex);
+    if (turn_id > conn->open_turn || (turn_id == conn->open_turn && revision > conn->open_revision)) {
+        conn->open_turn     = turn_id;
+        conn->open_revision = revision;
+    }
+    if (conn->speaking.load() && conn_outdated(conn, conn->answer_turn, conn->answer_revision)) {
+        conn->cancel.store(true);
+    }
+    conn->turn_cv.notify_all();
+}
+
 // Events the state machine raises, on the reader thread.
 static void conn_on_session_event(const s2s_session_report * report, void * user) {
     Connection * conn = (Connection *) user;
@@ -865,9 +909,18 @@ static void conn_on_session_event(const s2s_session_report * report, void * user
                 s2s_log(S2S_LOG_INFO, "[Session] Speech started at %.2fs (turn %d rev %d)", report->time_sec,
                         report->turn_id, report->revision);
                 conn_send(conn, rt_event("input_audio_buffer.speech_started"));
-                std::lock_guard<std::mutex> lock(conn->turn_mutex);
-                conn->open_turn = report->turn_id > conn->open_turn ? report->turn_id : conn->open_turn;
-                conn->turn_cv.notify_all();
+                conn_opened(conn, report->turn_id, report->revision);
+                break;
+            }
+
+        case S2S_EVENT_TURN_RESUMED:
+            {
+                // The client sees the user talking again, like any start; the
+                // answer to the previous revision is void.
+                s2s_log(S2S_LOG_INFO, "[Session] Turn resumed at %.2fs (turn %d rev %d), its audio goes on",
+                        report->time_sec, report->turn_id, report->revision);
+                conn_send(conn, rt_event("input_audio_buffer.speech_started"));
+                conn_opened(conn, report->turn_id, report->revision);
                 break;
             }
 
@@ -940,9 +993,9 @@ static ClientSettings g_client_defaults;
 static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) {
     std::lock_guard<std::mutex> lock(conn->client_mutex);
 
-    std::vector<llm_message> history = std::move(conn->client.history);
-    conn->client                     = g_client_defaults;
-    conn->client.history             = std::move(history);
+    std::vector<rt_message> history = std::move(conn->client.history);
+    conn->client                    = g_client_defaults;
+    conn->client.history            = std::move(history);
 
     const s2s_session_params listening = conn->params;
     conn->params                       = s2s_session_params();
@@ -1652,10 +1705,7 @@ int main(int argc, char ** argv) {
                 case RT_CLIENT_HISTORY:
                     {
                         std::lock_guard<std::mutex> lock(conn.client_mutex);
-                        conn.client.history.clear();
-                        for (const rt_message & item : message.messages) {
-                            conn.client.history.push_back({ item.role, item.content });
-                        }
+                        conn.client.history = message.messages;
                         s2s_log(S2S_LOG_INFO, "[Realtime] History: %zu messages", conn.client.history.size());
                     }
                     break;

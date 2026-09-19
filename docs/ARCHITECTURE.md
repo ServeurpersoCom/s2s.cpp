@@ -57,6 +57,7 @@ USER_SPEAKING --silence >= min_silence_ms-->             PENDING_END
 PENDING_END   --turn complete-->                         committed, IDLE
 PENDING_END   --incomplete, then turn_max_wait_ms-->     committed, IDLE
 PENDING_END   --speech >= min_speech_continuation_ms-->  USER_SPEAKING
+grace         --speech >= min_speech_continuation_ms-->  USER_SPEAKING, same turn
 ```
 
 The session is told when the assistant holds the floor. Speech of
@@ -66,9 +67,13 @@ A commit the classifier judged complete keeps its answer silent for
 `reopen_grace_ms`, counted on the audio: recognition and the endpoint
 request start at once, but the first unit waits until the session
 reports the turn final. A breath inside a sentence never lets the
-assistant cut in: if the speaker goes on during the grace, the answer is
-dropped before anyone hears it. A commit forced by `turn_max_wait_ms` has
-waited already and is final at once.
+assistant cut in: the turn stays open during the grace, its audio still
+accumulating, and a speaker who goes on resumes it. The answer to the
+previous revision is dropped before anyone hears it, and the next commit
+hands the whole utterance to the recognizer again, under the same turn and
+a new revision. A revision that a later one overtook before its
+recognition is not recognized at all. A commit forced by
+`turn_max_wait_ms` has waited already and is final at once.
 
 A patch applies its thresholds to the running session: the turn in
 flight, the model states and the turn numbering are kept.
@@ -96,8 +101,10 @@ accumulating, so the whole utterance reaches the recognizer as one piece.
 
 The conversation belongs to the client. It pushes the whole list with
 `conversation.history` whenever it changes; the responder copies it when
-it picks a turn up and appends the new transcript. The server keeps
-nothing between two turns.
+it picks a turn up and appends the new transcript. A user message names
+its turn in `item`, the `item_id` of its transcript, so an earlier
+revision of the turn being answered is left out of the request. The
+server keeps nothing between two turns.
 
 The transcript of each synthesis unit leaves right before its first audio
 chunk, so the client only ever receives text that has sound behind it.

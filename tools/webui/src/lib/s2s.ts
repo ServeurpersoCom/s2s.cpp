@@ -54,6 +54,9 @@ export type S2SState = 'idle' | 'listening' | 'thinking' | 'speaking';
 export interface S2SMessage {
 	role: 'user' | 'assistant';
 	content: string;
+	// the turn a user line transcribes, while its connection lasts: the
+	// server drops an earlier transcript of the turn it is answering
+	item?: string;
 }
 
 // Everything the component takes. The settings panel of the bundled page is
@@ -405,10 +408,12 @@ export class S2S {
 	// Releases the socket, the microphone and the audio context, whoever ends
 	// the session: the user, a failed start or the server closing. The answer
 	// in flight closes first, so what was heard stays in the conversation, and
-	// the turn identity goes: the next connection numbers its turns afresh.
+	// the turn identity goes: the next connection numbers its turns afresh,
+	// so no line keeps the item of a turn that no longer exists.
 	private teardown() {
 		this.closeAnswer();
 		this.userItem = '';
+		this.history = this.history.map(({ role, content }) => ({ role, content }));
 		this.run++;
 		const ws = this.ws;
 		this.ws = null;
@@ -445,7 +450,7 @@ export class S2S {
 	// Seeds the conversation, for a host that persisted it or that brings its
 	// own context.
 	setHistory(messages: S2SMessage[]) {
-		this.history = messages.slice();
+		this.history = messages.map(({ role, content }) => ({ role, content }));
 		this.userItem = '';
 		this.pushHistory();
 	}
@@ -661,7 +666,7 @@ export class S2S {
 					if (revised) {
 						last.content = transcript;
 					} else {
-						this.history.push({ role: 'user', content: transcript });
+						this.history.push({ role: 'user', content: transcript, item });
 					}
 					this.userItem = item;
 					this.handlers.user_text?.(transcript, revised);

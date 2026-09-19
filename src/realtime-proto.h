@@ -53,10 +53,12 @@ enum rt_client_event {
     RT_CLIENT_HISTORY,
 };
 
-// One line of the conversation, in the shape the endpoint takes.
+// One line of the conversation, in the shape the endpoint takes. A user line
+// names the turn it transcribes in item, the item_id of its transcript.
 struct rt_message {
     std::string role;
     std::string content;
+    std::string item;
 };
 
 // Settings a client may change mid session. Empty strings and negative
@@ -309,7 +311,7 @@ static rt_client_message rt_parse(const std::string & frame) {
             yyjson_arr_foreach(messages, index, max, item) {
                 const std::string role = rt_json_str(item, "role");
                 if (!role.empty()) {
-                    message.messages.push_back({ role, rt_json_str(item, "content") });
+                    message.messages.push_back({ role, rt_json_str(item, "content"), rt_json_str(item, "item") });
                 }
             }
         }

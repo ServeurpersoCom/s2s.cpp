@@ -10,6 +10,7 @@
 //   PENDING_END   --turn complete-->                      committed, IDLE
 //   PENDING_END   --incomplete, then turn_max_wait_ms-->  committed, IDLE
 //   PENDING_END   --speech >= min_speech_continuation_ms--> USER_SPEAKING
+//   grace         --speech >= min_speech_continuation_ms--> USER_SPEAKING, same turn
 //
 // A turn keeps its identity across a reopening: the revision counter grows
 // and the audio keeps accumulating, so the recognizer sees the whole
@@ -17,8 +18,10 @@
 //
 // A commit the classifier judged complete keeps its answer silent for
 // reopen_grace_ms, counted on the audio, then the session reports the turn
-// final: a breath inside a sentence never lets the assistant cut in. A turn
-// that opens meanwhile supersedes the grace. A commit forced by
+// final: a breath inside a sentence never lets the assistant cut in. The
+// turn stays open during the grace, its audio still accumulating silence
+// included: a speaker who goes on resumes it, and the next commit hands the
+// whole utterance over again under a new revision. A commit forced by
 // turn_max_wait_ms or by the caller has waited already and is final at once.
 //
 // The session never transcribes and never speaks. It hands the committed
@@ -45,6 +48,7 @@ enum s2s_session_event {
     S2S_EVENT_TURN_REOPENED,       // the classifier said the turn was not over
     S2S_EVENT_TURN_COMMITTED,      // the audio is ready for the recognizer
     S2S_EVENT_TURN_FINAL,          // the committed turn stands, its answer may be heard
+    S2S_EVENT_TURN_RESUMED,        // the speaker went on during the grace: same turn, next revision
     S2S_EVENT_BARGE_IN,            // the user spoke while the assistant held the floor
 };
 

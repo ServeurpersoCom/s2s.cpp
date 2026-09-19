@@ -122,13 +122,19 @@ def main():
                "%d speech starts" % events.count("input_audio_buffer.speech_started")) and ok
     ok = check("turns", len(transcripts) > 0, "%d turns recognized" % len(transcripts)) and ok
     ok = check("transcripts", all(t.strip() for t in transcripts), "no empty transcript") and ok
-    # Each transcript names its turn, and a turn is transcribed once.
+    # Each transcript names its turn, and a turn comes back only as its own
+    # revision, right after the previous one: never after another turn.
     named = [item for item, _ in items if item.startswith("turn_")]
-    ok = check("items", len(named) == len(items) and len(set(named)) == len(named),
-               "%d transcripts, each with its own turn item" % len(items)) and ok
-    # The example is a monologue: the next words often arrive during the
-    # grace, and the answer to a fragment is dropped before anyone hears it.
-    # Every answer that is heard speaks back the turn that opened it.
+    grouped = all(named[i] == named[i - 1] or named[i] not in named[:i] for i in range(1, len(named)))
+    ok = check("items", len(named) == len(items) and grouped,
+               "%d transcripts of %d turns, revisions in a row" % (len(items), len(set(named)))) and ok
+    # The example is a monologue: the next words arrive during the grace, so
+    # the speaker resumes the turn and the whole utterance is transcribed
+    # again under the same item.
+    ok = check("resumed", len(set(named)) < len(named),
+               "%d revisions of a turn the speaker went on with" % (len(named) - len(set(named)))) and ok
+    # The answer to an earlier revision is dropped before anyone hears it.
+    # Every answer that is heard speaks back the transcript that opened it.
     heard, verbatim = spoken_back(out)
     ok = check("loopback", heard > 0 and verbatim, "%d answers heard, each its turn verbatim" % heard) and ok
     ok = check("audio", audio_sec > 1.0, "%.2fs of synthesized audio" % audio_sec) and ok

@@ -96,21 +96,47 @@ def main():
     ok = check("revisions", revisions, "%d reopenings each followed by a revision" % len(reopened)) and ok
 
     # A commit the classifier judged complete stays silent for the grace, then
-    # turns final, unless the next turn opens first; a forced commit is final
-    # at once.
-    grace_ok, n_graced, n_forced = True, 0, 0
+    # turns final, unless the speaker resumes it first; a forced commit is
+    # final at once.
+    def after(c, name):
+        return next((e for e in events if e["event"] == name and e["turn"] == c["turn"] and e["time"] >= c["time"]),
+                    None)
+
+    grace_ok, n_graced, n_forced, n_resumed = True, 0, 0, 0
     for c in commits:
-        final = next((e for e in events if e["event"] == "turn_final" and e["turn"] == c["turn"]), None)
-        later = next((e for e in events if e["event"] == "speech_started" and e["turn"] > c["turn"]), None)
+        final = after(c, "turn_final")
+        resumed = after(c, "turn_resumed")
         if c["score"] == 0.0:
             n_forced += 1
             grace_ok = grace_ok and final is not None and final["time"] == c["time"]
+        elif resumed is not None and (final is None or resumed["time"] < final["time"]):
+            n_resumed += 1
+            grace_ok = grace_ok and resumed["time"] - c["time"] <= GRACE_S + WINDOW_S
         elif final is not None:
             n_graced += 1
             grace_ok = grace_ok and final["time"] - c["time"] >= GRACE_S - WINDOW_S
         else:
-            grace_ok = grace_ok and (later is not None or c is commits[-1])
-    ok = check("grace", grace_ok, "%d commits final after the grace, %d forced final at once" % (n_graced, n_forced)) and ok
+            grace_ok = grace_ok and c is commits[-1]
+    ok = check("grace", grace_ok, "%d commits final after the grace, %d resumed within it, %d forced final at once" %
+               (n_graced, n_resumed, n_forced)) and ok
+
+    # A resumed turn keeps its id, raises its revision, and its next commit
+    # hands over everything since the previous one: the audio is continuous.
+    resumes = [e for e in events if e["event"] == "turn_resumed"]
+    continuous = True
+    for r in resumes:
+        before = [c for c in commits if c["turn"] == r["turn"] and c["time"] <= r["time"]]
+        later = [c for c in commits if c["turn"] == r["turn"] and c["time"] > r["time"]]
+        if not before:
+            continuous = False
+            continue
+        prev = before[-1]
+        continuous = continuous and r["rev"] > prev["rev"]
+        if later:
+            nxt = later[0]
+            expected = prev["seconds"] + (nxt["time"] - prev["time"])
+            continuous = continuous and abs(nxt["seconds"] - expected) <= 2 * WINDOW_S
+    ok = check("resumes", continuous, "%d turns resumed during their grace, audio continuous" % len(resumes)) and ok
 
     for c in commits:
         print('[Turn] %.2fs  turn %d  %.2fs  "%s"' % (c["time"], c["turn"], c["seconds"], c["text"]))
