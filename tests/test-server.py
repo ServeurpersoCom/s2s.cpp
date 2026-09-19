@@ -14,6 +14,10 @@
 # speaker talks over one of them. The loop has to hear the speaker through
 # the echo, stop the playback, and transcribe the interruption without a word
 # of the assistant.
+#
+# A third run asks for a conversation with an endpoint that cannot be
+# reached. Across all three, every response.created is closed by exactly one
+# response.done or response.cancelled.
 # Run from the tests/ directory.
 #
 # Usage:
@@ -84,6 +88,9 @@ def main():
         room = subprocess.run([CLIENT, url, WAV, ROOM_SECONDS, "--room"], check=True, stdout=subprocess.PIPE,
                               text=True).stdout
         print(room, end="")
+        broken = subprocess.run([CLIENT, url, WAV, SECONDS, "--no-endpoint"], check=True, stdout=subprocess.PIPE,
+                                text=True).stdout
+        print(broken, end="")
     finally:
         server.terminate()
         server.wait(timeout=30)
@@ -110,7 +117,29 @@ def main():
     ok = check("responses", events.count("response.done") >= len(transcripts),
                "%d responses completed" % events.count("response.done")) and ok
 
-    return 0 if check_room(room) and ok else 1
+    ok = check_room(room) and ok
+    for label, run in (("plain", out), ("room", room), ("no endpoint", broken)):
+        ok = check_terminals(label, run) and ok
+    errors = re.findall(r"\[Event\]\s+[\d.]+s\s+error", broken)
+    ok = check("no endpoint", bool(errors), "%d errors reported for the unreachable endpoint" % len(errors)) and ok
+    return 0 if ok else 1
+
+
+# Each response.created is closed by exactly one response.done or
+# response.cancelled before the next one opens.
+def check_terminals(label, out):
+    events = re.findall(r"\[Event\]\s+[\d.]+s\s+(\S+)", out)
+    open_response, closed = False, True
+    for name in events:
+        if name == "response.created":
+            closed = closed and not open_response
+            open_response = True
+        elif name in ("response.done", "response.cancelled"):
+            closed = closed and open_response
+            open_response = False
+    closed = closed and not open_response
+    return check("%s terminals" % label, closed,
+                 "%d responses, each closed exactly once" % events.count("response.created"))
 
 
 def check_room(out):

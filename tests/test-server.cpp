@@ -16,6 +16,9 @@
 // speaker talks over an answer with a later passage of the file, one second
 // into its playback and with two more seconds of it left to hear. Like the
 // browser, it drops its playback on speech_started.
+//
+// With --no-endpoint the session is a conversation with an endpoint that
+// cannot be reached: every response it opens has to end anyway.
 
 #include "audio-resample.h"
 #include "httplib.h"
@@ -49,12 +52,13 @@
 static void print_usage(const char * prog) {
     fprintf(stderr, "s2s.cpp %s\n\n", S2S_VERSION);
     fprintf(stderr,
-            "Usage: %s <url> <wav> [seconds] [--room]\n"
+            "Usage: %s <url> <wav> [seconds] [--room | --no-endpoint]\n"
             "\n"
             "Streams the WAV to a Realtime endpoint and prints the events.\n"
             "seconds bounds how much audio is sent, 0 sends the whole file.\n"
             "--room plays the answers into the microphone through a simulated\n"
-            "room and talks over one of them, with the server echo canceller.\n",
+            "room and talks over one of them, with the server echo canceller.\n"
+            "--no-endpoint asks for a conversation with an unreachable endpoint.\n",
             prog);
 }
 
@@ -67,11 +71,14 @@ struct Speaker {
 };
 
 int main(int argc, char ** argv) {
-    bool                      room = false;
+    bool                      room        = false;
+    bool                      no_endpoint = false;
     std::vector<const char *> args;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--room") == 0) {
             room = true;
+        } else if (strcmp(argv[i], "--no-endpoint") == 0) {
+            no_endpoint = true;
         } else {
             args.push_back(argv[i]);
         }
@@ -230,9 +237,11 @@ int main(int argc, char ** argv) {
         }
     });
 
-    client.send(
-        room ? std::string("{\"type\":\"session.update\",\"session\":{\"mode\":\"loopback\",\"echo\":\"server\"}}") :
-               std::string("{\"type\":\"session.update\",\"session\":{\"mode\":\"loopback\"}}"));
+    const char * session =
+        room        ? "{\"type\":\"session.update\",\"session\":{\"mode\":\"loopback\",\"echo\":\"server\"}}" :
+        no_endpoint ? "{\"type\":\"session.update\",\"session\":{\"mode\":\"conversation\",\"llm_url\":\"nowhere\"}}" :
+                      "{\"type\":\"session.update\",\"session\":{\"mode\":\"loopback\"}}";
+    client.send(std::string(session));
 
     const int frame_samples = FRAME_MS * SAMPLE_RATE_24K / 1000;
     if (!room) {
