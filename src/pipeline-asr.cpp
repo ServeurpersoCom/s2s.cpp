@@ -51,8 +51,12 @@ struct pipeline_asr {
     struct ggml_tensor * mel_basis = nullptr;
     struct ggml_tensor * log_guard = nullptr;
 
-    GraphArena           dec_arena = {};
-    ggml_gallocr_t       dec_alloc = nullptr;
+    // The two decoder graphs live side by side for the whole session and each
+    // keeps its own allocator: an allocator serves one graph at a time, and
+    // allocating a second one through it would move the first one's memory.
+    GraphArena           dec_arena     = {};
+    ggml_gallocr_t       predict_alloc = nullptr;
+    ggml_gallocr_t       joint_alloc   = nullptr;
     ParakeetPredictGraph predict;
     ParakeetJointGraph   joint;
 
@@ -143,10 +147,13 @@ pipeline_asr * pipeline_asr_load(const pipeline_asr_params & params) {
         p->predict                 = parakeet_predict_build(dctx, p->decoder, ASR_DECODER_NODES);
         p->joint                   = parakeet_joint_build(dctx, p->decoder, ASR_DECODER_NODES);
 
-        p->dec_alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(p->bp.backend));
-        p->run_alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(p->bp.backend));
-        if (!p->dec_alloc || !p->run_alloc || !ggml_gallocr_alloc_graph(p->dec_alloc, p->predict.graph) ||
-            !ggml_gallocr_alloc_graph(p->dec_alloc, p->joint.graph)) {
+        ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(p->bp.backend);
+        p->predict_alloc                = ggml_gallocr_new(buft);
+        p->joint_alloc                  = ggml_gallocr_new(buft);
+        p->run_alloc                    = ggml_gallocr_new(buft);
+        if (!p->predict_alloc || !p->joint_alloc || !p->run_alloc ||
+            !ggml_gallocr_alloc_graph(p->predict_alloc, p->predict.graph) ||
+            !ggml_gallocr_alloc_graph(p->joint_alloc, p->joint.graph)) {
             s2s_set_error("[ASR] Failed to allocate the decoder graphs");
             pipeline_asr_free(p);
             return nullptr;
@@ -167,8 +174,11 @@ void pipeline_asr_free(pipeline_asr * p) {
     if (!p) {
         return;
     }
-    if (p->dec_alloc) {
-        ggml_gallocr_free(p->dec_alloc);
+    if (p->predict_alloc) {
+        ggml_gallocr_free(p->predict_alloc);
+    }
+    if (p->joint_alloc) {
+        ggml_gallocr_free(p->joint_alloc);
     }
     if (p->run_alloc) {
         ggml_gallocr_free(p->run_alloc);
