@@ -36,6 +36,7 @@
 
 #include "yyjson.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -63,7 +64,8 @@ struct rt_message {
 
 // Settings a client may change mid session. Empty strings and negative
 // numbers mean "not in this update", which takes the server default: every
-// session.update describes the whole session.
+// session.update describes the whole session. A number out of its range is
+// refused, read as absent and named in invalid.
 struct rt_session_patch {
     std::string mode;  // conversation or loopback
     std::string echo;  // native, server or off
@@ -73,9 +75,9 @@ struct rt_session_patch {
     std::string system_prompt;
     float       temperature       = -1.0f;
     float       top_p             = -1.0f;
-    float       top_k             = -1.0f;
+    int         top_k             = -1;
     float       min_p             = -1.0f;
-    float       max_tokens        = -1.0f;
+    int         max_tokens        = -1;
     float       presence_penalty  = -100.0f;
     float       frequency_penalty = -100.0f;
     int64_t     seed              = -1;
@@ -83,18 +85,18 @@ struct rt_session_patch {
     std::string tts_speaker;
     std::string tts_language;
     float       tts_temperature            = -1.0f;
-    float       tts_top_k                  = -1.0f;
+    int         tts_top_k                  = -1;
     float       tts_top_p                  = -1.0f;
     float       tts_repetition_penalty     = -1.0f;
     float       tts_subtalker_temperature  = -1.0f;
-    float       tts_subtalker_top_k        = -1.0f;
+    int         tts_subtalker_top_k        = -1;
     float       tts_subtalker_top_p        = -1.0f;
-    float       tts_max_new_tokens         = -1.0f;
+    int         tts_max_new_tokens         = -1;
     int64_t     tts_seed                   = -1;
-    float       tts_min_chars              = -1.0f;
+    int         tts_min_chars              = -1;
     float       tts_chars_per_second       = -1.0f;
     float       tts_margin_seconds         = -1.0f;
-    float       llm_timeout_sec            = -1.0f;
+    int         llm_timeout_sec            = -1;
     float       vad_threshold              = -1.0f;
     int         min_speech_ms              = -1;
     int         min_speech_continuation_ms = -1;
@@ -103,6 +105,8 @@ struct rt_session_patch {
     float       turn_threshold             = -1.0f;
     int         turn_max_wait_ms           = -1;
     int         reopen_grace_ms            = -1;
+
+    std::string invalid;  // the first field refused, empty when every one was usable
 };
 
 struct rt_client_message {
@@ -201,9 +205,46 @@ static std::string rt_json_str(yyjson_val * object, const char * key) {
     return value && yyjson_is_str(value) ? std::string(yyjson_get_str(value), yyjson_get_len(value)) : std::string();
 }
 
-static float rt_json_num(yyjson_val * object, const char * key, float fallback) {
+// The ranges a number of a session.update has to fall in. A duration is a
+// threshold of the turn detection, a pause or a pad, never a length of
+// speech; a count is tokens, frames, characters or seconds of timeout.
+#define RT_MAX_MS    60000
+#define RT_MAX_COUNT 1000000
+#define RT_MAX_REAL  1e6
+
+// A number of the patch: absent, it gives the fallback; present, it has to
+// be finite and within [lo, hi], or the field is refused, named in invalid,
+// and read as absent.
+static double rt_json_value(yyjson_val *  object,
+                            const char *  key,
+                            double        fallback,
+                            double        lo,
+                            double        hi,
+                            std::string & invalid) {
     yyjson_val * value = yyjson_obj_get(object, key);
-    return value && yyjson_is_num(value) ? (float) yyjson_get_num(value) : fallback;
+    if (!value || yyjson_is_null(value)) {
+        return fallback;
+    }
+    const double number = yyjson_is_num(value) ? yyjson_get_num(value) : NAN;
+    if (!(number >= lo && number <= hi)) {
+        if (invalid.empty()) {
+            invalid = key;
+        }
+        return fallback;
+    }
+    return number;
+}
+
+static float rt_json_real(yyjson_val * object, const char * key, float fallback, std::string & invalid) {
+    return (float) rt_json_value(object, key, fallback, -RT_MAX_REAL, RT_MAX_REAL, invalid);
+}
+
+static int rt_json_count(yyjson_val * object, const char * key, std::string & invalid) {
+    return (int) rt_json_value(object, key, -1, 0, RT_MAX_COUNT, invalid);
+}
+
+static int rt_json_ms(yyjson_val * object, const char * key, std::string & invalid) {
+    return (int) rt_json_value(object, key, -1, 0, RT_MAX_MS, invalid);
 }
 
 // Seeds are integers past what a float holds exactly, so they are read as such.
@@ -235,40 +276,45 @@ static rt_client_message rt_parse(const std::string & frame) {
         message.patch.llm_model       = rt_json_str(fields, "llm_model");
         message.patch.llm_key         = rt_json_str(fields, "llm_key");
         message.patch.system_prompt   = rt_json_str(fields, "instructions");
-        message.patch.llm_timeout_sec = rt_json_num(fields, "llm_timeout_sec", -1.0f);
+        message.patch.llm_timeout_sec = rt_json_count(fields, "llm_timeout_sec", message.patch.invalid);
 
         yyjson_val * llm = yyjson_obj_get(fields, "sampling");
         if (llm) {
-            message.patch.temperature       = rt_json_num(llm, "temperature", -1.0f);
-            message.patch.top_p             = rt_json_num(llm, "top_p", -1.0f);
-            message.patch.top_k             = rt_json_num(llm, "top_k", -1.0f);
-            message.patch.min_p             = rt_json_num(llm, "min_p", -1.0f);
-            message.patch.max_tokens        = rt_json_num(llm, "max_tokens", -1.0f);
-            message.patch.presence_penalty  = rt_json_num(llm, "presence_penalty", -100.0f);
-            message.patch.frequency_penalty = rt_json_num(llm, "frequency_penalty", -100.0f);
+            message.patch.temperature       = rt_json_real(llm, "temperature", -1.0f, message.patch.invalid);
+            message.patch.top_p             = rt_json_real(llm, "top_p", -1.0f, message.patch.invalid);
+            message.patch.top_k             = rt_json_count(llm, "top_k", message.patch.invalid);
+            message.patch.min_p             = rt_json_real(llm, "min_p", -1.0f, message.patch.invalid);
+            message.patch.max_tokens        = rt_json_count(llm, "max_tokens", message.patch.invalid);
+            message.patch.presence_penalty  = rt_json_real(llm, "presence_penalty", -100.0f, message.patch.invalid);
+            message.patch.frequency_penalty = rt_json_real(llm, "frequency_penalty", -100.0f, message.patch.invalid);
             message.patch.seed              = rt_json_int(llm, "seed", -1);
             message.patch.reasoning_effort  = rt_json_str(llm, "reasoning_effort");
         }
 
         yyjson_val * tts = yyjson_obj_get(fields, "tts");
         if (tts) {
-            message.patch.tts_speaker          = rt_json_str(tts, "speaker");
-            message.patch.tts_language         = rt_json_str(tts, "language");
-            message.patch.tts_min_chars        = rt_json_num(tts, "min_chars", -1.0f);
-            message.patch.tts_chars_per_second = rt_json_num(tts, "chars_per_second", -1.0f);
-            message.patch.tts_margin_seconds   = rt_json_num(tts, "margin_seconds", -1.0f);
+            message.patch.tts_speaker   = rt_json_str(tts, "speaker");
+            message.patch.tts_language  = rt_json_str(tts, "language");
+            message.patch.tts_min_chars = rt_json_count(tts, "min_chars", message.patch.invalid);
+            message.patch.tts_chars_per_second =
+                (float) rt_json_value(tts, "chars_per_second", -1.0, 1.0, 1000.0, message.patch.invalid);
+            message.patch.tts_margin_seconds =
+                (float) rt_json_value(tts, "margin_seconds", -1.0, 0.0, RT_MAX_MS / 1000.0, message.patch.invalid);
 
             yyjson_val * sampling = yyjson_obj_get(tts, "sampling");
             if (sampling) {
-                message.patch.tts_temperature           = rt_json_num(sampling, "temperature", -1.0f);
-                message.patch.tts_top_k                 = rt_json_num(sampling, "top_k", -1.0f);
-                message.patch.tts_top_p                 = rt_json_num(sampling, "top_p", -1.0f);
-                message.patch.tts_repetition_penalty    = rt_json_num(sampling, "repetition_penalty", -1.0f);
-                message.patch.tts_subtalker_temperature = rt_json_num(sampling, "subtalker_temperature", -1.0f);
-                message.patch.tts_subtalker_top_k       = rt_json_num(sampling, "subtalker_top_k", -1.0f);
-                message.patch.tts_subtalker_top_p       = rt_json_num(sampling, "subtalker_top_p", -1.0f);
-                message.patch.tts_max_new_tokens        = rt_json_num(sampling, "max_new_tokens", -1.0f);
-                message.patch.tts_seed                  = rt_json_int(sampling, "seed", -1);
+                message.patch.tts_temperature = rt_json_real(sampling, "temperature", -1.0f, message.patch.invalid);
+                message.patch.tts_top_k       = rt_json_count(sampling, "top_k", message.patch.invalid);
+                message.patch.tts_top_p       = rt_json_real(sampling, "top_p", -1.0f, message.patch.invalid);
+                message.patch.tts_repetition_penalty =
+                    rt_json_real(sampling, "repetition_penalty", -1.0f, message.patch.invalid);
+                message.patch.tts_subtalker_temperature =
+                    rt_json_real(sampling, "subtalker_temperature", -1.0f, message.patch.invalid);
+                message.patch.tts_subtalker_top_k = rt_json_count(sampling, "subtalker_top_k", message.patch.invalid);
+                message.patch.tts_subtalker_top_p =
+                    rt_json_real(sampling, "subtalker_top_p", -1.0f, message.patch.invalid);
+                message.patch.tts_max_new_tokens = rt_json_count(sampling, "max_new_tokens", message.patch.invalid);
+                message.patch.tts_seed           = rt_json_int(sampling, "seed", -1);
             }
         }
 
@@ -277,18 +323,21 @@ static rt_client_message rt_parse(const std::string & frame) {
         // scores a boundary.
         yyjson_val * vad = yyjson_obj_get(fields, "vad");
         if (vad) {
-            message.patch.vad_threshold              = rt_json_num(vad, "threshold", -1.0f);
-            message.patch.min_speech_ms              = (int) rt_json_num(vad, "min_speech_ms", -1.0f);
-            message.patch.min_speech_continuation_ms = (int) rt_json_num(vad, "min_speech_continuation_ms", -1.0f);
-            message.patch.min_silence_ms             = (int) rt_json_num(vad, "min_silence_ms", -1.0f);
-            message.patch.speech_pad_ms              = (int) rt_json_num(vad, "speech_pad_ms", -1.0f);
+            message.patch.vad_threshold =
+                (float) rt_json_value(vad, "threshold", -1.0, 0.0, 1.0, message.patch.invalid);
+            message.patch.min_speech_ms = rt_json_ms(vad, "min_speech_ms", message.patch.invalid);
+            message.patch.min_speech_continuation_ms =
+                rt_json_ms(vad, "min_speech_continuation_ms", message.patch.invalid);
+            message.patch.min_silence_ms = rt_json_ms(vad, "min_silence_ms", message.patch.invalid);
+            message.patch.speech_pad_ms  = rt_json_ms(vad, "speech_pad_ms", message.patch.invalid);
         }
 
         yyjson_val * turn = yyjson_obj_get(fields, "turn");
         if (turn) {
-            message.patch.turn_threshold   = rt_json_num(turn, "threshold", -1.0f);
-            message.patch.turn_max_wait_ms = (int) rt_json_num(turn, "max_wait_ms", -1.0f);
-            message.patch.reopen_grace_ms  = (int) rt_json_num(turn, "reopen_grace_ms", -1.0f);
+            message.patch.turn_threshold =
+                (float) rt_json_value(turn, "threshold", -1.0, 0.0, 1.0, message.patch.invalid);
+            message.patch.turn_max_wait_ms = rt_json_ms(turn, "max_wait_ms", message.patch.invalid);
+            message.patch.reopen_grace_ms  = rt_json_ms(turn, "reopen_grace_ms", message.patch.invalid);
         }
     } else if (type == "input_audio_buffer.append") {
         message.type                = RT_CLIENT_AUDIO_APPEND;

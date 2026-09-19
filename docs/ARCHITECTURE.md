@@ -204,7 +204,9 @@ fields are ignored, an unknown type gets an `error` event.
 `session.update` describes the whole session: a field it leaves out takes
 the default published on `/props`, so clearing a field brings the default
 back. The conversation has its own event, and the echo method only
-changes when one is named.
+changes when one is named. A number has to be finite and in its range, a
+turn duration up to 60 s: the server refuses any other with an `error`
+naming the field, which keeps its default.
 
 HTTP routes: `/` the page, `/s2s.js` the component, `/props` the session
 defaults and the loaded models, `/health`, `/logs` the server log as SSE,

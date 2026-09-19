@@ -45,8 +45,10 @@ def main():
     silent = re.search(r"Silent endpoint cancelled after ([\d.]+) ms of (\d+), returned (\w+)", log)
     reason = re.search(r"Broken endpoint returned \w+: (.*)", log)
     reused = re.search(r"Two completions over (\d+) connections, returned (\w+)", log)
+    refused = re.search(r"\[Parse\] refused (\S+), min_speech_ms (-?\d+), temperature (\S+)", log)
+    unreachable = re.search(r"Unreachable URLs refused (\d+) of 4, the client still answers: (\w+)", log)
 
-    ok = check("parsed", bool(streamed and first and cancelled and broken and written and parsed and silent and reused),
+    ok = check("parsed", bool(streamed and first and cancelled and broken and written and parsed and silent and reused and refused and unreachable),
                "harness reported every stage")
     if not ok:
         return 1
@@ -85,6 +87,16 @@ def main():
     # [DONE] ends the answer, not the connection: the next turn reuses it.
     ok = check("keep alive", reused.group(1) == "1" and reused.group(2) == "true",
                "two completions over %s connection(s)" % reused.group(1)) and ok
+
+    # Out of range or not a number: both refused and read as absent, the
+    # first one met named.
+    ok = check("session bounds", refused.group(1) == "temperature" and refused.group(2) == "-1" and
+               refused.group(3) == "-1", "refused %s, both fields left to the default" % refused.group(1)) and ok
+
+    # A URL no client can reach is refused, never a crash, and the client
+    # keeps the endpoint it had.
+    ok = check("bad url", unreachable.group(1) == "4" and unreachable.group(2) == "true",
+               "%s of 4 refused, the client still answers" % unreachable.group(1)) and ok
 
     ok = check("cancel honored", returned == "false", "request reported cancelled") and ok
     ok = check("cancel truncates", cut_chars < n_chars, "%d of %d characters" % (cut_chars, n_chars)) and ok

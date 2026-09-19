@@ -53,6 +53,24 @@ static bool llm_client_split_url(const std::string & url, std::string & host, st
     return true;
 }
 
+// The HTTP client of one endpoint host, or none when httplib cannot make one:
+// a port out of range, a scheme it does not speak, https on a build without
+// TLS. It throws for some of them and hands back an empty client for the
+// others; either way nothing past this point sees an unusable client.
+static std::unique_ptr<httplib::Client> llm_client_http(const std::string & host) {
+    std::unique_ptr<httplib::Client> http;
+    try {
+        http = std::make_unique<httplib::Client>(host);
+    } catch (const std::exception &) {
+        http.reset();
+    }
+    if (!http || !http->is_valid()) {
+        s2s_set_error("[LLM] The endpoint URL cannot be reached: bad port, unknown scheme, or https without TLS");
+        return nullptr;
+    }
+    return http;
+}
+
 llm_client * llm_client_new(const llm_client_params & params) {
     llm_client * c = new llm_client();
     if (!llm_client_set_params(c, params)) {
@@ -70,8 +88,12 @@ bool llm_client_set_params(llm_client * c, const llm_client_params & params) {
         return false;
     }
     if (!c->http || host != c->host) {
-        c->http = std::make_unique<httplib::Client>(host);
-        c->http->set_keep_alive(true);
+        std::unique_ptr<httplib::Client> http = llm_client_http(host);
+        if (!http) {
+            return false;
+        }
+        http->set_keep_alive(true);
+        c->http = std::move(http);
     }
     c->params = params;
     c->host   = host;
@@ -198,10 +220,6 @@ bool llm_client_stream(llm_client *                     c,
     }
 
     httplib::Client & client = *c->http;
-    if (!client.is_valid()) {
-        s2s_set_error("[LLM] The endpoint is https and this build has no TLS");
-        return false;
-    }
     client.set_read_timeout(c->params.timeout_sec, 0);
     client.set_write_timeout(c->params.timeout_sec, 0);
 
@@ -329,11 +347,11 @@ bool llm_client_models(const llm_client_params & params, std::vector<std::string
         return false;
     }
 
-    httplib::Client client(host.c_str());
-    if (!client.is_valid()) {
-        s2s_set_error("[LLM] The endpoint is https and this build has no TLS");
+    std::unique_ptr<httplib::Client> http = llm_client_http(host);
+    if (!http) {
         return false;
     }
+    httplib::Client & client = *http;
     client.set_read_timeout(params.timeout_sec, 0);
 
     httplib::Headers headers;

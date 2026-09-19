@@ -1025,8 +1025,12 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
         if (conn->aec) {
             s2s_log(S2S_LOG_INFO, "[AEC] Canceller on, fresh echo path");
         }
+        // The microphone and the reference are decimated in step, so their
+        // remainders restart together: two streams of equal length in give
+        // two of equal length out, hop for hop.
         conn->aec_mic.clear();
         conn->aec_ref.clear();
+        conn->input_tail.clear();
         conn->reference_tail.clear();
         conn->aec_in         = 0.0;
         conn->aec_out        = 0.0;
@@ -1068,14 +1072,14 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     if (patch.top_p >= 0.0f) {
         conn->client.llm.sampling.top_p = patch.top_p;
     }
-    if (patch.top_k >= 0.0f) {
-        conn->client.llm.sampling.top_k = (int) patch.top_k;
+    if (patch.top_k >= 0) {
+        conn->client.llm.sampling.top_k = patch.top_k;
     }
     if (patch.min_p >= 0.0f) {
         conn->client.llm.sampling.min_p = patch.min_p;
     }
-    if (patch.max_tokens >= 0.0f) {
-        conn->client.llm.sampling.max_tokens = (int) patch.max_tokens;
+    if (patch.max_tokens >= 0) {
+        conn->client.llm.sampling.max_tokens = patch.max_tokens;
     }
     if (patch.presence_penalty > -3.0f) {
         conn->client.llm.sampling.presence_penalty = patch.presence_penalty;
@@ -1095,8 +1099,8 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     if (!patch.tts_language.empty()) {
         conn->client.tts.language = patch.tts_language;
     }
-    if (patch.tts_min_chars >= 0.0f) {
-        conn->client.tts.guards.min_chars = (int) patch.tts_min_chars;
+    if (patch.tts_min_chars >= 0) {
+        conn->client.tts.guards.min_chars = patch.tts_min_chars;
     }
     if (patch.tts_chars_per_second > 0.0f) {
         conn->client.tts.guards.chars_per_second = patch.tts_chars_per_second;
@@ -1105,15 +1109,15 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
         conn->client.tts.guards.margin_seconds = patch.tts_margin_seconds;
     }
 
-    if (patch.llm_timeout_sec > 0.0f) {
-        conn->client.llm.timeout_sec = (int) patch.llm_timeout_sec;
+    if (patch.llm_timeout_sec > 0) {
+        conn->client.llm.timeout_sec = patch.llm_timeout_sec;
     }
 
     if (patch.tts_temperature >= 0.0f) {
         conn->client.tts.sampling.temperature = patch.tts_temperature;
     }
-    if (patch.tts_top_k >= 0.0f) {
-        conn->client.tts.sampling.top_k = (int) patch.tts_top_k;
+    if (patch.tts_top_k >= 0) {
+        conn->client.tts.sampling.top_k = patch.tts_top_k;
     }
     if (patch.tts_top_p >= 0.0f) {
         conn->client.tts.sampling.top_p = patch.tts_top_p;
@@ -1124,14 +1128,14 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     if (patch.tts_subtalker_temperature >= 0.0f) {
         conn->client.tts.sampling.subtalker_temperature = patch.tts_subtalker_temperature;
     }
-    if (patch.tts_subtalker_top_k >= 0.0f) {
-        conn->client.tts.sampling.subtalker_top_k = (int) patch.tts_subtalker_top_k;
+    if (patch.tts_subtalker_top_k >= 0) {
+        conn->client.tts.sampling.subtalker_top_k = patch.tts_subtalker_top_k;
     }
     if (patch.tts_subtalker_top_p >= 0.0f) {
         conn->client.tts.sampling.subtalker_top_p = patch.tts_subtalker_top_p;
     }
-    if (patch.tts_max_new_tokens >= 0.0f) {
-        conn->client.tts.sampling.max_new_tokens = (int) patch.tts_max_new_tokens;
+    if (patch.tts_max_new_tokens >= 0) {
+        conn->client.tts.sampling.max_new_tokens = patch.tts_max_new_tokens;
     }
     if (patch.tts_seed >= 0) {
         conn->client.tts.sampling.seed = patch.tts_seed;
@@ -1688,6 +1692,11 @@ int main(int argc, char ** argv) {
             switch (message.type) {
                 case RT_CLIENT_SESSION_UPDATE:
                     conn_apply_patch(&conn, message.patch);
+                    if (!message.patch.invalid.empty()) {
+                        conn_error(&conn, ("[Realtime] Session update: " + message.patch.invalid +
+                                           " is not a number in its range, it keeps the server default")
+                                              .c_str());
+                    }
                     // The log is streamed to every page on /logs: it says
                     // whether an endpoint is set, never which one.
                     s2s_log(

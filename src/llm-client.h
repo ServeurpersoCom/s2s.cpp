@@ -60,13 +60,16 @@ struct llm_client_params {
 // Receives text deltas as they arrive. Returning false cancels the request.
 typedef bool (*llm_delta_cb)(const char * text, void * user);
 
+// Returns NULL, with the reason in llm_client_last_error(), on a URL the
+// client cannot reach: no scheme, a bad port, a scheme it does not speak,
+// https on a build without TLS.
 llm_client * llm_client_new(const llm_client_params & params);
 void         llm_client_free(llm_client * c);
 
 // Points a client at new settings. The connection to the endpoint stays open
 // from one request to the next while the host stays the same, so a request
 // skips the TCP and TLS handshakes. Returns false, the client unchanged, on
-// a URL without a scheme.
+// a URL it cannot reach.
 bool llm_client_set_params(llm_client * c, const llm_client_params & params);
 
 // Streams one completion. text receives the full answer, deltas included.

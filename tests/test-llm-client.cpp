@@ -252,6 +252,32 @@ int main(int argc, char ** argv) {
             p.reasoning_effort.c_str());
     }
 
+    // Session updates the server refuses: a duration past its range, and a
+    // number that is not one. Both read as absent, the first one met named.
+    {
+        const rt_client_message message = rt_parse(
+            "{\"type\":\"session.update\",\"session\":{\"vad\":{\"min_speech_ms\":1e9},"
+            "\"sampling\":{\"temperature\":\"hot\"}}}");
+        printf("[Parse] refused %s, min_speech_ms %d, temperature %g\n", message.patch.invalid.c_str(),
+               message.patch.min_speech_ms, (double) message.patch.temperature);
+    }
+
+    // URLs no client can reach: a bad port, a scheme httplib does not speak.
+    // A client pointed at one keeps the endpoint it had.
+    {
+        int refused = 0;
+        for (const char * url : { "http://127.0.0.1:65536/v1", "ftp://127.0.0.1/v1" }) {
+            llm_client_params bad = params;
+            bad.base_url          = url;
+            refused += llm_client_new(bad) == nullptr;
+            refused += !llm_client_set_params(client, bad);
+        }
+        std::string again;
+        const bool  kept = llm_client_stream(client, messages, nullptr, nullptr, &cancel, again);
+        printf("[LLM] Unreachable URLs refused %d of 4, the client still answers: %s\n", refused,
+               kept ? "true" : "false");
+    }
+
     // Cancellation after three deltas.
     cancel.store(false);
     Collector interrupted;
