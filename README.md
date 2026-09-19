@@ -22,7 +22,9 @@ completions endpoint. Runs on CUDA, Vulkan, SYCL, Metal and CPU.
   breath never opens a turn
 - Smart Turn v3.2 end of turn classifier, called only on a speech to
   silence boundary, on a sliding window of the stream, so a thinking
-  pause is not mistaken for a finished sentence
+  pause is not mistaken for a finished sentence; the answer is computed
+  at once but stays silent for a short grace, so a breath inside a
+  sentence never lets the assistant cut in
 - Parakeet TDT 0.6B v3 recognition, 25 European languages with
   punctuation and casing, non autoregressive duration prediction
 - Qwen3-TTS CustomVoice synthesis through the qwentts.cpp C ABI, in

@@ -59,14 +59,13 @@ export function toOptions(): S2SOptions {
 	};
 }
 
-// One line of the conversation. draft is what the model wrote, spoken is what
-// the voice has actually said: the second trails the first by one synthesis
-// unit, and stops there on a barge-in.
+// One line of the conversation. draft is what the model wrote, spokenEnd how
+// far into it the voice went: it trails the draft by one synthesis unit, and
+// stops there on a barge-in.
 export interface ChatTurn {
 	role: 'user' | 'assistant';
 	draft: string;
-	spoken: string;
-	spokenEnd: number; // how far into draft the voice went, past it nothing was said
+	spokenEnd: number;
 	done: boolean;
 }
 
@@ -75,8 +74,6 @@ export interface ChatTurn {
 // something from this state.
 export const voice = $state({
 	state: 'idle' as S2SState,
-	userText: '',
-	assistantText: '',
 	error: '',
 	chat: [] as ChatTurn[]
 });
@@ -91,7 +88,7 @@ function openAssistant(): ChatTurn {
 	if (open) {
 		return open;
 	}
-	const turn: ChatTurn = { role: 'assistant', draft: '', spoken: '', spokenEnd: 0, done: false };
+	const turn: ChatTurn = { role: 'assistant', draft: '', spokenEnd: 0, done: false };
 	voice.chat.push(turn);
 	return turn;
 }
@@ -141,8 +138,6 @@ export async function createVoice(): Promise<S2S> {
 		}
 	});
 	s2s.on('user_text', (text, revised) => {
-		voice.userText = text;
-		voice.assistantText = '';
 		closeAssistant();
 		// a revision replaces the turn it revises, and the answer drafted for
 		// it that nobody heard
@@ -156,7 +151,6 @@ export async function createVoice(): Promise<S2S> {
 		voice.chat.push({
 			role: 'user',
 			draft: text,
-			spoken: text,
 			spokenEnd: text.length,
 			done: true
 		});
@@ -165,15 +159,12 @@ export async function createVoice(): Promise<S2S> {
 		openAssistant().draft += text;
 	});
 	s2s.on('assistant_text', (text, textEnd) => {
-		voice.assistantText += (voice.assistantText ? ' ' : '') + text;
-
 		const turn = openAssistant();
-		turn.spoken += (turn.spoken ? ' ' : '') + text;
-		turn.spokenEnd = textEnd;
 		// loopback has no model writing ahead: what is spoken is the whole turn
 		if (!turn.draft) {
-			turn.draft = turn.spoken;
+			turn.draft = text;
 		}
+		turn.spokenEnd = textEnd;
 	});
 	// everything the component reports goes to the server log, so the card on
 	// the right tells the whole story, and a failure also pops the toast
