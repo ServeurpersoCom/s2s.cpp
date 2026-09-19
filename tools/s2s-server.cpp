@@ -1124,13 +1124,18 @@ int main(int argc, char ** argv) {
         body += "\"sample_rate\":" + std::to_string(S2S_INPUT_RATE) + ",";
         // Which files are actually loaded: the directory can hold several
         // quants of the same model and nobody should have to guess.
+        // File names only: the page shows what is loaded, not where the
+        // server keeps it, and the separator is the OS's business.
+        const auto file = [](const std::string & path) {
+            return rt_escape(std::filesystem::path(path).filename().string());
+        };
         body += "\"models\":{";
-        body += "\"vad\":\"" + rt_escape(vad_path) + "\",";
-        body += "\"turn\":\"" + rt_escape(turn_path) + "\",";
-        body += "\"asr\":\"" + rt_escape(asr_path) + "\",";
-        body += "\"talker\":\"" + rt_escape(talker_path) + "\",";
-        body += "\"codec\":\"" + rt_escape(codec_path) + "\",";
-        body += "\"aec\":\"" + rt_escape(aec_path) + "\"";
+        body += "\"vad\":\"" + file(vad_path) + "\",";
+        body += "\"turn\":\"" + file(turn_path) + "\",";
+        body += "\"asr\":\"" + file(asr_path) + "\",";
+        body += "\"talker\":\"" + file(talker_path) + "\",";
+        body += "\"codec\":\"" + file(codec_path) + "\",";
+        body += "\"aec\":\"" + file(aec_path) + "\"";
         body += "},";
         body += "\"defaults\":{";
         body += "\"mode\":\"" + rt_escape(mode) + "\",";

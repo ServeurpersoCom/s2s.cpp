@@ -192,7 +192,7 @@
 				<span class="model-label">Models</span>
 				<span class="model-files">
 					{#each Object.values(app.props?.models ?? {}) as file (file)}
-						<span class="model-file">{file.split('/').pop()}</span>
+						<span class="model-file">{file}</span>
 					{/each}
 				</span>
 			</div>
