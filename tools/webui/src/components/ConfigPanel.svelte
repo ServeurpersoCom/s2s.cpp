@@ -5,7 +5,7 @@
 	import { fetchModels, props } from '../lib/api.js';
 	import { snippet } from '../lib/snippet.js';
 	import { ph } from '../lib/fields.js';
-	import { MODES, type Mode } from '../lib/config.js';
+	import { ENDPOINT_EXAMPLE, MODES, type Mode } from '../lib/config.js';
 	import { ECHO_DEFAULT, ECHO_MODES, realtimeUrl, type S2SEcho } from '../lib/s2s.js';
 	import { clearContext, getClient, voice } from '../lib/voice.svelte.js';
 
@@ -18,7 +18,8 @@
 
 	// a language model is in the path only when the mode asks for one and the
 	// endpoint answered: every consumer reads this, nobody recomputes it
-	let endpointReady = $derived(mode === 'conversation' && app.endpointOk);
+	// a server that owns its endpoint answers for it, and keeps it out of the page
+	let endpointReady = $derived(mode === 'conversation' && (app.endpointOk || !!d?.llm_fixed));
 
 	// modes are lowercase on the wire, spelled out on screen
 	const MODE_LABELS: Record<string, string> = {
@@ -74,6 +75,11 @@
 	// the selector is either filled by the endpoint or empty: a model name is
 	// what the endpoint answered, never a placeholder invented here.
 	async function loadModels() {
+		if (!settings.llmUrl) {
+			models = [];
+			app.endpointOk = false;
+			return;
+		}
 		try {
 			models = await fetchModels(settings.serverUrl, settings.llmUrl, settings.llmKey);
 			if (models.length > 0 && !models.includes(settings.llmModel)) {
@@ -160,7 +166,7 @@
 	// Only the mode drives this: loadModels reads the endpoint fields, and
 	// tracking them would fire a request on every keystroke of the URL.
 	$effect(() => {
-		if (mode === 'conversation') {
+		if (mode === 'conversation' && !d?.llm_fixed) {
 			untrack(loadModels);
 		}
 	});
@@ -317,37 +323,39 @@
 				<X size={20} />
 			</button>
 			<div class="details-body">
-				<div class="model-row">
-					<span class="model-label">URL</span>
-					<input
-						class="model-select"
-						type="text"
-						placeholder={ph(d?.llm_url)}
-						bind:value={settings.llmUrl}
-					/>
-				</div>
+				{#if !d?.llm_fixed}
+					<div class="model-row">
+						<span class="model-label">URL</span>
+						<input
+							class="model-select"
+							type="text"
+							placeholder={ENDPOINT_EXAMPLE}
+							bind:value={settings.llmUrl}
+						/>
+					</div>
 
-				<div class="model-row">
-					<span class="model-label">API key</span>
-					<input class="model-select" type="password" bind:value={settings.llmKey} />
-				</div>
+					<div class="model-row">
+						<span class="model-label">API key</span>
+						<input class="model-select" type="password" bind:value={settings.llmKey} />
+					</div>
 
-				<div class="model-row">
-					<span class="model-label">Model</span>
-					<select class="model-select" value={settings.llmModel} onchange={onModel}>
-						{#each models as model (model)}
-							<option value={model}>{model}</option>
-						{/each}
-					</select>
-					<button
-						type="button"
-						class="clear-btn"
-						onclick={loadModels}
-						aria-label="Reload the model list"
-					>
-						<RefreshCw size={16} />
-					</button>
-				</div>
+					<div class="model-row">
+						<span class="model-label">Model</span>
+						<select class="model-select" value={settings.llmModel} onchange={onModel}>
+							{#each models as model (model)}
+								<option value={model}>{model}</option>
+							{/each}
+						</select>
+						<button
+							type="button"
+							class="clear-btn"
+							onclick={loadModels}
+							aria-label="Reload the model list"
+						>
+							<RefreshCw size={16} />
+						</button>
+					</div>
+				{/if}
 
 				<label
 					>System prompt <textarea

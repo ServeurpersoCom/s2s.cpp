@@ -192,6 +192,15 @@ allowlist of endpoint hosts: the server fetches the endpoint a client
 names, so without it the server reaches anything it can route to. The
 log carries no conversation text, only character counts and timings.
 
+`--llm-url`, `--llm-model` and `--llm-key-file` give the server its own
+endpoint, the key read from the first line of a file so it shows neither
+in the process list nor in a shell history. The endpoint is then hidden
+from every session and fixed for it: the model list route answers 403,
+and a patch that names an endpoint, a model or a key is refused with an
+error. Without these options the server has no endpoint at all, and each
+session names its own. `/props` never publishes the endpoint: its
+`llm_fixed` only tells the page whether it may name one.
+
 ## Module map
 
 | File | Role |

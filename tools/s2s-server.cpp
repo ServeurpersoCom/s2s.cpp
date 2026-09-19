@@ -106,6 +106,7 @@ static void fd_close(int fd) {
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <queue>
 #include <string>
@@ -648,8 +649,9 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
         }
         messages.push_back({ "user", transcript });
 
-        llm_client * client = llm_client_new(conn->llm);
-        if (!client) {
+        if (conn->llm.base_url.empty()) {
+            conn_error(conn, "[Realtime] No endpoint: name one in the session, or start the server with --llm-url");
+        } else if (llm_client * client = llm_client_new(conn->llm); !client) {
             conn_error(conn, llm_client_last_error());
         } else {
             struct StreamTap {
@@ -790,6 +792,11 @@ static void conn_on_session_event(const s2s_session_report * report, void * user
 
 static std::vector<std::string> g_llm_hosts;
 
+// The endpoint belongs to the server once it names one on the command line:
+// sessions neither see it nor change it. Otherwise the server has none, and
+// each session names its own.
+static bool g_llm_fixed = false;
+
 static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) {
     if (!patch.mode.empty()) {
         conn->mode = patch.mode;
@@ -820,19 +827,24 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
         conn->aec_pending    = false;
         conn->aec_failing    = false;
     }
-    if (!patch.llm_url.empty()) {
-        if (host_allowed(g_llm_hosts, patch.llm_url)) {
-            conn->llm.base_url = patch.llm_url;
-        } else {
-            s2s_log(S2S_LOG_WARN, "[Realtime] Endpoint host %s is not allowed", url_host(patch.llm_url).c_str());
-            conn_send(conn, rt_event_error("endpoint host not allowed"));
+    if (g_llm_fixed) {
+        if (!patch.llm_url.empty() || !patch.llm_model.empty() || !patch.llm_key.empty()) {
+            conn_error(conn, "[Realtime] The endpoint is set by the server");
         }
-    }
-    if (!patch.llm_model.empty()) {
-        conn->llm.model = patch.llm_model;
-    }
-    if (!patch.llm_key.empty()) {
-        conn->llm.api_key = patch.llm_key;
+    } else {
+        if (!patch.llm_url.empty()) {
+            if (host_allowed(g_llm_hosts, patch.llm_url)) {
+                conn->llm.base_url = patch.llm_url;
+            } else {
+                conn_error(conn, ("[Realtime] Endpoint host " + url_host(patch.llm_url) + " is not allowed").c_str());
+            }
+        }
+        if (!patch.llm_model.empty()) {
+            conn->llm.model = patch.llm_model;
+        }
+        if (!patch.llm_key.empty()) {
+            conn->llm.api_key = patch.llm_key;
+        }
     }
     if (!patch.system_prompt.empty()) {
         conn->system_prompt = patch.system_prompt;
@@ -964,6 +976,11 @@ static void print_usage(const char * prog) {
             "  --host <addr>          Bind address (default: 127.0.0.1)\n"
             "  --port <N>             Bind port (default: 8088)\n"
             "\n"
+            "Endpoint, set by the server, hidden from and fixed for every session:\n"
+            "  --llm-url <url>        OpenAI compatible endpoint\n"
+            "  --llm-model <name>     Model on that endpoint\n"
+            "  --llm-key-file <path>  File holding its API key, read at startup\n"
+            "\n"
             "Security:\n"
             "  --origin <url>         Allowed browser origin, repeatable. Rejects a WebSocket\n"
             "                         or an HTTP route called from another page. Empty allows\n"
@@ -1059,12 +1076,14 @@ int main(int argc, char ** argv) {
 
     tts_engine engine;
 
-    // Session defaults, published on /props and overridable per client.
-    const llm_client_params llm_defaults;
-    const std::string       system_prompt = "You are a voice assistant. Answer in one or two short spoken sentences.";
-    const std::string       voice;
-    const std::string       language = "auto";
-    const std::string       mode     = "loopback";
+    // Session defaults, published on /props and overridable per client. The
+    // endpoint is the exception: the server's own when the command line names
+    // one, never published, never overridden.
+    llm_client_params llm_defaults;
+    const std::string system_prompt = "You are a voice assistant. Answer in one or two short spoken sentences.";
+    const std::string voice;
+    const std::string language = "auto";
+    const std::string mode     = "loopback";
 
     for (int i = 1; i < argc; i++) {
         const std::string arg       = argv[i];
@@ -1080,6 +1099,19 @@ int main(int argc, char ** argv) {
             origins.push_back(argv[++i]);
         } else if (arg == "--llm-host" && has_value) {
             llm_hosts.push_back(argv[++i]);
+        } else if (arg == "--llm-url" && has_value) {
+            llm_defaults.base_url = argv[++i];
+            g_llm_fixed           = true;
+        } else if (arg == "--llm-model" && has_value) {
+            llm_defaults.model = argv[++i];
+        } else if (arg == "--llm-key-file" && has_value) {
+            // The key is the first line of the file.
+            std::ifstream in(argv[++i]);
+            if (!std::getline(in, llm_defaults.api_key) || llm_defaults.api_key.empty()) {
+                fprintf(stderr, "[Server] FATAL: no key in %s\n", argv[i]);
+                return 1;
+            }
+            g_llm_fixed = true;
         } else if (arg == "--max-batch" && has_value) {
             engine.max_batch = atoi(argv[++i]);
         } else if (arg == "--no-fa") {
@@ -1223,8 +1255,7 @@ int main(int argc, char ** argv) {
         body += "},";
         body += "\"defaults\":{";
         body += "\"mode\":\"" + rt_escape(mode) + "\",";
-        body += "\"llm_url\":\"" + rt_escape(llm_defaults.base_url) + "\",";
-        body += "\"llm_model\":\"" + rt_escape(llm_defaults.model) + "\",";
+        body += std::string("\"llm_fixed\":") + (g_llm_fixed ? "true" : "false") + ",";
         body += "\"instructions\":\"" + rt_escape(system_prompt) + "\",";
         body += "\"voice\":\"" + rt_escape(tts_bridge_speaker(g_models.tts)) + "\",";
         body += "\"language\":\"" + rt_escape(language) + "\",";
@@ -1308,7 +1339,7 @@ int main(int argc, char ** argv) {
     // side, and the API key stays on this machine. The body overrides the
     // defaults so the panel can probe a URL before the session opens.
     server.Post("/v1/models", [&](const httplib::Request & req, httplib::Response & res) {
-        if (!origin_allowed(origins, req)) {
+        if (!origin_allowed(origins, req) || g_llm_fixed) {
             res.status = 403;
             return;
         }
@@ -1500,7 +1531,8 @@ int main(int argc, char ** argv) {
     signal(SIGTERM, on_signal);
 
     fprintf(stderr, "[Server] s2s-server %s\n", S2S_VERSION);
-    fprintf(stderr, "[Server] Mode: %s, endpoint %s\n", mode.c_str(), llm_defaults.base_url.c_str());
+    fprintf(stderr, "[Server] Mode: %s, endpoint %s\n", mode.c_str(),
+            g_llm_fixed ? llm_defaults.base_url.c_str() : "named by the session");
     fprintf(stderr, "[Server] Listening on http://%s:%d\n", host.c_str(), port);
 
     if (!server.listen(host, port)) {

@@ -1,3 +1,5 @@
+import { ENDPOINT_EXAMPLE } from './config.js';
+import { settings } from './state.svelte.js';
 import { toOptions } from './voice.svelte.js';
 
 // Turns the current settings into the snippet an integrator pastes on their
@@ -5,6 +7,11 @@ import { toOptions } from './voice.svelte.js';
 // to the server defaults, so the snippet stays as small as the intent behind
 // it. That is also the honest test of the component API, since the snippet is
 // nothing more than its options, written out.
+//
+// The endpoint and its API key never appear: a page is read by anyone, so the
+// key stays on the server. The snippet opens with the command that gives the
+// server its endpoint, the URL and the model filled in, the key left for the
+// integrator to write in a file next to it.
 
 function literal(value: unknown, indent: string): string {
 	if (typeof value === 'string') {
@@ -44,7 +51,12 @@ function object(value: Record<string, unknown>, indent: string): string {
 }
 
 export function snippet(): string {
-	const options = (prune(toOptions()) ?? {}) as Record<string, unknown>;
+	const options = (prune({ ...toOptions(), llmUrl: undefined, llmKey: undefined }) ?? {}) as Record<
+		string,
+		unknown
+	>;
+	const endpoint = settings.llmUrl || ENDPOINT_EXAMPLE;
+	const model = settings.llmModel || 'model-name';
 
 	// Everything stays relative to the page the snippet lands on: the module
 	// comes from the s2s-server that serves it, and the component resolves
@@ -55,7 +67,17 @@ export function snippet(): string {
 	// machine.
 	const body = `const s2s = new S2S(${object(options, '\t')});`;
 
-	return `<button id="talk">Talk</button>
+	return `<!--
+	The endpoint and its API key stay on the server, never in this page. Put
+	your key in a file, then start s2s-server with them (server.cmd on Windows
+	takes the same options):
+
+	echo "YOUR_API_KEY" > llm.key
+	./build/s2s-server --host 0.0.0.0 --port 8088 --models ./models \\
+		--origin https://your-site.example \\
+		--llm-url ${endpoint} --llm-model ${model} --llm-key-file llm.key
+-->
+<button id="talk">Talk</button>
 
 <script type="module">
 	import { S2S } from './s2s.js';

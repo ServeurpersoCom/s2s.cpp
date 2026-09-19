@@ -76,7 +76,9 @@ static std::string llm_client_body(const llm_client * c, const std::vector<llm_m
     yyjson_mut_val * root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
 
-    yyjson_mut_obj_add_str(doc, root, "model", c->params.model.c_str());
+    if (!c->params.model.empty()) {
+        yyjson_mut_obj_add_str(doc, root, "model", c->params.model.c_str());
+    }
     yyjson_mut_obj_add_bool(doc, root, "stream", true);
 
     const llm_sampling & s = c->params.sampling;

@@ -1,19 +1,21 @@
 import type { S2S, S2SOptions, S2SState } from './s2s.js';
 import { postLog } from './api.js';
 import { num } from './fields.js';
-import { settings, toast } from './state.svelte.js';
+import { app, settings, toast } from './state.svelte.js';
 
 // The one place the settings panel and the component meet. The panel edits a
 // Settings object, this turns it into the options the component takes, and a
 // host embedding the component elsewhere fills the same fields by hand.
 export function toOptions(): S2SOptions {
+	// a server that owns its endpoint takes none of it from the page
+	const fixed = app.props?.defaults.llm_fixed ?? false;
 	return {
 		url: settings.serverUrl,
 		mode: settings.mode || undefined,
 		instructions: settings.systemPrompt,
-		llmUrl: settings.llmUrl,
-		llmModel: settings.llmModel,
-		llmKey: settings.llmKey,
+		llmUrl: fixed ? undefined : settings.llmUrl,
+		llmModel: fixed ? undefined : settings.llmModel,
+		llmKey: fixed ? undefined : settings.llmKey,
 		sampling: {
 			temperature: num(settings.temperature),
 			topP: num(settings.topP),

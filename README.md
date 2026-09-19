@@ -95,10 +95,23 @@ Q8_0. The TTS checkpoints belong to the qwentts.cpp submodule.
 
 The command line only holds what belongs to the host: `--models`,
 `--host`, `--port`, the security allowlists `--origin` and `--llm-host`,
-and the TTS engine options (`--max-batch`, `--no-fa`, `--clamp-fp16`,
-`--codec-chunk-dur`). Everything else belongs to the client: mode,
-endpoint, prompt, voice, sampling, echo cancellation and turn detection
-travel in `session.update`, and their defaults are published on `/props`.
+the endpoint when the server owns it, and the TTS engine options
+(`--max-batch`, `--no-fa`, `--clamp-fp16`, `--codec-chunk-dur`).
+Everything else belongs to the client: mode, prompt, voice, sampling,
+echo cancellation and turn detection travel in `session.update`, and
+their defaults are published on `/props`. The endpoint travels in
+`session.update` too when the server has none of its own, and is never
+published.
+
+A page shown to other people must not hold the endpoint key, so the
+server can own the endpoint. The playground then hides its endpoint
+fields, and the client code it copies opens with this command, filled in:
+
+```
+echo "YOUR_API_KEY" > llm.key
+./build/s2s-server --origin https://your-site.example \
+    --llm-url https://api.example.com/v1 --llm-model model-name --llm-key-file llm.key
+```
 
 The endpoint is any OpenAI compatible server: llama-server, Ollama,
 LM Studio, a cloud API. The voice reads the text in the language it is

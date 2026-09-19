@@ -15,8 +15,11 @@
 # the echo, stop the playback, and transcribe the interruption without a word
 # of the assistant.
 #
-# A third run asks for a conversation with an endpoint that cannot be
-# reached. Across all three, every response.created is closed by exactly one
+# A server that owns its endpoint runs last: /props says nothing of it, the
+# model list is closed, and a client naming another endpoint is refused.
+#
+# A third run asks for a conversation on a server without an endpoint,
+# naming none either. Across all three, every response.created is closed by exactly one
 # response.done or response.cancelled.
 # Run from the tests/ directory.
 #
@@ -24,6 +27,7 @@
 #     ./test-server.py
 #     GGML_BACKEND=CPU ./test-server.py
 
+import json
 import os
 import re
 import subprocess
@@ -42,6 +46,10 @@ ROOM_SECONDS = "12"
 TALK_OVER_WORDS = "where you go"
 ECHO_WORDS = ("different", "cultures", "creation", "afterlife")
 REACTION_S = 1.5
+OWNED_PORT = 18087
+OWNED_URL = "http://127.0.0.1:18086/v1"
+OWNED_MODEL = "owned-model"
+OWNED_KEY = "s2s-test-key"
 GRACE_S = 0.8  # reopen_grace_ms at its default
 TMP = "tmp"
 
@@ -53,13 +61,13 @@ def check(label, ok, detail):
     return ok
 
 
-def wait_for_health(process):
+def wait_for_health(process, port=PORT):
     deadline = time.time() + BOOT_TIMEOUT_S
     while time.time() < deadline:
         if process.poll() is not None:
             return False
         try:
-            with urllib.request.urlopen("http://127.0.0.1:%d/health" % PORT, timeout=1) as response:
+            with urllib.request.urlopen("http://127.0.0.1:%d/health" % port, timeout=1) as response:
                 if response.status == 200:
                     return True
         except (urllib.error.URLError, ConnectionError, TimeoutError):
@@ -128,10 +136,51 @@ def main():
     ok = check_room(room) and ok
     for label, run in (("plain", out), ("room", room), ("no endpoint", broken)):
         ok = check_terminals(label, run) and ok
-    errors = re.findall(r"\[Event\]\s+[\d.]+s\s+error", broken)
-    ok = check("no endpoint", bool(errors), "%d errors reported for the unreachable endpoint" % len(errors)) and ok
-    return 0 if ok else 1
+    errors = re.findall(r"\[Event\]\s+[\d.]+s\s+error\s+(.*)", broken)
+    ok = check("no endpoint", bool(errors) and all("No endpoint" in e for e in errors),
+               "%d answers told there is no endpoint" % len(errors)) and ok
+    return 0 if check_owned_endpoint() and ok else 1
 
+
+def check_owned_endpoint():
+    key_file = TMP + "/llm.key"
+    with open(key_file, "w") as f:
+        f.write(OWNED_KEY + "\n")
+
+    log = open(TMP + "/server-owned.log", "w")
+    server = subprocess.Popen(
+        [SERVER, "--models", MODELS, "--host", "127.0.0.1", "--port", str(OWNED_PORT),
+         "--llm-url", OWNED_URL, "--llm-model", OWNED_MODEL, "--llm-key-file", key_file],
+        stdout=log,
+        stderr=subprocess.STDOUT,
+    )
+    try:
+        if not wait_for_health(server, OWNED_PORT):
+            return check("owned endpoint", False, "server never answered /health")
+        base = "http://127.0.0.1:%d" % OWNED_PORT
+        props = urllib.request.urlopen(base + "/props", timeout=5).read().decode()
+        try:
+            urllib.request.urlopen(urllib.request.Request(base + "/v1/models", data=b"{}", method="POST"), timeout=5)
+            models = 200
+        except urllib.error.HTTPError as e:
+            models = e.code
+        out = subprocess.run([CLIENT, "ws://127.0.0.1:%d/v1/realtime" % OWNED_PORT, WAV, SECONDS, "--other-endpoint"],
+                             check=True, stdout=subprocess.PIPE, text=True).stdout
+        print(out, end="")
+    finally:
+        server.terminate()
+        server.wait(timeout=30)
+        log.close()
+        os.remove(key_file)
+
+    fixed = json.loads(props)["defaults"].get("llm_fixed") is True
+    hidden = not any(secret in props for secret in (OWNED_URL, OWNED_MODEL, OWNED_KEY))
+    ok = check("owned props", fixed and hidden, "the endpoint is the server's, its URL, model and key unpublished")
+    ok = check("owned models", models == 403, "model list closed with %d" % models) and ok
+    refused = re.findall(r"\[Event\]\s+[\d.]+s\s+error\s+(.*)", out)
+    ok = check("owned endpoint", any("set by the server" in e for e in refused),
+               "another endpoint refused: %s" % (refused[0] if refused else "no error")) and ok
+    return check_terminals("owned", out) and ok
 
 # The completed responses that spoke, and whether each one spoke back the
 # transcript that opened it, word for word.

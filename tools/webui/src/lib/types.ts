@@ -1,8 +1,7 @@
 // Server defaults, the single source of truth behind every empty field.
 export interface S2SDefaults {
 	mode: string;
-	llm_url: string;
-	llm_model: string;
+	llm_fixed: boolean; // the server owns the endpoint, the page names none
 	instructions: string;
 	voice: string;
 	language: string;

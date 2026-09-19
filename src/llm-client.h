@@ -42,9 +42,11 @@ struct llm_sampling {
     int   seed              = -1;       // negative draws a random one
 };
 
+// No endpoint and no model by default: they come from whoever runs the
+// client. An empty model leaves the choice to the endpoint.
 struct llm_client_params {
-    std::string  base_url = "http://127.0.0.1:8080/v1";
-    std::string  model    = "local";
+    std::string  base_url;
+    std::string  model;
     std::string  api_key;
     llm_sampling sampling;
     int          timeout_sec = 120;
