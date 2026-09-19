@@ -97,7 +97,8 @@ def main():
         log.close()
 
     events = re.findall(r"\[Event\]\s+[\d.]+s\s+(\S+)", out)
-    transcripts = re.findall(r'input_audio_transcription.completed "(.*)"', out)
+    items = re.findall(r'input_audio_transcription.completed\s+(\S*) "(.*)"', out)
+    transcripts = [text for _, text in items]
     spoken = re.findall(r'response.output_audio_transcript.delta\s+"(.*)"', out)
     summary = re.search(r"(\d+) events, ([\d.]+)s of audio received", out)
 
@@ -112,6 +113,10 @@ def main():
                "%d speech starts" % events.count("input_audio_buffer.speech_started")) and ok
     ok = check("turns", len(transcripts) > 0, "%d turns recognized" % len(transcripts)) and ok
     ok = check("transcripts", all(t.strip() for t in transcripts), "no empty transcript") and ok
+    # Each transcript names its turn, and a turn is transcribed once.
+    named = [item for item, _ in items if item.startswith("turn_")]
+    ok = check("items", len(named) == len(items) and len(set(named)) == len(named),
+               "%d transcripts, each with its own turn item" % len(items)) and ok
     ok = check("loopback", spoken == transcripts, "%d units spoken back verbatim" % len(spoken)) and ok
     ok = check("audio", audio_sec > 1.0, "%.2fs of synthesized audio" % audio_sec) and ok
     ok = check("responses", events.count("response.done") >= len(transcripts),

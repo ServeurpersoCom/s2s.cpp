@@ -155,6 +155,10 @@ Server to client: `session.created`, `session.updated`,
 `response.output_audio.delta`, `response.output_audio_transcript.delta`,
 `response.done`, `response.cancelled`, `error`.
 
+The transcript event carries the item of its turn, `turn_<id>`: a later
+transcript of the same turn replaces the user message instead of adding
+one.
+
 `response.output_text.delta` is what the model writes, as it writes it;
 `response.output_audio_transcript.delta` is what the voice speaks, one
 unit at a time. Unknown types and fields are ignored.

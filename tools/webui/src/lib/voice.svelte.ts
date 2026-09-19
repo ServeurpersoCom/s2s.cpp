@@ -138,10 +138,19 @@ export async function createVoice(): Promise<S2S> {
 			closeAssistant();
 		}
 	});
-	s2s.on('user_text', (text) => {
+	s2s.on('user_text', (text, revised) => {
 		voice.userText = text;
 		voice.assistantText = '';
 		closeAssistant();
+		// a revision replaces the turn it revises, and the answer drafted for
+		// it that nobody heard
+		if (revised) {
+			let at = voice.chat.length - 1;
+			while (at >= 0 && voice.chat[at].role !== 'user') {
+				at--;
+			}
+			voice.chat.splice(Math.max(at, 0));
+		}
 		voice.chat.push({ role: 'user', draft: text, spoken: text, done: true });
 	});
 	s2s.on('assistant_delta', (text) => {

@@ -128,7 +128,9 @@ export interface S2SOptions {
 
 export interface S2SEvents {
 	state: (state: S2SState) => void;
-	user_text: (text: string) => void;
+	// revised: a later transcript of the same turn, which replaces the
+	// previous one along with any answer to it that was never heard
+	user_text: (text: string, revised: boolean) => void;
 	// what the model writes, as it writes it
 	assistant_delta: (text: string) => void;
 	// what the voice really speaks, one synthesis unit at a time
@@ -286,6 +288,7 @@ export class S2S {
 	private answerDone = false;
 
 	private history: S2SMessage[] = [];
+	private userItem = ''; // the server item of the last user message
 
 	constructor(options: S2SOptions) {
 		this.options = options;
@@ -396,6 +399,7 @@ export class S2S {
 	// own context.
 	setHistory(messages: S2SMessage[]) {
 		this.history = messages.slice();
+		this.userItem = '';
 		this.pushHistory();
 	}
 
@@ -595,9 +599,19 @@ export class S2S {
 
 			case 'conversation.item.input_audio_transcription.completed':
 				{
+					// A later transcript of the same turn replaces its user
+					// message instead of adding one.
 					const transcript = String(message.transcript ?? '');
-					this.history.push({ role: 'user', content: transcript });
-					this.handlers.user_text?.(transcript);
+					const item = String(message.item_id ?? '');
+					const last = this.history[this.history.length - 1];
+					const revised = item !== '' && item === this.userItem && last?.role === 'user';
+					if (revised) {
+						last.content = transcript;
+					} else {
+						this.history.push({ role: 'user', content: transcript });
+					}
+					this.userItem = item;
+					this.handlers.user_text?.(transcript, revised);
 				}
 				break;
 

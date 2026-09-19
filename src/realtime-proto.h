@@ -18,6 +18,8 @@
 //   session.created, session.updated
 //   input_audio_buffer.speech_started, input_audio_buffer.speech_stopped
 //   conversation.item.input_audio_transcription.completed
+//                                    with the item_id of its turn: a later
+//                                    transcript of the same turn replaces it
 //   response.created
 //   response.output_text.delta       what the model writes, as it writes it
 //   response.output_audio.delta, response.output_audio_transcript.delta
@@ -334,6 +336,13 @@ static std::string rt_escape(const std::string & text) {
 
 static std::string rt_event_text(const char * type, const char * key, const std::string & value) {
     return std::string("{\"type\":\"") + type + "\",\"" + key + "\":\"" + rt_escape(value) + "\"}";
+}
+
+// The transcript of a user turn. item_id names the turn, so a later
+// transcript of the same turn replaces it instead of adding a message.
+static std::string rt_event_transcript(const std::string & item_id, const std::string & transcript) {
+    return std::string("{\"type\":\"conversation.item.input_audio_transcription.completed\",\"item_id\":\"") +
+           rt_escape(item_id) + "\",\"transcript\":\"" + rt_escape(transcript) + "\"}";
 }
 
 static std::string rt_event_audio(const float * pcm, size_t n_samples) {

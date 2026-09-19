@@ -349,6 +349,13 @@ static void on_signal(int) {
     }
 }
 
+// A committed turn, with the identity the session gave it.
+struct TurnAudio {
+    std::vector<float> pcm;
+    int                turn_id  = 0;
+    int                revision = 0;
+};
+
 struct Connection {
     httplib::ws::WebSocket * ws = nullptr;
 
@@ -369,10 +376,10 @@ struct Connection {
     std::vector<llm_message> history;
 
     // Committed turns waiting for the responder.
-    std::mutex                     queue_mutex;
-    std::condition_variable        queue_cv;
-    std::queue<std::vector<float>> queue;
-    bool                           stop = false;
+    std::mutex              queue_mutex;
+    std::condition_variable queue_cv;
+    std::queue<TurnAudio>   queue;
+    bool                    stop = false;
 
     std::atomic<bool> cancel{ false };
 
@@ -547,7 +554,9 @@ static bool conn_speak(Connection * conn, const std::string & unit) {
 }
 
 // Turn audio in, answer spoken out.
-static void conn_respond(Connection * conn, const std::vector<float> & pcm) {
+static void conn_respond(Connection * conn, const TurnAudio & turn) {
+    const std::vector<float> & pcm = turn.pcm;
+
     Timer t_asr;
 
     pk_transcribe_params asr_params = pk_transcribe_default_params();
@@ -569,9 +578,9 @@ static void conn_respond(Connection * conn, const std::vector<float> & pcm) {
         return;
     }
 
-    s2s_log(S2S_LOG_INFO, "[Turn] Heard %zu characters in %.2fs of audio", transcript.size(),
-            (double) pcm.size() / S2S_MODEL_RATE);
-    conn_send(conn, rt_event_text("conversation.item.input_audio_transcription.completed", "transcript", transcript));
+    s2s_log(S2S_LOG_INFO, "[Turn] Heard %zu characters in %.2fs of audio (turn %d rev %d)", transcript.size(),
+            (double) pcm.size() / S2S_MODEL_RATE, turn.turn_id, turn.revision);
+    conn_send(conn, rt_event_transcript("turn_" + std::to_string(turn.turn_id), transcript));
 
     conn->cancel.store(false);
     conn->speaking.store(true);
@@ -655,17 +664,17 @@ static void conn_respond(Connection * conn, const std::vector<float> & pcm) {
 
 static void conn_responder(Connection * conn) {
     for (;;) {
-        std::vector<float> pcm;
+        TurnAudio turn;
         {
             std::unique_lock<std::mutex> lock(conn->queue_mutex);
             conn->queue_cv.wait(lock, [conn]() { return conn->stop || !conn->queue.empty(); });
             if (conn->stop && conn->queue.empty()) {
                 return;
             }
-            pcm = std::move(conn->queue.front());
+            turn = std::move(conn->queue.front());
             conn->queue.pop();
         }
-        conn_respond(conn, pcm);
+        conn_respond(conn, turn);
     }
 }
 
@@ -702,12 +711,18 @@ static void conn_on_session_event(const s2s_session_report * report, void * user
 
         case S2S_EVENT_TURN_COMMITTED:
             {
-                s2s_log(S2S_LOG_INFO, "[Session] Turn committed at %.2fs (turn %d), %.2fs of audio, completion %.3f",
-                        report->time_sec, report->turn_id, (double) report->n_samples / S2S_MODEL_RATE,
-                        (double) report->turn_score);
+                s2s_log(S2S_LOG_INFO,
+                        "[Session] Turn committed at %.2fs (turn %d rev %d), %.2fs of audio, completion %.3f",
+                        report->time_sec, report->turn_id, report->revision,
+                        (double) report->n_samples / S2S_MODEL_RATE, (double) report->turn_score);
+
+                TurnAudio turn;
+                turn.pcm.assign(report->pcm, report->pcm + report->n_samples);
+                turn.turn_id  = report->turn_id;
+                turn.revision = report->revision;
 
                 std::lock_guard<std::mutex> lock(conn->queue_mutex);
-                conn->queue.emplace(report->pcm, report->pcm + report->n_samples);
+                conn->queue.push(std::move(turn));
                 conn->queue_cv.notify_one();
                 break;
             }

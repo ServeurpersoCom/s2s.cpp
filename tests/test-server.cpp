@@ -211,8 +211,8 @@ int main(int argc, char ** argv) {
                     speaker.queue.insert(speaker.queue.end(), pcm.begin(), pcm.end());
                 }
             } else if (type == "conversation.item.input_audio_transcription.completed") {
-                printf("[Event] %7.2fs  %-46s \"%s\"\n", timer.ms() / 1000.0, type.c_str(),
-                       rt_json_str(root, "transcript").c_str());
+                printf("[Event] %7.2fs  %-46s %s \"%s\"\n", timer.ms() / 1000.0, type.c_str(),
+                       rt_json_str(root, "item_id").c_str(), rt_json_str(root, "transcript").c_str());
             } else if (type == "response.output_audio_transcript.delta") {
                 printf("[Event] %7.2fs  %-46s \"%s\"\n", timer.ms() / 1000.0, type.c_str(),
                        rt_json_str(root, "delta").c_str());
