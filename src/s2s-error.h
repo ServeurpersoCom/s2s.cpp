@@ -2,7 +2,9 @@
 // s2s-error.h: diagnostics shared by every lib in the project
 //
 // Header only so the vad, turn and asr libs pull the same helpers without
-// a translation unit of their own. Three entry points:
+// a translation unit of their own. The functions are inline, so the sink and
+// the error slot they hold are one for the whole program, whichever file
+// sets or reads them. Three entry points:
 //
 //   s2s_log       routes a formatted message to the installed callback, or
 //                 to stderr when none is set. A wrapper (Python logging,
@@ -39,16 +41,16 @@ struct S2SLogSink {
     void *     user_data = nullptr;
 };
 
-static S2SLogSink & s2s_log_sink(void) {
+inline S2SLogSink & s2s_log_sink(void) {
     static S2SLogSink sink;
     return sink;
 }
 
-static void s2s_log_set(s2s_log_cb cb, void * user_data) {
+inline void s2s_log_set(s2s_log_cb cb, void * user_data) {
     s2s_log_sink() = { cb, user_data };
 }
 
-static std::string s2s_format_v(const char * fmt, va_list ap) {
+inline std::string s2s_format_v(const char * fmt, va_list ap) {
     char    buf[1024];
     va_list ap2;
     va_copy(ap2, ap);
@@ -60,13 +62,13 @@ static std::string s2s_format_v(const char * fmt, va_list ap) {
     return std::string(buf, (size_t) n < sizeof(buf) ? (size_t) n : sizeof(buf) - 1);
 }
 
-static void s2s_log(enum s2s_log_level level, const char * fmt, ...)
+inline void s2s_log(enum s2s_log_level level, const char * fmt, ...)
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((format(printf, 2, 3)))
 #endif
     ;
 
-static void s2s_log(enum s2s_log_level level, const char * fmt, ...) {
+inline void s2s_log(enum s2s_log_level level, const char * fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     const std::string msg = s2s_format_v(fmt, ap);
@@ -81,18 +83,18 @@ static void s2s_log(enum s2s_log_level level, const char * fmt, ...) {
     fflush(stderr);
 }
 
-static std::string & s2s_error_slot(void) {
+inline std::string & s2s_error_slot(void) {
     static thread_local std::string slot;
     return slot;
 }
 
-static void s2s_set_error(const char * fmt, ...)
+inline void s2s_set_error(const char * fmt, ...)
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((format(printf, 1, 2)))
 #endif
     ;
 
-static void s2s_set_error(const char * fmt, ...) {
+inline void s2s_set_error(const char * fmt, ...) {
     if (!fmt) {
         s2s_error_slot().clear();
         return;
@@ -105,17 +107,17 @@ static void s2s_set_error(const char * fmt, ...) {
 
 // Returns the diagnostic recorded by the last failing call on this thread,
 // or an empty string when the thread has not failed yet.
-static const char * s2s_last_error(void) {
+inline const char * s2s_last_error(void) {
     return s2s_error_slot().c_str();
 }
 
-[[noreturn]] static void s2s_throw(const char * fmt, ...)
+[[noreturn]] inline void s2s_throw(const char * fmt, ...)
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((format(printf, 1, 2)))
 #endif
     ;
 
-[[noreturn]] static void s2s_throw(const char * fmt, ...) {
+[[noreturn]] inline void s2s_throw(const char * fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     const std::string msg = s2s_format_v(fmt, ap);

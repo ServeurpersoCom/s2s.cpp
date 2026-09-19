@@ -4,7 +4,7 @@
 //
 //     import { S2S } from './s2s.js';
 //
-//     const s2s = new S2S({ url: 'wss://host/v1/realtime' });
+//     const s2s = new S2S({ url: 'https://host/' });
 //     s2s.on('state', (state) => console.log(state));
 //     button.onclick = () => s2s.start();
 //
@@ -111,9 +111,9 @@ export interface S2STts {
 }
 
 export interface S2SOptions {
-	// Empty, or absent, connects to v1/realtime relative to the page, which
-	// works behind any reverse proxy prefix. An absolute ws:// or wss:// URL
-	// points the component at a server on another host.
+	// The server, as the address its page is served from. Empty, or absent,
+	// is the page itself, which works behind any reverse proxy prefix. The
+	// socket is v1/realtime under it, with ws or wss to match http or https.
 	url?: string;
 	mode?: 'conversation' | 'loopback';
 	instructions?: string;
@@ -215,9 +215,9 @@ class DuplexProcessor extends AudioWorkletProcessor {
 registerProcessor('s2s-duplex', DuplexProcessor);
 `;
 
-// v1/realtime next to the page, with the scheme the page was loaded with, so
-// an https page gets wss and keeps its secure context.
-export function realtimeUrl(url?: string): string {
+// v1/realtime under the server, the page itself by default, with ws or wss
+// to match http or https, so an https page keeps its secure context.
+function realtimeUrl(url?: string): string {
 	const base = new URL('v1/realtime', url ? url.replace(/\/?$/, '/') : location.href);
 	base.protocol =
 		base.protocol === 'https:' ? 'wss:' : base.protocol === 'http:' ? 'ws:' : base.protocol;
@@ -292,8 +292,14 @@ export class S2S {
 	private units: { text: string; start: number }[] = [];
 	private answerDone = false;
 
+	private answering = false; // between response.created and its close
+
 	private history: S2SMessage[] = [];
 	private userItem = ''; // the server item of the last user message
+
+	// Bumped by every start and every teardown: a start that a stop overtook,
+	// or a socket of an earlier run, sees a different number and backs off.
+	private run = 0;
 
 	constructor(options: S2SOptions) {
 		this.options = options;
@@ -310,17 +316,21 @@ export class S2S {
 	// Must be called from a user gesture: browsers refuse both the microphone
 	// and an audio context without one.
 	async start() {
-		if (this.ws) {
+		if (this.context) {
 			return;
 		}
 
+		const run = ++this.run;
 		try {
-			await this.open();
+			await this.open(run);
 		} catch (e) {
+			if (run !== this.run) {
+				return;
+			}
 			const message = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
 			this.log(`Start failed, ${message}`);
 			this.handlers.error?.(message);
-			this.stop();
+			this.teardown();
 			throw e;
 		}
 	}
@@ -329,18 +339,31 @@ export class S2S {
 		this.handlers.log?.(line);
 	}
 
-	private async open() {
+	// Every await is a point where a stop may have come in: the run number
+	// says so, and what was acquired meanwhile is released on the spot.
+	private async open(run: number) {
 		this.log('Start requested');
 
-		this.context = new AudioContext({ sampleRate: SAMPLE_RATE });
-		await this.context.audioWorklet.addModule(workletUrl(DUPLEX_WORKLET));
+		const context = new AudioContext({ sampleRate: SAMPLE_RATE });
+		this.context = context;
+		await context.audioWorklet.addModule(workletUrl(DUPLEX_WORKLET));
+		if (run !== this.run) {
+			return;
+		}
 
-		this.log(`Audio context at ${this.context.sampleRate} Hz`);
+		this.log(`Audio context at ${context.sampleRate} Hz`);
 
-		this.stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints(this.echo()) });
+		const stream = await navigator.mediaDevices.getUserMedia({
+			audio: micConstraints(this.echo())
+		});
+		if (run !== this.run) {
+			stream.getTracks().forEach((track) => track.stop());
+			return;
+		}
+		this.stream = stream;
 		this.log(`Microphone granted, ${this.micApplied()}`);
 
-		this.duplex = new AudioWorkletNode(this.context, 's2s-duplex', {
+		this.duplex = new AudioWorkletNode(context, 's2s-duplex', {
 			numberOfInputs: 1,
 			numberOfOutputs: 1,
 			outputChannelCount: [1]
@@ -360,22 +383,36 @@ export class S2S {
 				this.setState('listening');
 			}
 		};
-		this.context.createMediaStreamSource(this.stream).connect(this.duplex);
-		this.duplex.connect(this.context.destination);
+		context.createMediaStreamSource(stream).connect(this.duplex);
+		this.duplex.connect(context.destination);
 
-		await this.connect();
+		await this.connect(run);
+		if (run !== this.run) {
+			return;
+		}
 		this.setState('listening');
 	}
 
 	stop() {
 		this.log('Stop requested');
-		this.ws?.close();
+		this.teardown();
+	}
+
+	// Releases the socket, the microphone and the audio context, whoever ends
+	// the session: the user, a failed start or the server closing.
+	private teardown() {
+		this.run++;
+		const ws = this.ws;
 		this.ws = null;
+		ws?.close();
 		this.stream?.getTracks().forEach((track) => track.stop());
 		this.stream = null;
 		this.context?.close();
 		this.context = null;
 		this.duplex = null;
+		this.units = [];
+		this.answerDone = false;
+		this.answering = false;
 		this.setState('idle');
 	}
 
@@ -413,15 +450,12 @@ export class S2S {
 		this.setHistory([]);
 	}
 
-	// A field left out keeps its value: an undefined arriving from a cleared
-	// input must not erase what the session already runs with.
+	// A key given replaces its value, undefined included, and a field left
+	// undefined takes the server default: every session.update describes the
+	// whole session. A key left out of options keeps its value.
 	update(options: Partial<S2SOptions>) {
 		const echo = this.echo();
-		for (const [key, value] of Object.entries(options)) {
-			if (value !== undefined) {
-				(this.options as Record<string, unknown>)[key] = value;
-			}
-		}
+		Object.assign(this.options, options);
 		this.sendSessionUpdate();
 		if (this.stream && this.echo() !== echo) {
 			this.applyEcho();
@@ -542,7 +576,12 @@ export class S2S {
 	// Closes the answer in flight with what was actually heard. A unit counts
 	// once its audio started playing: a barge-in keeps the sentence it cut and
 	// drops the ones still queued, so the model never believes it said more.
+	// Every close pushes the list, heard or not: a turn left without an answer
+	// still reaches the server, which joins it to the next one.
 	private closeAnswer() {
+		if (!this.answering) {
+			return;
+		}
 		const content = this.units
 			.filter((unit) => unit.start < this.playedSamples)
 			.map((unit) => unit.text)
@@ -550,14 +589,14 @@ export class S2S {
 			.trim();
 		this.units = [];
 		this.answerDone = false;
-		if (!content) {
-			return;
+		this.answering = false;
+		if (content) {
+			this.history.push({ role: 'assistant', content });
 		}
-		this.history.push({ role: 'assistant', content });
 		this.pushHistory();
 	}
 
-	private connect(): Promise<void> {
+	private connect(run: number): Promise<void> {
 		return new Promise((resolve, reject) => {
 			const url = realtimeUrl(this.options.url);
 			const ws = new WebSocket(url);
@@ -576,9 +615,11 @@ export class S2S {
 				reject(new Error(`cannot reach ${url}`));
 			};
 			ws.onclose = (event) => {
+				if (ws !== this.ws || run !== this.run) {
+					return;
+				}
 				this.log(`Connection closed, code ${event.code}`);
-				this.ws = null;
-				this.setState('idle');
+				this.teardown();
 			};
 			ws.onmessage = (event) => this.onServerEvent(event.data as string);
 		});
@@ -623,6 +664,7 @@ export class S2S {
 
 			case 'response.created':
 				this.closeAnswer();
+				this.answering = true;
 				this.generation++;
 				this.queuedSamples = 0;
 				this.playedSamples = 0;

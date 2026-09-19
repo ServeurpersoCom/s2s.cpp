@@ -30,8 +30,9 @@
 //   response.done, response.cancelled
 //   error
 //
-// Unknown types and unknown fields are ignored rather than rejected: a client
-// written against a later revision of the protocol still works here.
+// Unknown fields are ignored rather than rejected, so a client written against
+// a later revision of the protocol still works here; an unknown type gets an
+// error event and the session goes on.
 
 #include "yyjson.h"
 
@@ -59,7 +60,8 @@ struct rt_message {
 };
 
 // Settings a client may change mid session. Empty strings and negative
-// numbers mean "leave as is", so a partial session.update is legal.
+// numbers mean "not in this update", which takes the server default: every
+// session.update describes the whole session.
 struct rt_session_patch {
     std::string mode;  // conversation or loopback
     std::string echo;  // native, server or off

@@ -16,9 +16,12 @@
 #include "s2s-error.h"
 #include "yyjson.h"
 
+#include <chrono>
 #include <cstring>
+#include <thread>
 
-#define LLM_REASON_MAX 200  // characters of an endpoint's error reason kept in the message
+#define LLM_REASON_MAX     200  // characters of an endpoint's error reason kept in the message
+#define LLM_CANCEL_POLL_MS 10   // how often a request that receives nothing looks at the cancel flag
 
 struct llm_client {
     llm_client_params params;
@@ -60,9 +63,6 @@ llm_client * llm_client_new(const llm_client_params & params) {
     c->params      = params;
     c->host        = host;
     c->path        = path;
-
-    s2s_log(S2S_LOG_INFO, "[LLM] %s%s/chat/completions, model %s", c->host.c_str(), c->path.c_str(),
-            c->params.model.c_str());
     return c;
 }
 
@@ -123,9 +123,6 @@ static std::string llm_client_body(const llm_client * c, const std::vector<llm_m
     return body;
 }
 
-// Pulls the content delta out of one data frame. Returns false when the
-// frame carries nothing to say, which covers role only frames, usage frames
-// and reasoning traces.
 // The reason an endpoint gives with an error status: the error message of an
 // OpenAI style body, or the first line of the body, cut to a readable length.
 static std::string llm_client_reason(const std::string & body) {
@@ -148,6 +145,9 @@ static std::string llm_client_reason(const std::string & body) {
     return reason;
 }
 
+// Pulls the content delta out of one data frame. Returns false when the
+// frame carries nothing to say, which covers role only frames, usage frames
+// and reasoning traces.
 static bool llm_client_delta(const char * json, size_t size, std::string & delta) {
     yyjson_doc * doc = yyjson_read(json, size, 0);
     if (!doc) {
@@ -196,11 +196,12 @@ bool llm_client_stream(llm_client *                     c,
         headers.emplace("Authorization", "Bearer " + c->params.api_key);
     }
 
-    const std::string body = llm_client_body(c, messages);
-    const std::string url  = c->path + "/chat/completions";
+    const std::string request = llm_client_body(c, messages);
+    const std::string url     = c->path + "/chat/completions";
 
     text.clear();
 
+    std::string body;  // everything received, the reason of an error status
     std::string pending;
     bool        cancelled = false;
     bool        done      = false;
@@ -211,6 +212,7 @@ bool llm_client_stream(llm_client *                     c,
             return false;
         }
 
+        body.append(data, size);
         pending.append(data, size);
 
         for (;;) {
@@ -252,9 +254,32 @@ bool llm_client_stream(llm_client *                     c,
         return true;
     };
 
-    httplib::Result result = client.Post(url.c_str(), headers, body, "application/json", receiver);
+    // The receiver only runs when bytes arrive: while the endpoint is silent,
+    // during a prefill or before its headers, the watcher is what sees the
+    // cancel flag, and it closes the socket under the request. It keeps
+    // closing until the request returns, so a socket opened after the flag
+    // rose is closed too.
+    std::atomic<bool> finished(false);
+    std::thread       watcher;
+    if (cancel) {
+        watcher = std::thread([&]() {
+            while (!finished.load()) {
+                if (cancel->load()) {
+                    client.stop();
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(LLM_CANCEL_POLL_MS));
+            }
+        });
+    }
 
-    if (cancelled) {
+    httplib::Result result = client.Post(url.c_str(), headers, request, "application/json", receiver);
+
+    finished.store(true);
+    if (watcher.joinable()) {
+        watcher.join();
+    }
+
+    if (cancelled || (cancel && cancel->load())) {
         s2s_set_error("[LLM] Cancelled");
         return false;
     }
@@ -266,9 +291,8 @@ bool llm_client_stream(llm_client *                     c,
         return false;
     }
     if (result->status < 200 || result->status >= 300) {
-        // An error status carries no event stream: what the receiver kept is
-        // the body, and the body says why.
-        s2s_set_error("[LLM] HTTP %d, %s", result->status, llm_client_reason(pending).c_str());
+        // An error status carries no event stream: the body says why.
+        s2s_set_error("[LLM] HTTP %d, %s", result->status, llm_client_reason(body).c_str());
         return false;
     }
     return true;

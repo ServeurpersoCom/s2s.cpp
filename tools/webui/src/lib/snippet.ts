@@ -8,14 +8,18 @@ import { toOptions } from './voice.svelte.js';
 // it. That is also the honest test of the component API, since the snippet is
 // nothing more than its options, written out.
 //
-// The endpoint and its API key never appear: a page is read by anyone, so the
-// key stays on the server. The snippet opens with the command that gives the
+// The endpoint, its model and its API key never appear in the options: a page
+// is read by anyone, so the key stays on the server, and a server that owns
+// its endpoint refuses a session naming any part of it. The snippet opens with the command that gives the
 // server its endpoint, the URL and the model filled in, the key left for the
 // integrator to write in a file next to it.
 
+// A JSON string is a valid JavaScript string, line breaks and backslashes
+// escaped. The snippet lands in a <script>, so a closing tag inside a prompt
+// is broken up too.
 function literal(value: unknown, indent: string): string {
 	if (typeof value === 'string') {
-		return `'${value.replace(/'/g, "\\'")}'`;
+		return JSON.stringify(value).replace(/<\//g, '<\\/');
 	}
 	if (typeof value === 'number' || typeof value === 'boolean') {
 		return String(value);
@@ -51,17 +55,19 @@ function object(value: Record<string, unknown>, indent: string): string {
 }
 
 export function snippet(): string {
-	const options = (prune({ ...toOptions(), llmUrl: undefined, llmKey: undefined }) ?? {}) as Record<
-		string,
-		unknown
-	>;
+	const options = (prune({
+		...toOptions(),
+		llmUrl: undefined,
+		llmModel: undefined,
+		llmKey: undefined
+	}) ?? {}) as Record<string, unknown>;
 	const endpoint = settings.llmUrl || ENDPOINT_EXAMPLE;
 	const model = settings.llmModel || 'model-name';
 
 	// Everything stays relative to the page the snippet lands on: the module
 	// comes from the s2s-server that serves it, and the component resolves
 	// v1/realtime the same way. An integrator who hosts the page elsewhere
-	// fills the Realtime URL field, and only then does an absolute URL appear
+	// fills the Server field, and only then does an absolute URL appear
 	// here. Pasting a foreign host would otherwise leech somebody else's
 	// server, or point at a 127.0.0.1 that only exists on the developer's
 	// machine.

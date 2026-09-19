@@ -181,7 +181,13 @@ one.
 unit at a time, with `text_end`: how far into the written text the spoken
 part reaches, in UTF-16 code units, the index a browser slices its copy
 with. What lies past it was written and not spoken, which is how the page
-tells an answer cut off by a barge-in from one said to the end. Unknown types and fields are ignored.
+tells an answer cut off by a barge-in from one said to the end. Unknown
+fields are ignored, an unknown type gets an `error` event.
+
+`session.update` describes the whole session: a field it leaves out takes
+the default published on `/props`, so clearing a field brings the default
+back. The conversation has its own event, and the echo method only
+changes when one is named.
 
 HTTP routes: `/` the page, `/s2s.js` the component, `/props` the session
 defaults and the loaded models, `/health`, `/logs` the server log as SSE,
@@ -195,7 +201,8 @@ handshake, which CORS does not cover, and on the HTTP routes. A request
 without `Origin` passes, a foreign one gets 403. `--llm-host` is an
 allowlist of endpoint hosts: the server fetches the endpoint a client
 names, so without it the server reaches anything it can route to. The
-log carries no conversation text, only character counts and timings.
+log carries no conversation text, only character counts and timings, and
+no endpoint: it says whether one is set, never which.
 
 `--llm-url`, `--llm-model` and `--llm-key-file` give the server its own
 endpoint, the key read from the first line of a file so it shows neither

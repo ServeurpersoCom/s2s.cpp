@@ -5,8 +5,9 @@
 // the way llama-server does: one data frame per token, a role only frame
 // first, a usage frame at the end, and [DONE] to close.
 //
-// Three passes: a full stream cut into synthesis units, a cancellation after
-// a few deltas, and an endpoint that answers 500. A pass feeds the splitter
+// Four passes: a full stream cut into synthesis units, a cancellation after
+// a few deltas, an endpoint that answers 500 with a pretty printed body, and
+// a cancellation while the endpoint says nothing yet. A pass feeds the splitter
 // alone with accents and an emoji, one byte per delta, so every multibyte
 // character is cut across two deltas, and another parses the endpoint
 // settings of a session.update the way the server receives them.
@@ -19,6 +20,7 @@
 #include "version.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <string>
 #include <thread>
@@ -40,6 +42,9 @@ static const char * ANSWER =
     "Creation stories differ across cultures. Some describe a world born from water, "
     "others from a cosmic egg or from the body of a giant. The shared thread is an "
     "attempt to explain where everything came from, in the language of the time.";
+
+#define SILENT_MS 2000  // how long the silent endpoint holds a request before answering
+#define RAISE_MS  100   // when the silent request is cancelled
 
 static std::vector<std::string> tokenize(const std::string & text) {
     std::vector<std::string> tokens;
@@ -133,9 +138,17 @@ int main(int argc, char ** argv) {
         });
     });
 
+    // Pretty printed, the way a cloud API writes its errors: the reason sits
+    // on a line of its own.
     mock.Post("/broken/chat/completions", [](const httplib::Request &, httplib::Response & res) {
         res.status = 500;
-        res.set_content("{\"error\":\"model not loaded\"}", "application/json");
+        res.set_content("{\n  \"error\": {\n    \"message\": \"model not loaded\"\n  }\n}\n", "application/json");
+    });
+
+    // Says nothing for a while, like an endpoint in a long prefill.
+    mock.Post("/silent/chat/completions", [](const httplib::Request &, httplib::Response & res) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(SILENT_MS));
+        res.set_content("data: [DONE]\n\n", "text/event-stream");
     });
 
     std::thread server([&mock, port]() { mock.listen("127.0.0.1", port); });
@@ -238,6 +251,25 @@ int main(int argc, char ** argv) {
     const bool  answered = llm_client_stream(broken, messages, nullptr, nullptr, nullptr, nothing);
     printf("[LLM] Broken endpoint returned %s: %s\n", answered ? "true" : "false", llm_client_last_error());
 
+    // Cancellation while the endpoint says nothing yet.
+    llm_client_params silent_params = params;
+    silent_params.base_url          = base + "/silent";
+    llm_client * silent             = llm_client_new(silent_params);
+
+    std::atomic<bool> raised(false);
+    std::thread       raiser([&raised]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(RAISE_MS));
+        raised.store(true);
+    });
+    std::string       quiet;
+    Timer             t_silent;
+    const bool        heard     = llm_client_stream(silent, messages, nullptr, nullptr, &raised, quiet);
+    const double      silent_ms = t_silent.ms();
+    raiser.join();
+    printf("[LLM] Silent endpoint cancelled after %.1f ms of %d, returned %s\n", silent_ms, SILENT_MS,
+           heard ? "true" : "false");
+
+    llm_client_free(silent);
     llm_client_free(broken);
     llm_client_free(client);
     mock.stop();

@@ -15,8 +15,9 @@
 # the echo, stop the playback, and transcribe the interruption without a word
 # of the assistant.
 #
-# A server that owns its endpoint runs last: /props says nothing of it, the
-# model list is closed, and a client naming another endpoint is refused.
+# A server that owns its endpoint runs last: /props and the log say nothing
+# of it, the model list is closed, and a client naming another endpoint is
+# refused.
 #
 # A third run asks for a conversation on a server without an endpoint,
 # naming none either. Across all three, every response.created is closed by exactly one
@@ -177,6 +178,11 @@ def check_owned_endpoint():
     hidden = not any(secret in props for secret in (OWNED_URL, OWNED_MODEL, OWNED_KEY))
     ok = check("owned props", fixed and hidden, "the endpoint is the server's, its URL, model and key unpublished")
     ok = check("owned models", models == 403, "model list closed with %d" % models) and ok
+    # /logs streams the log to every page: the endpoint never appears in it.
+    with open(TMP + "/server-owned.log") as f:
+        logged = f.read()
+    ok = check("owned log", not any(secret in logged for secret in (OWNED_URL, OWNED_MODEL, OWNED_KEY)),
+               "the endpoint URL, model and key never logged") and ok
     refused = re.findall(r"\[Event\]\s+[\d.]+s\s+error\s+(.*)", out)
     ok = check("owned endpoint", any("set by the server" in e for e in refused),
                "another endpoint refused: %s" % (refused[0] if refused else "no error")) and ok

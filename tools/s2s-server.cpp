@@ -660,6 +660,17 @@ static bool conn_speak(Connection * conn, const SentenceUnit & unit, const tts_r
     return spoke;
 }
 
+// Appends a message, joining two user messages in a row into one: a turn
+// whose answer was never heard is followed by the next one, and some chat
+// templates refuse two user messages in a row.
+static void llm_push(std::vector<llm_message> & messages, const llm_message & message) {
+    if (message.role == "user" && !messages.empty() && messages.back().role == "user") {
+        messages.back().content += " " + message.content;
+    } else {
+        messages.push_back(message);
+    }
+}
+
 // Turn audio in, answer spoken out.
 static void conn_respond(Connection * conn, const TurnAudio & turn) {
     const std::vector<float> & pcm = turn.pcm;
@@ -692,11 +703,15 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
             (double) pcm.size() / S2S_MODEL_RATE, turn.turn_id, turn.revision);
     conn_send(conn, rt_event_transcript("turn_" + std::to_string(turn.turn_id), transcript));
 
-    // The user spoke again during the recognition, or the floor went back:
-    // nobody waits for this answer any more.
-    if (conn->stop || conn->cancel.load() || conn_superseded(conn, turn.turn_id)) {
-        s2s_log(S2S_LOG_INFO, "[Turn] Turn %d dropped before its answer", turn.turn_id);
+    if (conn->stop) {
         return;
+    }
+
+    // The user spoke again during the recognition: the answer is void before
+    // it starts, and still opens and closes like any other, so the client
+    // files the turn in its conversation all the same.
+    if (conn_superseded(conn, turn.turn_id)) {
+        conn->cancel.store(true);
     }
 
     // The settings and the list as they stand now: a change that arrives
@@ -714,7 +729,9 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
 
     std::string answer;
 
-    if (client.mode == "loopback") {
+    if (conn->cancel.load()) {
+        s2s_log(S2S_LOG_INFO, "[Turn] Turn %d superseded or cancelled before its answer", turn.turn_id);
+    } else if (client.mode == "loopback") {
         // No endpoint in the path: the recognized text is the answer.
         answer = transcript;
         SentenceUnit unit;
@@ -726,8 +743,10 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
         if (!client.system_prompt.empty()) {
             messages.push_back({ "system", client.system_prompt });
         }
-        messages.insert(messages.end(), client.history.begin(), client.history.end());
-        messages.push_back({ "user", transcript });
+        for (const llm_message & message : client.history) {
+            llm_push(messages, message);
+        }
+        llm_push(messages, { "user", transcript });
 
         if (client.llm.base_url.empty()) {
             conn_error(conn, "[Realtime] No endpoint: name one in the session, or start the server with --llm-url");
@@ -879,8 +898,23 @@ static std::vector<std::string> g_llm_hosts;
 // each session names its own.
 static bool g_llm_fixed = false;
 
+// What a session runs with before its first session.update, and what every
+// field an update leaves out goes back to: the values /props publishes.
+static ClientSettings g_client_defaults;
+
+// Every session.update describes the whole session: a field it leaves out
+// takes the server default, so clearing a field on the page brings the
+// default back. The conversation has its own event and stays, and the echo
+// canceller, a state with a learned path, only changes when a method is named.
 static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) {
     std::lock_guard<std::mutex> lock(conn->client_mutex);
+
+    std::vector<llm_message> history = std::move(conn->client.history);
+    conn->client                     = g_client_defaults;
+    conn->client.history             = std::move(history);
+
+    const s2s_session_params listening = conn->params;
+    conn->params                       = s2s_session_params();
 
     if (!patch.mode.empty()) {
         conn->client.mode = patch.mode;
@@ -1006,45 +1040,34 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
         conn->client.tts.sampling.seed = (int64_t) patch.tts_seed;
     }
 
-    // Only the listening thresholds need the session rebuilt: everything else
-    // is read at the next turn, so a voice or a sampling change must not drop
-    // what the microphone is in the middle of hearing.
-    bool listening_changed = false;
-
     if (patch.vad_threshold >= 0.0f) {
         conn->params.vad_threshold = patch.vad_threshold;
-        listening_changed          = true;
     }
     if (patch.min_speech_ms >= 0) {
         conn->params.min_speech_ms = patch.min_speech_ms;
-        listening_changed          = true;
     }
     if (patch.min_speech_continuation_ms >= 0) {
         conn->params.min_speech_continuation_ms = patch.min_speech_continuation_ms;
-        listening_changed                       = true;
     }
     if (patch.min_silence_ms >= 0) {
         conn->params.min_silence_ms = patch.min_silence_ms;
-        listening_changed           = true;
     }
     if (patch.speech_pad_ms >= 0) {
         conn->params.speech_pad_ms = patch.speech_pad_ms;
-        listening_changed          = true;
     }
     if (patch.turn_threshold >= 0.0f) {
         conn->params.turn_threshold = patch.turn_threshold;
-        listening_changed           = true;
     }
     if (patch.turn_max_wait_ms >= 0) {
         conn->params.turn_max_wait_ms = patch.turn_max_wait_ms;
-        listening_changed             = true;
     }
     if (patch.reopen_grace_ms >= 0) {
         conn->params.reopen_grace_ms = patch.reopen_grace_ms;
-        listening_changed            = true;
     }
 
-    if (listening_changed) {
+    // Only a change of the listening thresholds reaches the session, which
+    // keeps the turn it is in the middle of hearing.
+    if (memcmp(&listening, &conn->params, sizeof(listening)) != 0) {
         s2s_session_set_params(conn->session, conn->params);
     }
 }
@@ -1278,6 +1301,11 @@ int main(int argc, char ** argv) {
 
     g_llm_hosts = llm_hosts;
 
+    g_client_defaults.mode          = mode;
+    g_client_defaults.tts           = tts_bridge_defaults_request(g_models.tts);
+    g_client_defaults.llm           = llm_defaults;
+    g_client_defaults.system_prompt = system_prompt;
+
     httplib::Server server;
     g_server = &server;
 
@@ -1452,7 +1480,7 @@ int main(int argc, char ** argv) {
             return;
         }
 
-        s2s_log(S2S_LOG_INFO, "[HTTP] Model list from %s", params.base_url.c_str());
+        s2s_log(S2S_LOG_INFO, "[HTTP] Model list");
 
         std::vector<std::string> models;
         if (!llm_client_models(params, models)) {
@@ -1508,11 +1536,8 @@ int main(int argc, char ** argv) {
         s2s_log(S2S_LOG_INFO, "[Server] Connection from %s", origin.empty() ? "unknown origin" : origin.c_str());
 
         Connection conn;
-        conn.ws                   = &ws;
-        conn.client.mode          = mode;
-        conn.client.tts           = tts_bridge_defaults_request(g_models.tts);
-        conn.client.llm           = llm_defaults;
-        conn.client.system_prompt = system_prompt;
+        conn.ws      = &ws;
+        conn.client  = g_client_defaults;
         conn.session = s2s_session_new(g_models.vad, g_models.turn, conn.params, conn_on_session_event, &conn);
         if (!conn.session) {
             s2s_log(S2S_LOG_WARN, "%s", sv_last_error());
@@ -1543,12 +1568,13 @@ int main(int argc, char ** argv) {
             switch (message.type) {
                 case RT_CLIENT_SESSION_UPDATE:
                     conn_apply_patch(&conn, message.patch);
-                    s2s_log(S2S_LOG_INFO,
-                            "[Realtime] Session update: mode %s, echo %s, endpoint %s, model %s, voice %s, language %s",
-                            conn.client.mode.c_str(), conn.echo.c_str(), conn.client.llm.base_url.c_str(),
-                            conn.client.llm.model.c_str(),
-                            conn.client.tts.speaker.empty() ? "default" : conn.client.tts.speaker.c_str(),
-                            conn.client.tts.language.empty() ? "default" : conn.client.tts.language.c_str());
+                    // The log is streamed to every page on /logs: it says
+                    // whether an endpoint is set, never which one.
+                    s2s_log(
+                        S2S_LOG_INFO, "[Realtime] Session update: mode %s, echo %s, endpoint %s, voice %s, language %s",
+                        conn.client.mode.c_str(), conn.echo.c_str(), conn.client.llm.base_url.empty() ? "none" : "set",
+                        conn.client.tts.speaker.empty() ? "default" : conn.client.tts.speaker.c_str(),
+                        conn.client.tts.language.empty() ? "default" : conn.client.tts.language.c_str());
                     conn_send(&conn, rt_event("session.updated"));
                     break;
 
@@ -1619,7 +1645,7 @@ int main(int argc, char ** argv) {
 
     fprintf(stderr, "[Server] s2s-server %s\n", S2S_VERSION);
     fprintf(stderr, "[Server] Mode: %s, endpoint %s\n", mode.c_str(),
-            g_llm_fixed ? llm_defaults.base_url.c_str() : "named by the session");
+            g_llm_fixed ? "set by the command line" : "named by the session");
     fprintf(stderr, "[Server] Listening on http://%s:%d\n", host.c_str(), port);
 
     if (!server.listen(host, port)) {

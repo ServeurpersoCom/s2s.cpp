@@ -6,7 +6,7 @@
 	import { snippet } from '../lib/snippet.js';
 	import { ph } from '../lib/fields.js';
 	import { ENDPOINT_EXAMPLE, MODES, type Mode } from '../lib/config.js';
-	import { ECHO_DEFAULT, ECHO_MODES, realtimeUrl, type S2SEcho } from '../lib/s2s.js';
+	import { ECHO_DEFAULT, ECHO_MODES, type S2SEcho } from '../lib/s2s.js';
 	import { clearContext, getClient, voice } from '../lib/voice.svelte.js';
 
 	let models = $state<string[]>([]);
@@ -181,7 +181,7 @@
 				<input
 					class="model-select"
 					type="text"
-					placeholder={realtimeUrl()}
+					placeholder={new URL('./', location.href).href}
 					bind:value={settings.serverUrl}
 				/>
 			</div>

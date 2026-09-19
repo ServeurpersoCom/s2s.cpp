@@ -4,9 +4,10 @@
 # The harness carries its own chat completions endpoint, so this checks the
 # client and the sentence splitter and never depends on a model being loaded
 # somewhere. What matters for the loop: the first synthesis unit leaves well
-# before the answer ends, a raised cancel flag stops the request, a failing
-# endpoint is reported instead of swallowed, and the sampling of a
-# session.update reaches the server.
+# before the answer ends, a raised cancel flag stops the request even while
+# the endpoint says nothing, a failing endpoint is reported with its reason
+# instead of swallowed, and the sampling of a session.update reaches the
+# server.
 # Run from the tests/ directory.
 #
 # Usage:
@@ -41,8 +42,10 @@ def main():
     ends = [int(e) for e in re.findall(r'\[Unit\] \d+: end (\d+) ', log)]
     written = re.search(r"Written (\d+) UTF-16 units, the last unit ends at (\d+)", log)
     parsed = re.search(r"\[Parse\] (.*)", log)
+    silent = re.search(r"Silent endpoint cancelled after ([\d.]+) ms of (\d+), returned (\w+)", log)
+    reason = re.search(r"Broken endpoint returned \w+: (.*)", log)
 
-    ok = check("parsed", bool(streamed and first and cancelled and broken and written and parsed),
+    ok = check("parsed", bool(streamed and first and cancelled and broken and written and parsed and silent),
                "harness reported every stage")
     if not ok:
         return 1
@@ -81,6 +84,13 @@ def main():
     ok = check("cancel honored", returned == "false", "request reported cancelled") and ok
     ok = check("cancel truncates", cut_chars < n_chars, "%d of %d characters" % (cut_chars, n_chars)) and ok
     ok = check("error surfaced", broken.group(1) == "false", "HTTP 500 reported") and ok
+    ok = check("error reason", "model not loaded" in reason.group(1), reason.group(1)) and ok
+
+    # A cancel reaches a request that receives nothing, well before the
+    # endpoint would have answered.
+    silent_ms, held_ms = float(silent.group(1)), float(silent.group(2))
+    ok = check("cancel silent", silent.group(3) == "false" and silent_ms < held_ms / 2,
+               "cancelled after %.1f of %d ms" % (silent_ms, held_ms)) and ok
 
     return 0 if ok else 1
 
