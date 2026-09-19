@@ -375,6 +375,9 @@ struct Connection {
     bool                           stop = false;
 
     std::atomic<bool> cancel{ false };
+
+    // Whether the assistant holds the floor: set by the responder, handed to
+    // the session by the reader, the only thread that touches the session.
     std::atomic<bool> speaking{ false };
 
     // Input resampling state: the protocol carries 24 kHz, the models want
@@ -413,6 +416,14 @@ static void conn_send(Connection * conn, const std::string & frame) {
     if (conn->ws && conn->ws->is_open()) {
         conn->ws->send(frame);
     }
+}
+
+// A failure goes to the client and to the log alike: the client sees what
+// went wrong, and the log keeps it. The messages carry the tag of the module
+// that failed.
+static void conn_error(Connection * conn, const char * message) {
+    s2s_log(S2S_LOG_WARN, "%s", message);
+    conn_send(conn, rt_event_error(message));
 }
 
 // 24 kHz to 16 kHz: three samples in, two out, with a short averaging window
@@ -543,7 +554,7 @@ static void conn_respond(Connection * conn, const std::vector<float> & pcm) {
     char *               text       = nullptr;
     const pk_status status = pk_transcribe(g_models.asr, pcm.data(), pcm.size(), S2S_MODEL_RATE, &asr_params, &text);
     if (status != PK_STATUS_OK) {
-        conn_send(conn, rt_event_error(pk_last_error()));
+        conn_error(conn, pk_last_error());
         return;
     }
 
@@ -564,7 +575,6 @@ static void conn_respond(Connection * conn, const std::vector<float> & pcm) {
 
     conn->cancel.store(false);
     conn->speaking.store(true);
-    s2s_session_set_speaking(conn->session, true);
     conn_send(conn, rt_event("response.created"));
 
     std::string answer;
@@ -588,61 +598,58 @@ static void conn_respond(Connection * conn, const std::vector<float> & pcm) {
 
         llm_client * client = llm_client_new(conn->llm);
         if (!client) {
-            conn_send(conn, rt_event_error(llm_client_last_error()));
-            conn->speaking.store(false);
-            s2s_session_set_speaking(conn->session, false);
-            return;
-        }
+            conn_error(conn, llm_client_last_error());
+        } else {
+            struct StreamTap {
+                Connection *     conn = nullptr;
+                SentenceSplitter splitter;
+                Timer            timer;
+                double           first_unit_ms = -1.0;
+            } stream_tap;
 
-        struct StreamTap {
-            Connection *     conn = nullptr;
-            SentenceSplitter splitter;
-            Timer            timer;
-            double           first_unit_ms = -1.0;
-        } stream_tap;
+            stream_tap.conn = conn;
 
-        stream_tap.conn = conn;
+            Timer      t_llm;
+            const bool streamed = llm_client_stream(
+                client, messages,
+                [](const char * delta, void * user) {
+                    StreamTap * self = (StreamTap *) user;
 
-        Timer      t_llm;
-        const bool streamed = llm_client_stream(
-            client, messages,
-            [](const char * delta, void * user) {
-                StreamTap * self = (StreamTap *) user;
+                    // What the model writes, as it writes it. The transcript event
+                    // that follows says what is really spoken, one unit later.
+                    conn_send(self->conn, rt_event_text("response.output_text.delta", "delta", delta));
 
-                // What the model writes, as it writes it. The transcript event
-                // that follows says what is really spoken, one unit later.
-                conn_send(self->conn, rt_event_text("response.output_text.delta", "delta", delta));
-
-                for (const std::string & unit : sentence_split_push(&self->splitter, delta)) {
-                    if (self->first_unit_ms < 0.0) {
-                        self->first_unit_ms = self->timer.ms();
+                    for (const std::string & unit : sentence_split_push(&self->splitter, delta)) {
+                        if (self->first_unit_ms < 0.0) {
+                            self->first_unit_ms = self->timer.ms();
+                        }
+                        if (!conn_speak(self->conn, unit)) {
+                            return false;
+                        }
                     }
-                    if (!conn_speak(self->conn, unit)) {
-                        return false;
-                    }
-                }
-                return !self->conn->cancel.load();
-            },
-            &stream_tap, &conn->cancel, answer);
+                    return !self->conn->cancel.load();
+                },
+                &stream_tap, &conn->cancel, answer);
 
-        const std::string tail = sentence_split_flush(&stream_tap.splitter);
-        if (streamed && !tail.empty()) {
-            conn_speak(conn, tail);
+            const std::string tail = sentence_split_flush(&stream_tap.splitter);
+            if (streamed && !tail.empty()) {
+                conn_speak(conn, tail);
+            }
+
+            s2s_log(S2S_LOG_INFO, "[Perf] Respond %.1f ms (first unit %.1f ms, %zu characters)", t_llm.ms(),
+                    stream_tap.first_unit_ms, answer.size());
+
+            if (!streamed && !conn->cancel.load()) {
+                conn_error(conn, llm_client_last_error());
+            }
+            llm_client_free(client);
         }
-
-        s2s_log(S2S_LOG_INFO, "[Perf] Respond %.1f ms (first unit %.1f ms, %zu characters)", t_llm.ms(),
-                stream_tap.first_unit_ms, answer.size());
-
-        if (!streamed && !conn->cancel.load()) {
-            conn_send(conn, rt_event_error(llm_client_last_error()));
-        }
-        llm_client_free(client);
     }
 
     s2s_log(S2S_LOG_INFO, "[Turn] Answered %zu characters%s", answer.size(), conn->cancel.load() ? ", cut short" : "");
 
+    // Every response.created ends here, with exactly one of the two.
     conn->speaking.store(false);
-    s2s_session_set_speaking(conn->session, false);
     conn_send(conn, rt_event(conn->cancel.load() ? "response.cancelled" : "response.done"));
 }
 
@@ -685,11 +692,12 @@ static void conn_on_session_event(const s2s_session_report * report, void * user
             break;
 
         case S2S_EVENT_BARGE_IN:
-            // The floor goes back to the user: the synthesis, the endpoint
-            // request and the client playback all stop on this one event.
+            // The floor goes back to the user: the synthesis and the endpoint
+            // request stop, the client flushes its playback on the
+            // speech_started that follows, and the responder closes the
+            // response.
             s2s_log(S2S_LOG_INFO, "[Session] Barge-in at %.2fs, the user took the floor", report->time_sec);
             conn->cancel.store(true);
-            conn_send(conn, rt_event("response.cancelled"));
             break;
 
         case S2S_EVENT_TURN_COMMITTED:
@@ -1314,6 +1322,7 @@ int main(int argc, char ** argv) {
         conn.system_prompt = system_prompt;
         conn.session       = s2s_session_new(g_models.vad, g_models.turn, conn.params, conn_on_session_event, &conn);
         if (!conn.session) {
+            s2s_log(S2S_LOG_WARN, "%s", sv_last_error());
             ws.send(rt_event_error(sv_last_error()));
             return;
         }
@@ -1364,6 +1373,7 @@ int main(int argc, char ** argv) {
                         resample_in(conn.reference_tail, played ? message.reference : silence, reference);
                         conn_cancel_echo(&conn, resampled, reference, played);
                     }
+                    s2s_session_set_speaking(conn.session, conn.speaking.load());
                     s2s_session_push(conn.session, resampled.data(), resampled.size());
                     break;
 

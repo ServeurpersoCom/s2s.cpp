@@ -18,6 +18,8 @@
 
 #include <cstring>
 
+#define LLM_REASON_MAX 200  // characters of an endpoint's error reason kept in the message
+
 struct llm_client {
     llm_client_params params;
 
@@ -122,6 +124,28 @@ static std::string llm_client_body(const llm_client * c, const std::vector<llm_m
 // Pulls the content delta out of one data frame. Returns false when the
 // frame carries nothing to say, which covers role only frames, usage frames
 // and reasoning traces.
+// The reason an endpoint gives with an error status: the error message of an
+// OpenAI style body, or the first line of the body, cut to a readable length.
+static std::string llm_client_reason(const std::string & body) {
+    std::string  reason;
+    yyjson_doc * doc = yyjson_read(body.c_str(), body.size(), 0);
+    if (doc) {
+        yyjson_val * error   = yyjson_obj_get(yyjson_doc_get_root(doc), "error");
+        yyjson_val * message = error && yyjson_is_obj(error) ? yyjson_obj_get(error, "message") : error;
+        if (message && yyjson_is_str(message)) {
+            reason.assign(yyjson_get_str(message), yyjson_get_len(message));
+        }
+        yyjson_doc_free(doc);
+    }
+    if (reason.empty()) {
+        reason = body.substr(0, body.find('\n'));
+    }
+    if (reason.size() > LLM_REASON_MAX) {
+        reason.resize(LLM_REASON_MAX);
+    }
+    return reason;
+}
+
 static bool llm_client_delta(const char * json, size_t size, std::string & delta) {
     yyjson_doc * doc = yyjson_read(json, size, 0);
     if (!doc) {
@@ -240,7 +264,9 @@ bool llm_client_stream(llm_client *                     c,
         return false;
     }
     if (result->status < 200 || result->status >= 300) {
-        s2s_set_error("[LLM] HTTP %d", result->status);
+        // An error status carries no event stream: what the receiver kept is
+        // the body, and the body says why.
+        s2s_set_error("[LLM] HTTP %d, %s", result->status, llm_client_reason(pending).c_str());
         return false;
     }
     return true;
@@ -272,7 +298,7 @@ bool llm_client_models(const llm_client_params & params, std::vector<std::string
         return false;
     }
     if (result->status < 200 || result->status >= 300) {
-        s2s_set_error("[LLM] HTTP %d", result->status);
+        s2s_set_error("[LLM] HTTP %d, %s", result->status, llm_client_reason(result->body).c_str());
         return false;
     }
 

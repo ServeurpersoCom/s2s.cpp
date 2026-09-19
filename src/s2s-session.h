@@ -80,7 +80,8 @@ void          s2s_session_free(s2s_session * s);
 void s2s_session_push(s2s_session * s, const float * pcm, size_t n_samples);
 
 // Tells the session whether the assistant holds the floor, which is what
-// turns a speech start into a barge-in.
+// turns a speech start into a barge-in. Like every other call, it belongs to
+// the thread that pushes the audio.
 void s2s_session_set_speaking(s2s_session * s, bool speaking);
 
 // Commits the turn in flight right now, whatever the classifier thinks. This
