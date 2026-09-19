@@ -8,9 +8,12 @@
 // the microphone.
 //
 // It runs one hop at a time: 256 samples of microphone and reference at
-// 16 kHz in, 256 cleaned samples out, one hop late. Weights and graph live in
-// the context, the history of every causal layer lives in lv_state, one per
-// stream. A mutex around the compute lets several streams share one context.
+// 16 kHz in, 256 cleaned samples out, one hop late. Weights, graph and the
+// history of every causal layer live in the context, on the device, one slot
+// per stream: an lv_state is a stream holding its slot, and the context grows
+// its batch when every slot is taken. The context runs a worker: a call to
+// lv_process queues its hop and returns once the worker has run it, in one
+// pass with every other hop waiting at that moment.
 
 #ifdef __cplusplus
 extern "C" {

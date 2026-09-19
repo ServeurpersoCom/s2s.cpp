@@ -7,7 +7,9 @@
 # echo for a while. Runs the GGML harness hop by hop on it, runs the upstream
 # LocalVQE model on the same signals in one pass, and compares the outputs,
 # the harness being one hop late. Then checks that the echo is really gone
-# where only the far end plays. Run from the tests/ directory.
+# where only the far end plays. Last, runs the call again among other streams
+# sharing the batch, which come and go and grow it halfway, and checks that
+# the output of the call does not move. Run from the tests/ directory.
 #
 # Usage:
 #     ./test-localvqe.py
@@ -38,6 +40,8 @@ SECONDS = 8
 DELAY_S = 0.12
 MIN_COS = 0.9999
 MIN_ERLE_DB = 20.0
+STREAMS = 4
+MIN_BATCH_COS = 0.99999  # the same stream, alone or in a batch: kernels may differ, the result may not
 
 
 def load_wav(path):
@@ -123,7 +127,15 @@ def main():
     erle_ok = erle >= MIN_ERLE_DB
     print("[Check] echo removed where the far end plays alone: %.1f dB %s" % (erle, "OK" if erle_ok else "FAIL"))
 
-    return 0 if ok and erle_ok else 1
+    subprocess.run([BIN, GGUF, TMP + "/localvqe-mic.f32", TMP + "/localvqe-ref.f32", TMP + "/localvqe-batch.f32",
+                    str(STREAMS)], check=True)
+    batch = np.fromfile(TMP + "/localvqe-batch.f32", dtype=np.float32).astype(np.float64)[HOP:]
+    bcos = float(batch @ got / (np.linalg.norm(batch) * np.linalg.norm(got)))
+    batch_ok = bcos >= MIN_BATCH_COS and np.isfinite(batch).all()
+    print("[Check] same output among %d streams sharing the batch: cossim %.9f max abs %.3e %s" %
+          (STREAMS, bcos, float(np.abs(batch - got).max()), "OK" if batch_ok else "FAIL"))
+
+    return 0 if ok and erle_ok and batch_ok else 1
 
 
 if __name__ == "__main__":
