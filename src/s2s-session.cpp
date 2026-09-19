@@ -18,7 +18,7 @@
 #include <cstring>
 
 // Defined below, next to the state machine it belongs to.
-static void s2s_session_commit(s2s_session * s, float score);
+static void s2s_session_commit(s2s_session * s, float score, bool final);
 
 struct s2s_session {
     sv_context * vad   = nullptr;
@@ -36,6 +36,7 @@ struct s2s_session {
     int close_windows  = 0;  // windows of silence that end the speech
     int pad_windows    = 0;
     int wait_windows   = 0;  // windows to wait on an incomplete turn
+    int grace_windows  = 0;  // windows a complete commit keeps its answer silent
 
     s2s_session_state phase = S2S_SESSION_IDLE;
 
@@ -49,9 +50,10 @@ struct s2s_session {
     int    pending_run    = 0;    // windows spent in PENDING_END
     size_t stream_samples = 0;    // what the classifier wants, in samples
 
-    int  turn_id  = 0;
-    int  revision = 0;
-    bool speaking = false;
+    int  grace_left = 0;          // windows before the last complete commit is final
+    int  turn_id    = 0;
+    int  revision   = 0;
+    bool speaking   = false;
 
     size_t n_windows = 0;  // windows consumed since the start of the stream
 };
@@ -93,15 +95,25 @@ s2s_session * s2s_session_new(sv_context *               vad,
     // looks like a finished sentence to it. Prosody needs its context.
     s->stream_samples = (size_t) st_window(turn);
 
+    s2s_session_set_params(s, params);
+    return s;
+}
+
+void s2s_session_set_params(s2s_session * s, const s2s_session_params & params) {
+    if (!s) {
+        return;
+    }
+    s->params         = params;
     s->open_windows   = s2s_session_windows(params.min_speech_ms, s->window, s->sample_rate);
     s->reopen_windows = s2s_session_windows(params.min_speech_continuation_ms, s->window, s->sample_rate);
     s->close_windows  = s2s_session_windows(params.min_silence_ms, s->window, s->sample_rate);
     s->pad_windows    = s2s_session_windows(params.speech_pad_ms, s->window, s->sample_rate);
     s->wait_windows   = s2s_session_windows(params.turn_max_wait_ms, s->window, s->sample_rate);
+    s->grace_windows =
+        params.reopen_grace_ms > 0 ? s2s_session_windows(params.reopen_grace_ms, s->window, s->sample_rate) : 0;
 
-    s2s_log(S2S_LOG_INFO, "[Session] Window %d samples, open %d, reopen %d, close %d, wait %d windows", s->window,
-            s->open_windows, s->reopen_windows, s->close_windows, s->wait_windows);
-    return s;
+    s2s_log(S2S_LOG_INFO, "[Session] Window %d samples, open %d, reopen %d, close %d, wait %d, grace %d windows",
+            s->window, s->open_windows, s->reopen_windows, s->close_windows, s->wait_windows, s->grace_windows);
 }
 
 void s2s_session_free(s2s_session * s) {
@@ -126,7 +138,7 @@ void s2s_session_commit_now(s2s_session * s) {
     if (!s || s->phase == S2S_SESSION_IDLE || s->turn_pcm.empty()) {
         return;
     }
-    s2s_session_commit(s, 0.0f);
+    s2s_session_commit(s, 0.0f, true);
 }
 
 void s2s_session_reset(s2s_session * s) {
@@ -143,6 +155,7 @@ void s2s_session_reset(s2s_session * s) {
     s->silence_run = 0;
     s->pending_run = 0;
     s->revision    = 0;
+    s->grace_left  = 0;
     s->speaking    = false;
 }
 
@@ -167,22 +180,36 @@ static void s2s_session_emit(s2s_session * s, s2s_session_event event, float sco
 // lookback so the first consonant is not clipped.
 static void s2s_session_open_turn(s2s_session * s) {
     s->turn_id++;
-    s->revision = 0;
+    s->revision   = 0;
+    s->grace_left = 0;
     s->turn_pcm.assign(s->lookback.begin(), s->lookback.end());
     s->phase = S2S_SESSION_USER_SPEAKING;
     s2s_session_emit(s, S2S_EVENT_SPEECH_STARTED, 0.0f);
 }
 
-static void s2s_session_commit(s2s_session * s, float score) {
+// Hands the turn over. A final commit lets its answer be heard at once, the
+// others start the grace. The turn keeps its identity until the next one
+// opens, so the final that ends the grace names it.
+static void s2s_session_commit(s2s_session * s, float score, bool final) {
     s2s_session_emit(s, S2S_EVENT_TURN_COMMITTED, score);
     s->turn_pcm.clear();
     s->phase       = S2S_SESSION_IDLE;
     s->pending_run = 0;
-    s->revision    = 0;
+    if (final || s->grace_windows == 0) {
+        s2s_session_emit(s, S2S_EVENT_TURN_FINAL, score);
+    } else {
+        s->grace_left = s->grace_windows;
+    }
 }
 
-// One 512 sample window: probability, then the state machine.
+// One 512 sample window: the grace, the probability, then the state machine.
+// The grace counts the windows after the one that committed, so it lasts
+// exactly reopen_grace_ms.
 static void s2s_session_window(s2s_session * s, const float * window) {
+    if (s->grace_left > 0 && --s->grace_left == 0) {
+        s2s_session_emit(s, S2S_EVENT_TURN_FINAL, 0.0f);
+    }
+
     const float prob      = sv_prob(s->state, window, s->window);
     const bool  is_speech = prob >= s->params.vad_threshold;
 
@@ -232,7 +259,7 @@ static void s2s_session_window(s2s_session * s, const float * window) {
                     s2s_log(S2S_LOG_INFO, "[Session] Turn classifier on %.2fs of stream, completion %.3f",
                             (double) s->stream.size() / s->sample_rate, (double) score);
                     if (score >= s->params.turn_threshold) {
-                        s2s_session_commit(s, score);
+                        s2s_session_commit(s, score, false);
                     } else {
                         s2s_session_emit(s, S2S_EVENT_TURN_REOPENED, score);
                     }
@@ -250,8 +277,9 @@ static void s2s_session_window(s2s_session * s, const float * window) {
                 } else if (s->pending_run >= s->wait_windows) {
                     // The classifier judged the turn unfinished and the
                     // speaker never came back: the floor goes to the assistant
-                    // anyway, otherwise the conversation stalls.
-                    s2s_session_commit(s, 0.0f);
+                    // anyway, otherwise the conversation stalls. It waited
+                    // long enough: no grace on top.
+                    s2s_session_commit(s, 0.0f, true);
                 }
                 break;
             }

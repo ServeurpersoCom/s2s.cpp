@@ -34,8 +34,8 @@
 			{#each voice.chat as turn, i (i)}
 				<div class="turn">
 					<span class="who {turn.role}">{turn.role === 'user' ? USER : ASSISTANT}</span>
-					{turn.spoken}{#if turn.draft.length > turn.spoken.length}<span class="ahead"
-							>{turn.draft.slice(turn.spoken.length)}</span
+					{turn.draft.slice(0, turn.spokenEnd)}{#if turn.draft.length > turn.spokenEnd}<span
+							class="ahead">{turn.draft.slice(turn.spokenEnd)}</span
 						>{/if}
 				</div>
 			{/each}
@@ -91,7 +91,7 @@
 	.who.assistant {
 		color: var(--who-assistant);
 	}
-	/* written by the model but never spoken: a barge-in cut it off */
+	/* written by the model and not spoken: ahead of the voice, or never said */
 	.ahead {
 		color: var(--error);
 	}

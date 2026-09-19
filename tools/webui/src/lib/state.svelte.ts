@@ -44,6 +44,7 @@ export interface Settings {
 	speechPadMs: string;
 	turnThreshold: string;
 	turnMaxWaitMs: string;
+	turnGraceMs: string;
 	echo: S2SEcho | '';
 	volume: number;
 	chatOpen: boolean;
@@ -89,6 +90,7 @@ function defaults(): Settings {
 		speechPadMs: '',
 		turnThreshold: '',
 		turnMaxWaitMs: '',
+		turnGraceMs: '',
 		echo: '',
 		volume: 1,
 		chatOpen: true,
@@ -173,6 +175,7 @@ $effect.root(() => {
 			speechPadMs: settings.speechPadMs,
 			turnThreshold: settings.turnThreshold,
 			turnMaxWaitMs: settings.turnMaxWaitMs,
+			turnGraceMs: settings.turnGraceMs,
 			echo: settings.echo,
 			volume: settings.volume,
 			chatOpen: settings.chatOpen,

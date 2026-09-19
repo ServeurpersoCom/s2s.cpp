@@ -36,9 +36,12 @@ def main():
     first = re.search(r"First unit after ([\d.]+) ms", log)
     cancelled = re.search(r"Cancelled after (\d+) deltas, (\d+) characters, returned (\w+)", log)
     broken = re.search(r"Broken endpoint returned (\w+)", log)
-    units = re.findall(r'\[Unit\] \d+: "(.*)"', log)
+    units = re.findall(r'\[Unit\] \d+: end \d+ "(.*)"', log)
+    ends = [int(e) for e in re.findall(r'\[Unit\] \d+: end (\d+) ', log)]
+    written = re.search(r"Written (\d+) UTF-16 units, the last unit ends at (\d+)", log)
 
-    ok = check("parsed", bool(streamed and first and cancelled and broken), "harness reported every stage")
+    ok = check("parsed", bool(streamed and first and cancelled and broken and written),
+               "harness reported every stage")
     if not ok:
         return 1
 
@@ -53,6 +56,21 @@ def main():
     # No unit may carry a markdown marker or a line break into the TTS.
     dirty = [u for u in units if any(c in u for c in "*_`#\n")]
     ok = check("clean units", not dirty, "%d units free of markup" % len(units)) and ok
+
+    # Each unit says where it ends in the written text, further than the one
+    # before, and the flush reaches the very end: past it, nothing was left
+    # unspoken.
+    rising = all(b > a for a, b in zip(ends, ends[1:]))
+    ok = check("ends", rising and int(written.group(2)) == int(written.group(1)),
+               "unit ends rising, the last one at %s of %s" % (written.group(2), written.group(1))) and ok
+
+    # The same ends a browser computes on the written text, where an accent is
+    # one code unit and the emoji two, with every character cut across deltas.
+    mixed = "Déjà vu ? Oui 😄. Fin"
+    utf16 = lambda text: len(text.encode("utf-16-le")) // 2
+    expected = [utf16(mixed[: mixed.index("?") + 1]), utf16(mixed[: mixed.index(".") + 1]), utf16(mixed)]
+    split = [int(e) for e in re.findall(r"\[Split\] end (\d+) ", log)]
+    ok = check("utf-16", split == expected, "ends %s, expected %s" % (split, expected)) and ok
 
     ok = check("cancel honored", returned == "false", "request reported cancelled") and ok
     ok = check("cancel truncates", cut_chars < n_chars, "%d of %d characters" % (cut_chars, n_chars)) and ok

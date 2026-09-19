@@ -52,7 +52,8 @@ export function toOptions(): S2SOptions {
 		},
 		turn: {
 			threshold: num(settings.turnThreshold),
-			maxWaitMs: num(settings.turnMaxWaitMs)
+			maxWaitMs: num(settings.turnMaxWaitMs),
+			graceMs: num(settings.turnGraceMs)
 		},
 		echo: settings.echo || undefined
 	};
@@ -65,6 +66,7 @@ export interface ChatTurn {
 	role: 'user' | 'assistant';
 	draft: string;
 	spoken: string;
+	spokenEnd: number; // how far into draft the voice went, past it nothing was said
 	done: boolean;
 }
 
@@ -89,7 +91,7 @@ function openAssistant(): ChatTurn {
 	if (open) {
 		return open;
 	}
-	const turn: ChatTurn = { role: 'assistant', draft: '', spoken: '', done: false };
+	const turn: ChatTurn = { role: 'assistant', draft: '', spoken: '', spokenEnd: 0, done: false };
 	voice.chat.push(turn);
 	return turn;
 }
@@ -151,16 +153,23 @@ export async function createVoice(): Promise<S2S> {
 			}
 			voice.chat.splice(Math.max(at, 0));
 		}
-		voice.chat.push({ role: 'user', draft: text, spoken: text, done: true });
+		voice.chat.push({
+			role: 'user',
+			draft: text,
+			spoken: text,
+			spokenEnd: text.length,
+			done: true
+		});
 	});
 	s2s.on('assistant_delta', (text) => {
 		openAssistant().draft += text;
 	});
-	s2s.on('assistant_text', (text) => {
+	s2s.on('assistant_text', (text, textEnd) => {
 		voice.assistantText += (voice.assistantText ? ' ' : '') + text;
 
 		const turn = openAssistant();
 		turn.spoken += (turn.spoken ? ' ' : '') + text;
+		turn.spokenEnd = textEnd;
 		// loopback has no model writing ahead: what is spoken is the whole turn
 		if (!turn.draft) {
 			turn.draft = turn.spoken;

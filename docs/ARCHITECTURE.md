@@ -57,6 +57,17 @@ PENDING_END   --speech >= min_speech_continuation_ms-->  USER_SPEAKING
 The session is told when the assistant holds the floor. Speech of
 `min_speech_ms` during that time raises a barge-in.
 
+A commit the classifier judged complete keeps its answer silent for
+`reopen_grace_ms`, counted on the audio: recognition and the endpoint
+request start at once, but the first unit waits until the session
+reports the turn final. A breath inside a sentence never lets the
+assistant cut in: if the speaker goes on during the grace, the answer is
+dropped before anyone hears it. A commit forced by `turn_max_wait_ms` has
+waited already and is final at once.
+
+A patch applies its thresholds to the running session: the turn in
+flight, the model states and the turn numbering are kept.
+
 Defaults, published on `/props` and patchable per session:
 
 | Parameter | Default | Role |
@@ -68,6 +79,7 @@ Defaults, published on `/props` and patchable per session:
 | `speech_pad_ms` | 500 | audio kept before the speech onset |
 | `turn_threshold` | 0.5 | Smart Turn completion probability |
 | `turn_max_wait_ms` | 2000 | commit an incomplete turn anyway |
+| `reopen_grace_ms` | 800 | silence kept on the answer to a complete commit |
 
 Smart Turn reads a sliding window of the last 8 seconds of the stream,
 fed on every VAD window and independent of the turn, so a short turn is
@@ -161,7 +173,10 @@ one.
 
 `response.output_text.delta` is what the model writes, as it writes it;
 `response.output_audio_transcript.delta` is what the voice speaks, one
-unit at a time. Unknown types and fields are ignored.
+unit at a time, with `text_end`: how far into the written text the spoken
+part reaches, in UTF-16 code units, the index a browser slices its copy
+with. What lies past it was written and not spoken, which is how the page
+tells an answer cut off by a barge-in from one said to the end. Unknown types and fields are ignored.
 
 HTTP routes: `/` the page, `/s2s.js` the component, `/props` the session
 defaults and the loaded models, `/health`, `/logs` the server log as SSE,

@@ -6,7 +6,9 @@
 // first, a usage frame at the end, and [DONE] to close.
 //
 // Three passes: a full stream cut into synthesis units, a cancellation after
-// a few deltas, and an endpoint that answers 500.
+// a few deltas, and an endpoint that answers 500. A last pass feeds the
+// splitter alone with accents and an emoji, one byte per delta, so every
+// multibyte character is cut across two deltas.
 
 #include "httplib.h"
 #include "llm-client.h"
@@ -65,20 +67,20 @@ static std::string frame(const std::string & content) {
 }
 
 struct Collector {
-    SentenceSplitter         splitter;
-    std::vector<std::string> units;
-    int                      n_deltas     = 0;
-    int                      cancel_after = 0;
-    std::atomic<bool> *      cancel       = nullptr;
-    Timer                    timer;
-    double                   first_unit_ms = -1.0;
+    SentenceSplitter          splitter;
+    std::vector<SentenceUnit> units;
+    int                       n_deltas     = 0;
+    int                       cancel_after = 0;
+    std::atomic<bool> *       cancel       = nullptr;
+    Timer                     timer;
+    double                    first_unit_ms = -1.0;
 };
 
 static bool on_delta(const char * text, void * user) {
     Collector * collector = (Collector *) user;
     collector->n_deltas++;
 
-    for (const std::string & unit : sentence_split_push(&collector->splitter, text)) {
+    for (const SentenceUnit & unit : sentence_split_push(&collector->splitter, text)) {
         if (collector->first_unit_ms < 0.0) {
             collector->first_unit_ms = collector->timer.ms();
         }
@@ -174,16 +176,30 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    const std::string tail = sentence_split_flush(&collector.splitter);
-    if (!tail.empty()) {
+    const SentenceUnit tail = sentence_split_flush(&collector.splitter);
+    if (!tail.text.empty()) {
         collector.units.push_back(tail);
     }
 
     printf("[LLM] Streamed %d deltas, %zu characters, %zu units in %.1f ms\n", collector.n_deltas, text.size(),
            collector.units.size(), full_ms);
     printf("[LLM] First unit after %.1f ms\n", collector.first_unit_ms);
+    printf("[LLM] Written %zu UTF-16 units, the last unit ends at %zu\n", sentence_utf16_len(text), tail.end);
     for (size_t i = 0; i < collector.units.size(); i++) {
-        printf("[Unit] %zu: \"%s\"\n", i, collector.units[i].c_str());
+        printf("[Unit] %zu: end %zu \"%s\"\n", i, collector.units[i].end, collector.units[i].text.c_str());
+    }
+
+    // Accents and an emoji, one byte at a time.
+    {
+        const std::string mixed = "D\xc3\xa9j\xc3\xa0 vu ? Oui \xf0\x9f\x98\x84. Fin";
+        SentenceSplitter  split;
+        for (const char c : mixed) {
+            for (const SentenceUnit & unit : sentence_split_push(&split, std::string(1, c))) {
+                printf("[Split] end %zu \"%s\"\n", unit.end, unit.text.c_str());
+            }
+        }
+        const SentenceUnit last = sentence_split_flush(&split);
+        printf("[Split] end %zu \"%s\"\n", last.end, last.text.c_str());
     }
 
     // Cancellation after three deltas.

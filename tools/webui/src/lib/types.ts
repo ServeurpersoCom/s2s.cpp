@@ -27,6 +27,7 @@ export interface S2SDefaults {
 	speech_pad_ms: number;
 	turn_threshold: number;
 	turn_max_wait_ms: number;
+	reopen_grace_ms: number;
 }
 
 export interface S2SModels {

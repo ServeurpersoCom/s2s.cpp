@@ -22,7 +22,11 @@
 //                                    transcript of the same turn replaces it
 //   response.created
 //   response.output_text.delta       what the model writes, as it writes it
-//   response.output_audio.delta, response.output_audio_transcript.delta
+//   response.output_audio.delta
+//   response.output_audio_transcript.delta
+//                                    what the voice speaks, one unit at a
+//                                    time, with text_end: how far into the
+//                                    written text the spoken part reaches
 //   response.done, response.cancelled
 //   error
 //
@@ -95,6 +99,7 @@ struct rt_session_patch {
     int         speech_pad_ms              = -1;
     float       turn_threshold             = -1.0f;
     int         turn_max_wait_ms           = -1;
+    int         reopen_grace_ms            = -1;
 };
 
 struct rt_client_message {
@@ -263,6 +268,7 @@ static rt_client_message rt_parse(const std::string & frame) {
         if (turn) {
             message.patch.turn_threshold   = rt_json_num(turn, "threshold", -1.0f);
             message.patch.turn_max_wait_ms = (int) rt_json_num(turn, "max_wait_ms", -1.0f);
+            message.patch.reopen_grace_ms  = (int) rt_json_num(turn, "reopen_grace_ms", -1.0f);
         }
     } else if (type == "input_audio_buffer.append") {
         message.type                = RT_CLIENT_AUDIO_APPEND;
@@ -336,6 +342,13 @@ static std::string rt_escape(const std::string & text) {
 
 static std::string rt_event_text(const char * type, const char * key, const std::string & value) {
     return std::string("{\"type\":\"") + type + "\",\"" + key + "\":\"" + rt_escape(value) + "\"}";
+}
+
+// What the voice speaks, one unit at a time. text_end counts UTF-16 code
+// units of the written text, so a browser slices its copy with it as is.
+static std::string rt_event_spoken(const std::string & unit, size_t text_end) {
+    return std::string("{\"type\":\"response.output_audio_transcript.delta\",\"delta\":\"") + rt_escape(unit) +
+           "\",\"text_end\":" + std::to_string(text_end) + "}";
 }
 
 // The transcript of a user turn. item_id names the turn, so a later

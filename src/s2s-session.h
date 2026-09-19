@@ -15,6 +15,12 @@
 // and the audio keeps accumulating, so the recognizer sees the whole
 // utterance as one piece.
 //
+// A commit the classifier judged complete keeps its answer silent for
+// reopen_grace_ms, counted on the audio, then the session reports the turn
+// final: a breath inside a sentence never lets the assistant cut in. A turn
+// that opens meanwhile supersedes the grace. A commit forced by
+// turn_max_wait_ms or by the caller has waited already and is final at once.
+//
 // The session never transcribes and never speaks. It hands the committed
 // audio to the caller, which owns the recognizer worker, and it is told when
 // the assistant holds the floor so it can arm the barge-in. That keeps this
@@ -38,6 +44,7 @@ enum s2s_session_event {
     S2S_EVENT_SPEECH_STOPPED,      // the speech to silence boundary
     S2S_EVENT_TURN_REOPENED,       // the classifier said the turn was not over
     S2S_EVENT_TURN_COMMITTED,      // the audio is ready for the recognizer
+    S2S_EVENT_TURN_FINAL,          // the committed turn stands, its answer may be heard
     S2S_EVENT_BARGE_IN,            // the user spoke while the assistant held the floor
 };
 
@@ -49,6 +56,7 @@ struct s2s_session_params {
     int   speech_pad_ms              = 500;
     float turn_threshold             = 0.5f;
     int   turn_max_wait_ms           = 2000;
+    int   reopen_grace_ms            = 800;
 };
 
 // One event, with the audio attached when the turn is committed.
@@ -74,6 +82,11 @@ s2s_session * s2s_session_new(sv_context *               vad,
                               s2s_session_cb             cb,
                               void *                     user);
 void          s2s_session_free(s2s_session * s);
+
+// Applies new thresholds to a running session. The turn in flight, the model
+// states and the turn numbering are kept: a threshold moved in the middle of
+// a sentence does not cut it.
+void s2s_session_set_params(s2s_session * s, const s2s_session_params & params);
 
 // Feeds mono 16 kHz audio. Any length works: the session buffers what does
 // not fill a window.

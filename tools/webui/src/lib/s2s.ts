@@ -71,6 +71,9 @@ export interface S2SVad {
 export interface S2STurn {
 	threshold?: number;
 	maxWaitMs?: number;
+	// how long the answer to a turn judged complete stays silent, so the
+	// speaker can go on without the assistant cutting in
+	graceMs?: number;
 }
 
 export interface S2SSampling {
@@ -133,8 +136,10 @@ export interface S2SEvents {
 	user_text: (text: string, revised: boolean) => void;
 	// what the model writes, as it writes it
 	assistant_delta: (text: string) => void;
-	// what the voice really speaks, one synthesis unit at a time
-	assistant_text: (text: string) => void;
+	// what the voice really speaks, one synthesis unit at a time, and how far
+	// into the written text it reaches: what lies past textEnd in the
+	// assistant_delta text was written and not spoken
+	assistant_text: (text: string, textEnd: number) => void;
 	// the conversation, every time it changes: persist it, or ignore it
 	history: (messages: S2SMessage[]) => void;
 	// every step of a start, a stop or a failure, so a host can show what
@@ -518,7 +523,8 @@ export class S2S {
 				},
 				turn: {
 					threshold: this.options.turn?.threshold,
-					max_wait_ms: this.options.turn?.maxWaitMs
+					max_wait_ms: this.options.turn?.maxWaitMs,
+					reopen_grace_ms: this.options.turn?.graceMs
 				}
 			}
 		});
@@ -634,7 +640,7 @@ export class S2S {
 				{
 					const delta = String(message.delta ?? '');
 					this.units.push({ text: delta, start: this.queuedSamples });
-					this.handlers.assistant_text?.(delta);
+					this.handlers.assistant_text?.(delta, Number(message.text_end ?? 0));
 				}
 				break;
 

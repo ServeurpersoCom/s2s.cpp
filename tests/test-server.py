@@ -42,6 +42,7 @@ ROOM_SECONDS = "12"
 TALK_OVER_WORDS = "where you go"
 ECHO_WORDS = ("different", "cultures", "creation", "afterlife")
 REACTION_S = 1.5
+GRACE_S = 0.8  # reopen_grace_ms at its default
 TMP = "tmp"
 
 BOOT_TIMEOUT_S = 120
@@ -99,7 +100,6 @@ def main():
     events = re.findall(r"\[Event\]\s+[\d.]+s\s+(\S+)", out)
     items = re.findall(r'input_audio_transcription.completed\s+(\S*) "(.*)"', out)
     transcripts = [text for _, text in items]
-    spoken = re.findall(r'response.output_audio_transcript.delta\s+"(.*)"', out)
     summary = re.search(r"(\d+) events, ([\d.]+)s of audio received", out)
 
     ok = check("boot", bool(summary), "server answered and the client ran")
@@ -117,10 +117,13 @@ def main():
     named = [item for item, _ in items if item.startswith("turn_")]
     ok = check("items", len(named) == len(items) and len(set(named)) == len(named),
                "%d transcripts, each with its own turn item" % len(items)) and ok
-    ok = check("loopback", spoken == transcripts, "%d units spoken back verbatim" % len(spoken)) and ok
+    # The example is a monologue: the next words often arrive during the
+    # grace, and the answer to a fragment is dropped before anyone hears it.
+    # Every answer that is heard speaks back the turn that opened it.
+    heard, verbatim = spoken_back(out)
+    ok = check("loopback", heard > 0 and verbatim, "%d answers heard, each its turn verbatim" % heard) and ok
     ok = check("audio", audio_sec > 1.0, "%.2fs of synthesized audio" % audio_sec) and ok
-    ok = check("responses", events.count("response.done") >= len(transcripts),
-               "%d responses completed" % events.count("response.done")) and ok
+    ok = check_grace(TMP + "/server.log") and ok
 
     ok = check_room(room) and ok
     for label, run in (("plain", out), ("room", room), ("no endpoint", broken)):
@@ -128,6 +131,46 @@ def main():
     errors = re.findall(r"\[Event\]\s+[\d.]+s\s+error", broken)
     ok = check("no endpoint", bool(errors), "%d errors reported for the unreachable endpoint" % len(errors)) and ok
     return 0 if ok else 1
+
+
+# The completed responses that spoke, and whether each one spoke back the
+# transcript that opened it, word for word.
+def spoken_back(out):
+    heard, verbatim, question, answer = 0, True, None, []
+    for name, rest in re.findall(r"\[Event\]\s+[\d.]+s\s+(\S+)(.*)", out):
+        if name == "conversation.item.input_audio_transcription.completed":
+            question = re.search(r'"(.*)"', rest).group(1)
+        elif name == "response.created":
+            answer = []
+        elif name == "response.output_audio_transcript.delta":
+            answer.append(re.search(r'"(.*)"', rest).group(1))
+        elif name == "response.done" and answer:
+            heard += 1
+            verbatim = verbatim and " ".join(answer) == question
+    return heard, verbatim
+
+
+# From the server log: a turn committed as complete turns final no sooner
+# than the grace, a forced commit turns final at once.
+def check_grace(path):
+    commits, graced, forced, ok = {}, 0, 0, True
+    for line in open(path, errors="replace"):
+        if "[Server] Connection from" in line:
+            commits = {}
+        m = re.search(r"Turn committed at ([\d.]+)s \(turn (\d+) .*completion ([\d.]+)", line)
+        if m:
+            commits[m.group(2)] = (float(m.group(1)), float(m.group(3)))
+        m = re.search(r"Turn final at ([\d.]+)s \(turn (\d+) ", line)
+        if m and m.group(2) in commits:
+            at, score = commits.pop(m.group(2))
+            gap = float(m.group(1)) - at
+            if score == 0.0:
+                forced += 1
+                ok = ok and gap == 0.0
+            else:
+                graced += 1
+                ok = ok and gap >= GRACE_S - 0.001
+    return check("grace", ok and graced > 0, "%d answers held for the grace, %d forced commits final at once" % (graced, forced))
 
 
 # Each response.created is closed by exactly one response.done or

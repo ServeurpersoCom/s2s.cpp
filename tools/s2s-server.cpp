@@ -379,9 +379,22 @@ struct Connection {
     std::mutex              queue_mutex;
     std::condition_variable queue_cv;
     std::queue<TurnAudio>   queue;
-    bool                    stop = false;
+    std::atomic<bool>       stop{ false };
 
     std::atomic<bool> cancel{ false };
+
+    // The first sample of an answer waits for its turn to be final. The
+    // session decides on the reader thread: the latest turn declared final,
+    // and the latest turn that opened, which makes every earlier one final.
+    std::mutex              turn_mutex;
+    std::condition_variable turn_cv;
+    int                     final_turn = 0;
+    int                     open_turn  = 0;
+
+    // The answer in flight, responder side: its turn, and whether its first
+    // unit has gone past the wait.
+    int  answer_turn     = 0;
+    bool answer_released = false;
 
     // Whether the assistant holds the floor: set by the responder, handed to
     // the session by the reader, the only thread that touches the session.
@@ -522,22 +535,47 @@ static void conn_cancel_echo(Connection * conn, std::vector<float> & pcm, const 
 // goes out right before its first audio chunk, so the client only ever sees
 // text that has sound behind it, and places it in the audio stream. Returns
 // false when the floor was taken back.
-static bool conn_speak(Connection * conn, const std::string & unit) {
+// Wakes whatever waits on the turn: a final turn, a new one, a cancel or the
+// end of the connection.
+static void conn_turn_notify(Connection * conn) {
+    std::lock_guard<std::mutex> lock(conn->turn_mutex);
+    conn->turn_cv.notify_all();
+}
+
+// Holds the first unit of the answer until its turn is final, or until a
+// later turn opened. Returns false when the floor went back meanwhile.
+static bool conn_wait_final(Connection * conn) {
+    std::unique_lock<std::mutex> lock(conn->turn_mutex);
+    conn->turn_cv.wait(lock, [conn]() {
+        return conn->stop || conn->cancel.load() || conn->final_turn >= conn->answer_turn ||
+               conn->open_turn > conn->answer_turn;
+    });
+    return !conn->stop && !conn->cancel.load();
+}
+
+static bool conn_speak(Connection * conn, const SentenceUnit & unit) {
+    if (!conn->answer_released) {
+        if (!conn_wait_final(conn)) {
+            return false;
+        }
+        conn->answer_released = true;
+    }
+
     struct SpeakTap {
-        Connection *        conn    = nullptr;
-        const std::string * unit    = nullptr;
-        size_t              samples = 0;
+        Connection *         conn    = nullptr;
+        const SentenceUnit * unit    = nullptr;
+        size_t               samples = 0;
     } speak_tap;
 
     speak_tap.conn = conn;
     speak_tap.unit = &unit;
 
     const bool spoke = tts_bridge_speak(
-        g_models.tts, unit, conn->tts,
+        g_models.tts, unit.text, conn->tts,
         [](const float * pcm, size_t n_samples, void * user) {
             SpeakTap * self = (SpeakTap *) user;
             if (self->samples == 0 && n_samples > 0) {
-                conn_send(self->conn, rt_event_text("response.output_audio_transcript.delta", "delta", *self->unit));
+                conn_send(self->conn, rt_event_spoken(self->unit->text, self->unit->end));
             }
             self->samples += n_samples;
             conn_send(self->conn, rt_event_audio(pcm, n_samples));
@@ -582,6 +620,8 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
             (double) pcm.size() / S2S_MODEL_RATE, turn.turn_id, turn.revision);
     conn_send(conn, rt_event_transcript("turn_" + std::to_string(turn.turn_id), transcript));
 
+    conn->answer_turn     = turn.turn_id;
+    conn->answer_released = false;
     conn->cancel.store(false);
     conn->speaking.store(true);
     conn_send(conn, rt_event("response.created"));
@@ -591,7 +631,10 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
     if (conn->mode == "loopback") {
         // No endpoint in the path: the recognized text is the answer.
         answer = transcript;
-        conn_speak(conn, answer);
+        SentenceUnit unit;
+        unit.text = answer;
+        unit.end  = sentence_utf16_len(answer);
+        conn_speak(conn, unit);
     } else {
         // The list as it stood when this turn was picked up: a push that
         // arrives later belongs to the next turn, not to this one.
@@ -628,7 +671,7 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
                     // that follows says what is really spoken, one unit later.
                     conn_send(self->conn, rt_event_text("response.output_text.delta", "delta", delta));
 
-                    for (const std::string & unit : sentence_split_push(&self->splitter, delta)) {
+                    for (const SentenceUnit & unit : sentence_split_push(&self->splitter, delta)) {
                         if (self->first_unit_ms < 0.0) {
                             self->first_unit_ms = self->timer.ms();
                         }
@@ -640,8 +683,8 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
                 },
                 &stream_tap, &conn->cancel, answer);
 
-            const std::string tail = sentence_split_flush(&stream_tap.splitter);
-            if (streamed && !tail.empty()) {
+            const SentenceUnit tail = sentence_split_flush(&stream_tap.splitter);
+            if (streamed && !tail.text.empty()) {
                 conn_speak(conn, tail);
             }
 
@@ -684,10 +727,25 @@ static void conn_on_session_event(const s2s_session_report * report, void * user
 
     switch (report->event) {
         case S2S_EVENT_SPEECH_STARTED:
-            s2s_log(S2S_LOG_INFO, "[Session] Speech started at %.2fs (turn %d rev %d)", report->time_sec,
-                    report->turn_id, report->revision);
-            conn_send(conn, rt_event("input_audio_buffer.speech_started"));
-            break;
+            {
+                s2s_log(S2S_LOG_INFO, "[Session] Speech started at %.2fs (turn %d rev %d)", report->time_sec,
+                        report->turn_id, report->revision);
+                conn_send(conn, rt_event("input_audio_buffer.speech_started"));
+                std::lock_guard<std::mutex> lock(conn->turn_mutex);
+                conn->open_turn = report->turn_id > conn->open_turn ? report->turn_id : conn->open_turn;
+                conn->turn_cv.notify_all();
+                break;
+            }
+
+        case S2S_EVENT_TURN_FINAL:
+            {
+                s2s_log(S2S_LOG_INFO, "[Session] Turn final at %.2fs (turn %d rev %d), its answer may be heard",
+                        report->time_sec, report->turn_id, report->revision);
+                std::lock_guard<std::mutex> lock(conn->turn_mutex);
+                conn->final_turn = report->turn_id > conn->final_turn ? report->turn_id : conn->final_turn;
+                conn->turn_cv.notify_all();
+                break;
+            }
 
         case S2S_EVENT_SPEECH_STOPPED:
             s2s_log(S2S_LOG_INFO, "[Session] Speech stopped at %.2fs (turn %d rev %d)", report->time_sec,
@@ -707,6 +765,7 @@ static void conn_on_session_event(const s2s_session_report * report, void * user
             // response.
             s2s_log(S2S_LOG_INFO, "[Session] Barge-in at %.2fs, the user took the floor", report->time_sec);
             conn->cancel.store(true);
+            conn_turn_notify(conn);
             break;
 
         case S2S_EVENT_TURN_COMMITTED:
@@ -883,11 +942,13 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
         conn->params.turn_max_wait_ms = patch.turn_max_wait_ms;
         listening_changed             = true;
     }
+    if (patch.reopen_grace_ms >= 0) {
+        conn->params.reopen_grace_ms = patch.reopen_grace_ms;
+        listening_changed            = true;
+    }
 
     if (listening_changed) {
-        s2s_session_free(conn->session);
-        conn->session = s2s_session_new(g_models.vad, g_models.turn, conn->params, conn_on_session_event, conn);
-        s2s_session_set_speaking(conn->session, conn->speaking.load());
+        s2s_session_set_params(conn->session, conn->params);
     }
 }
 
@@ -1204,7 +1265,8 @@ int main(int argc, char ** argv) {
         body += "\"min_silence_ms\":" + std::to_string(turn.min_silence_ms) + ",";
         body += "\"speech_pad_ms\":" + std::to_string(turn.speech_pad_ms) + ",";
         body += "\"turn_threshold\":" + std::to_string(turn.turn_threshold) + ",";
-        body += "\"turn_max_wait_ms\":" + std::to_string(turn.turn_max_wait_ms);
+        body += "\"turn_max_wait_ms\":" + std::to_string(turn.turn_max_wait_ms) + ",";
+        body += "\"reopen_grace_ms\":" + std::to_string(turn.reopen_grace_ms);
         body += "}}";
         res.set_content(body, "application/json");
     });
@@ -1400,6 +1462,7 @@ int main(int argc, char ** argv) {
                 case RT_CLIENT_RESPONSE_CANCEL:
                     s2s_log(S2S_LOG_INFO, "[Realtime] Response cancel");
                     conn.cancel.store(true);
+                    conn_turn_notify(&conn);
                     break;
 
                 case RT_CLIENT_HISTORY:
@@ -1426,6 +1489,7 @@ int main(int argc, char ** argv) {
             conn.stop = true;
             conn.queue_cv.notify_one();
         }
+        conn_turn_notify(&conn);
         responder.join();
         s2s_session_free(conn.session);
         lv_state_free(conn.aec);

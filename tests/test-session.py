@@ -21,6 +21,8 @@ TURN = "../models/smart-turn-v3.2-F32.gguf"
 ASR = "../models/parakeet-tdt-0.6b-v3-Q8_0.gguf"
 WAV = "../examples/freeman.wav"
 TMP = "tmp"
+GRACE_S = 0.8  # reopen_grace_ms at its default
+WINDOW_S = 0.032
 
 LINE = re.compile(
     r"\[Turn\]\s+([\d.]+)s\s+turn (\d+) rev (\d+)\s+(\w+)"
@@ -92,6 +94,23 @@ def main():
         any(s["turn"] == r["turn"] and s["rev"] == r["rev"] + 1 for s in starts) for r in reopened
     )
     ok = check("revisions", revisions, "%d reopenings each followed by a revision" % len(reopened)) and ok
+
+    # A commit the classifier judged complete stays silent for the grace, then
+    # turns final, unless the next turn opens first; a forced commit is final
+    # at once.
+    grace_ok, n_graced, n_forced = True, 0, 0
+    for c in commits:
+        final = next((e for e in events if e["event"] == "turn_final" and e["turn"] == c["turn"]), None)
+        later = next((e for e in events if e["event"] == "speech_started" and e["turn"] > c["turn"]), None)
+        if c["score"] == 0.0:
+            n_forced += 1
+            grace_ok = grace_ok and final is not None and final["time"] == c["time"]
+        elif final is not None:
+            n_graced += 1
+            grace_ok = grace_ok and final["time"] - c["time"] >= GRACE_S - WINDOW_S
+        else:
+            grace_ok = grace_ok and (later is not None or c is commits[-1])
+    ok = check("grace", grace_ok, "%d commits final after the grace, %d forced final at once" % (n_graced, n_forced)) and ok
 
     for c in commits:
         print('[Turn] %.2fs  turn %d  %.2fs  "%s"' % (c["time"], c["turn"], c["seconds"], c["text"]))

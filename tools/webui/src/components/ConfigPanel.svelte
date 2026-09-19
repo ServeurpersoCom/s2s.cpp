@@ -138,6 +138,7 @@
 	function clearTurn() {
 		settings.turnThreshold = '';
 		settings.turnMaxWaitMs = '';
+		settings.turnGraceMs = '';
 	}
 
 	// start() has to run inside the click: the browser grants the microphone
@@ -290,6 +291,13 @@
 						type="text"
 						placeholder={ph(d?.turn_max_wait_ms)}
 						bind:value={settings.turnMaxWaitMs}
+					/></label
+				>
+				<label
+					>Reopen grace ms <input
+						type="text"
+						placeholder={ph(d?.reopen_grace_ms)}
+						bind:value={settings.turnGraceMs}
 					/></label
 				>
 			</div>

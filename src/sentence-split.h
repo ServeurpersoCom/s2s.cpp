@@ -22,8 +22,18 @@
 #include <string>
 #include <vector>
 
+// A synthesis unit: the text to speak, cleaned, and where it ends in the
+// written text. The end counts UTF-16 code units, the unit a browser indexes
+// its own copy of the text with, so what was written and never spoken is the
+// written text past the end of the last unit.
+struct SentenceUnit {
+    std::string text;
+    size_t      end = 0;
+};
+
 struct SentenceSplitter {
     std::string pending;
+    size_t      consumed = 0;  // UTF-16 length of the written text already cut
 };
 
 static bool sentence_is_terminator(char c) {
@@ -56,6 +66,15 @@ static uint32_t sentence_decode(const std::string & text, size_t i, size_t * len
 // point outside the Latin-1 symbols (U+0080 to U+00BF), the punctuation and
 // symbol blocks (U+2000 to U+2BFF) and the CJK punctuation (U+3000 to U+303F).
 // Accented letters and every script count.
+// UTF-16 length of UTF-8 text: one per code point, two above the BMP.
+static size_t sentence_utf16_len(const std::string & text) {
+    size_t n = 0;
+    for (size_t i = 0, len = 1; i < text.size(); i += len) {
+        n += sentence_decode(text, i, &len) >= 0x10000 ? 2 : 1;
+    }
+    return n;
+}
+
 static bool sentence_is_spoken(uint32_t cp) {
     if (cp < 0x80) {
         return (cp >= '0' && cp <= '9') || (cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z');
@@ -125,9 +144,11 @@ static size_t sentence_cut_point(const SentenceSplitter & s) {
     return 0;
 }
 
-// Feeds a stream delta and returns the units that became complete.
-static std::vector<std::string> sentence_split_push(SentenceSplitter * s, const std::string & delta) {
-    std::vector<std::string> units;
+// Feeds a stream delta and returns the units that became complete. A cut
+// always falls right after an ASCII character, so it never splits a UTF-8
+// sequence a delta left unfinished.
+static std::vector<SentenceUnit> sentence_split_push(SentenceSplitter * s, const std::string & delta) {
+    std::vector<SentenceUnit> units;
     s->pending += delta;
 
     for (;;) {
@@ -135,18 +156,28 @@ static std::vector<std::string> sentence_split_push(SentenceSplitter * s, const 
         if (cut == 0) {
             break;
         }
-        const std::string unit = sentence_clean(s->pending.substr(0, cut));
+        const std::string written = s->pending.substr(0, cut);
         s->pending.erase(0, cut);
-        if (!unit.empty()) {
+        s->consumed += sentence_utf16_len(written);
+
+        SentenceUnit unit;
+        unit.text = sentence_clean(written);
+        unit.end  = s->consumed;
+        if (!unit.text.empty()) {
             units.push_back(unit);
         }
     }
     return units;
 }
 
-// Flushes whatever is left when the stream ends.
-static std::string sentence_split_flush(SentenceSplitter * s) {
-    const std::string unit = sentence_clean(s->pending);
+// Flushes whatever is left when the stream ends. The unit reaches the end of
+// the written text, even when there is nothing left to say.
+static SentenceUnit sentence_split_flush(SentenceSplitter * s) {
+    s->consumed += sentence_utf16_len(s->pending);
+
+    SentenceUnit unit;
+    unit.text = sentence_clean(s->pending);
+    unit.end  = s->consumed;
     s->pending.clear();
     return unit;
 }
