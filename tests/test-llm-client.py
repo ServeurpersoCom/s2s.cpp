@@ -78,7 +78,7 @@ def main():
     ok = check("utf-16", split == expected, "ends %s, expected %s" % (split, expected)) and ok
 
     # Every sampling field the panel edits reaches the patch, with its value.
-    sent = "temperature 0.7 top_p 0.9 top_k 40 min_p 0.05 max_tokens 256 presence 0.5 frequency 0.25 seed 42 timeout 30"
+    sent = "temperature 0.7 top_p 0.9 top_k 40 min_p 0.05 max_tokens 256 presence 0.5 frequency 0.25 seed 42 timeout 30 reasoning low"
     ok = check("session sampling", parsed.group(1) == sent, parsed.group(1)) and ok
 
     ok = check("cancel honored", returned == "false", "request reported cancelled") and ok

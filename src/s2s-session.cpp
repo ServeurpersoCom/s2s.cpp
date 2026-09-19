@@ -20,6 +20,50 @@
 // Defined below, next to the state machine it belongs to.
 static void s2s_session_commit(s2s_session * s, float score, bool final);
 
+// The most recent samples of the stream, up to a fixed capacity: a push
+// overwrites the oldest ones, and a read copies what is held out, oldest
+// first. Nothing moves in memory on a push.
+struct SampleRing {
+    std::vector<float> data;
+    size_t             head = 0;  // where the next sample goes
+    size_t             size = 0;  // samples held, up to the capacity
+
+    // A new capacity keeps the most recent samples that still fit.
+    void resize(size_t capacity) {
+        std::vector<float> held;
+        read(held);
+        data.assign(capacity, 0.0f);
+        head              = 0;
+        size              = 0;
+        const size_t keep = std::min(held.size(), capacity);
+        push(held.data() + held.size() - keep, keep);
+    }
+
+    void clear() {
+        head = 0;
+        size = 0;
+    }
+
+    void push(const float * samples, size_t n) {
+        const size_t capacity = data.size();
+        for (size_t i = 0; i < n && capacity > 0; i++) {
+            data[head] = samples[i];
+            head       = head + 1 == capacity ? 0 : head + 1;
+        }
+        size = std::min(size + n, capacity);
+    }
+
+    void read(std::vector<float> & out) const {
+        const size_t capacity = data.size();
+        out.resize(size);
+        size_t at = (head + capacity - size) % (capacity ? capacity : 1);
+        for (size_t i = 0; i < size; i++) {
+            out[i] = data[at];
+            at     = at + 1 == capacity ? 0 : at + 1;
+        }
+    }
+};
+
 struct s2s_session {
     sv_context * vad   = nullptr;
     st_context * turn  = nullptr;
@@ -42,13 +86,13 @@ struct s2s_session {
 
     std::vector<float> partial;   // samples that did not fill a window
     std::vector<float> turn_pcm;
-    std::vector<float> lookback;  // recent windows, the speech pad reads from here
-    std::vector<float> stream;    // the classifier window, independent of the turn
+    SampleRing         lookback;  // recent windows, the speech pad reads from here
+    SampleRing         stream;    // the classifier window, independent of the turn
+    std::vector<float> scratch;   // the classifier window, laid out for the model
 
-    int    speech_run     = 0;    // consecutive windows above the threshold
-    int    silence_run    = 0;
-    int    pending_run    = 0;    // windows spent in PENDING_END
-    size_t stream_samples = 0;    // what the classifier wants, in samples
+    int speech_run  = 0;          // consecutive windows above the threshold
+    int silence_run = 0;
+    int pending_run = 0;          // windows spent in PENDING_END
 
     int  grace_left = 0;          // windows before the last complete commit is final
     int  turn_id    = 0;
@@ -93,7 +137,7 @@ s2s_session * s2s_session_new(sv_context *               vad,
     // The turn classifier reads a fixed window of the stream, whatever the
     // turn holds: a short burst judged on its own, surrounded by silence,
     // looks like a finished sentence to it. Prosody needs its context.
-    s->stream_samples = (size_t) st_window(turn);
+    s->stream.resize((size_t) st_window(turn));
 
     s2s_session_set_params(s, params);
     return s;
@@ -111,6 +155,11 @@ void s2s_session_set_params(s2s_session * s, const s2s_session_params & params) 
     s->wait_windows   = s2s_session_windows(params.turn_max_wait_ms, s->window, s->sample_rate);
     s->grace_windows =
         params.reopen_grace_ms > 0 ? s2s_session_windows(params.reopen_grace_ms, s->window, s->sample_rate) : 0;
+
+    // The lookback holds the windows a turn needs to open plus the speech pad,
+    // so the audio starts before the first syllable that crossed the
+    // threshold instead of in the middle of it.
+    s->lookback.resize((size_t) (s->open_windows + s->pad_windows) * (size_t) s->window);
 
     s2s_log(S2S_LOG_INFO, "[Session] Window %d samples, open %d, reopen %d, close %d, wait %d, grace %d windows",
             s->window, s->open_windows, s->reopen_windows, s->close_windows, s->wait_windows, s->grace_windows);
@@ -182,7 +231,7 @@ static void s2s_session_open_turn(s2s_session * s) {
     s->turn_id++;
     s->revision   = 0;
     s->grace_left = 0;
-    s->turn_pcm.assign(s->lookback.begin(), s->lookback.end());
+    s->lookback.read(s->turn_pcm);
     s->phase = S2S_SESSION_USER_SPEAKING;
     s2s_session_emit(s, S2S_EVENT_SPEECH_STARTED, 0.0f);
 }
@@ -216,21 +265,10 @@ static void s2s_session_window(s2s_session * s, const float * window) {
     s->speech_run  = is_speech ? s->speech_run + 1 : 0;
     s->silence_run = is_speech ? 0 : s->silence_run + 1;
 
-    // The lookback holds the windows a turn needs to open plus the speech pad,
-    // so the audio starts before the first syllable that crossed the
-    // threshold instead of in the middle of it.
-    s->lookback.insert(s->lookback.end(), window, window + s->window);
-    const size_t lookback_max = (size_t) (s->open_windows + s->pad_windows) * (size_t) s->window;
-    if (s->lookback.size() > lookback_max) {
-        s->lookback.erase(s->lookback.begin(), s->lookback.end() - (ptrdiff_t) lookback_max);
-    }
-
-    // The classifier window follows the stream, not the turn, so a boundary is
-    // judged with everything that led to it.
-    s->stream.insert(s->stream.end(), window, window + s->window);
-    if (s->stream.size() > s->stream_samples) {
-        s->stream.erase(s->stream.begin(), s->stream.end() - (ptrdiff_t) s->stream_samples);
-    }
+    // Both rings follow the stream, not the turn: the classifier judges a
+    // boundary with everything that led to it.
+    s->lookback.push(window, (size_t) s->window);
+    s->stream.push(window, (size_t) s->window);
 
     if (s->phase != S2S_SESSION_IDLE) {
         s->turn_pcm.insert(s->turn_pcm.end(), window, window + s->window);
@@ -255,9 +293,10 @@ static void s2s_session_window(s2s_session * s, const float * window) {
                     s->pending_run = 0;
                     s2s_session_emit(s, S2S_EVENT_SPEECH_STOPPED, 0.0f);
 
-                    const float score = st_predict(s->turn, s->stream.data(), (int) s->stream.size());
+                    s->stream.read(s->scratch);
+                    const float score = st_predict(s->turn, s->scratch.data(), (int) s->scratch.size());
                     s2s_log(S2S_LOG_INFO, "[Session] Turn classifier on %.2fs of stream, completion %.3f",
-                            (double) s->stream.size() / s->sample_rate, (double) score);
+                            (double) s->scratch.size() / s->sample_rate, (double) score);
                     if (score >= s->params.turn_threshold) {
                         s2s_session_commit(s, score, false);
                     } else {

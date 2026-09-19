@@ -101,6 +101,7 @@ static void fd_close(int fd) {
 #endif
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <csignal>
@@ -134,9 +135,13 @@ static std::condition_variable cv_log;
 static std::string             log_ring[LOG_RING_SIZE];
 static uint64_t                log_seq = 0;
 
-static int         g_real_stderr_fd = -1;
-static int         g_pipe_read_fd   = -1;
-static std::thread g_log_reader;
+static int               g_real_stderr_fd = -1;
+static int               g_pipe_read_fd   = -1;
+static std::thread       g_log_reader;
+static std::atomic<bool> g_log_drained{ false };  // the reader forwarded everything and returned
+
+// How long a crash waits for the reader to drain the pipe before it goes on.
+#define LOG_CRASH_DRAIN_MS 1000
 
 // reader thread: drain pipe, forward to real stderr, push lines to ring.
 // exits when the write end of the pipe is closed (fd_dup2 restores real stderr).
@@ -166,6 +171,7 @@ static void log_reader_main() {
         cv_log.notify_all();
     }
     fd_close(g_pipe_read_fd);
+    g_log_drained.store(true);
 }
 
 // Restore stderr and drain the reader before the pipe dies with the process.
@@ -188,7 +194,10 @@ static void log_capture_stop() {
 // A crash kills the process with its last words still in the pipe. This
 // names the crash through the pipe, so /logs carries it too, then drops the
 // last write end so the reader drains everything to the real stderr before
-// the process goes. A crash on the reader itself writes straight out.
+// the process goes. A crash on the reader itself writes straight out. The
+// wait is bounded, never a join: the crashed thread may hold a lock the
+// reader needs, the log ring or the heap, and a crash must end the process,
+// not hang it.
 static void log_capture_crash(const char * what) {
     char      line[512];
     const int n = snprintf(line, sizeof(line), "[Server] FATAL: %s\n", what);
@@ -202,8 +211,8 @@ static void log_capture_crash(const char * what) {
     }
     fd_write(STDERR_FILENO, line, (size_t) n);
     fd_dup2(g_real_stderr_fd, STDERR_FILENO);
-    if (g_log_reader.joinable()) {
-        g_log_reader.join();
+    for (int ms = 0; ms < LOG_CRASH_DRAIN_MS && !g_log_drained.load(); ms++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
 
@@ -390,6 +399,11 @@ struct Connection {
     std::condition_variable out_cv;
     std::queue<std::string> out;
     bool                    out_stop = false;
+
+    // The endpoint client, the responder's alone. It lives across turns so its
+    // connection stays open: a turn pays the TCP and TLS handshakes only when
+    // the endpoint host changes.
+    llm_client * llm = nullptr;
 
     // Committed turns waiting for the responder.
     std::mutex              queue_mutex;
@@ -660,6 +674,16 @@ static bool conn_speak(Connection * conn, const SentenceUnit & unit, const tts_r
     return spoke;
 }
 
+// The endpoint client of the connection, created on its first turn and
+// pointed at the settings of every turn after.
+static llm_client * conn_llm(Connection * conn, const llm_client_params & params) {
+    if (!conn->llm) {
+        conn->llm = llm_client_new(params);
+        return conn->llm;
+    }
+    return llm_client_set_params(conn->llm, params) ? conn->llm : nullptr;
+}
+
 // Appends a message, joining two user messages in a row into one: a turn
 // whose answer was never heard is followed by the next one, and some chat
 // templates refuse two user messages in a row.
@@ -750,7 +774,7 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
 
         if (client.llm.base_url.empty()) {
             conn_error(conn, "[Realtime] No endpoint: name one in the session, or start the server with --llm-url");
-        } else if (llm_client * llm = llm_client_new(client.llm); !llm) {
+        } else if (llm_client * llm = conn_llm(conn, client.llm); !llm) {
             conn_error(conn, llm_client_last_error());
         } else {
             struct StreamTap {
@@ -797,7 +821,6 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
             if (!streamed && !conn->cancel.load()) {
                 conn_error(conn, llm_client_last_error());
             }
-            llm_client_free(llm);
         }
     }
 
@@ -991,6 +1014,9 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     }
     if (patch.seed >= 0.0f) {
         conn->client.llm.sampling.seed = (int) patch.seed;
+    }
+    if (!patch.reasoning_effort.empty()) {
+        conn->client.llm.sampling.reasoning_effort = patch.reasoning_effort;
     }
     if (!patch.tts_speaker.empty()) {
         conn->client.tts.speaker = patch.tts_speaker;
@@ -1629,6 +1655,7 @@ int main(int argc, char ** argv) {
 
         conn_stop(&conn);
         responder.join();
+        llm_client_free(conn.llm);
         {
             std::lock_guard<std::mutex> lock(conn.out_mutex);
             conn.out_stop = true;

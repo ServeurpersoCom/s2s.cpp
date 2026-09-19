@@ -37,6 +37,7 @@ export interface Settings {
 	presencePenalty: string;
 	frequencyPenalty: string;
 	seed: string;
+	reasoningEffort: string;
 	vadThreshold: string;
 	minSpeechMs: string;
 	minSpeechContinuationMs: string;
@@ -83,6 +84,7 @@ function defaults(): Settings {
 		presencePenalty: '',
 		frequencyPenalty: '',
 		seed: '',
+		reasoningEffort: '',
 		vadThreshold: '',
 		minSpeechMs: '',
 		minSpeechContinuationMs: '',
@@ -168,6 +170,7 @@ $effect.root(() => {
 			presencePenalty: settings.presencePenalty,
 			frequencyPenalty: settings.frequencyPenalty,
 			seed: settings.seed,
+			reasoningEffort: settings.reasoningEffort,
 			vadThreshold: settings.vadThreshold,
 			minSpeechMs: settings.minSpeechMs,
 			minSpeechContinuationMs: settings.minSpeechContinuationMs,

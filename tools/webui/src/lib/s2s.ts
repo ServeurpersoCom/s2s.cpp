@@ -85,6 +85,9 @@ export interface S2SSampling {
 	presencePenalty?: number;
 	frequencyPenalty?: number;
 	seed?: number;
+	// how long a reasoning model thinks before it answers, in the words the
+	// endpoint takes: none, minimal, low, medium, high
+	reasoningEffort?: string;
 }
 
 export interface S2STtsSampling {
@@ -528,7 +531,8 @@ export class S2S {
 					max_tokens: this.options.sampling?.maxTokens,
 					presence_penalty: this.options.sampling?.presencePenalty,
 					frequency_penalty: this.options.sampling?.frequencyPenalty,
-					seed: this.options.sampling?.seed
+					seed: this.options.sampling?.seed,
+					reasoning_effort: this.options.sampling?.reasoningEffort
 				},
 				tts: {
 					speaker: this.options.tts?.speaker,

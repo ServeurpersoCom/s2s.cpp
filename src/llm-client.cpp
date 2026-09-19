@@ -18,6 +18,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <memory>
 #include <thread>
 
 #define LLM_REASON_MAX     200  // characters of an endpoint's error reason kept in the message
@@ -26,8 +27,9 @@
 struct llm_client {
     llm_client_params params;
 
-    std::string host;  // scheme, host and port, what httplib::Client takes
-    std::string path;  // prefix of the endpoint, /v1 by default
+    std::string                      host;  // scheme, host and port, what httplib::Client takes
+    std::string                      path;  // prefix of the endpoint, /v1 by default
+    std::unique_ptr<httplib::Client> http;  // kept alive across requests to the same host
 };
 
 // Splits "http://host:port/v1" into the part httplib connects to and the
@@ -52,18 +54,29 @@ static bool llm_client_split_url(const std::string & url, std::string & host, st
 }
 
 llm_client * llm_client_new(const llm_client_params & params) {
+    llm_client * c = new llm_client();
+    if (!llm_client_set_params(c, params)) {
+        delete c;
+        return nullptr;
+    }
+    return c;
+}
+
+bool llm_client_set_params(llm_client * c, const llm_client_params & params) {
     std::string host;
     std::string path;
     if (!llm_client_split_url(params.base_url, host, path)) {
         s2s_set_error("[LLM] Base_url '%s' has no scheme", params.base_url.c_str());
-        return nullptr;
+        return false;
     }
-
-    llm_client * c = new llm_client();
-    c->params      = params;
-    c->host        = host;
-    c->path        = path;
-    return c;
+    if (!c->http || host != c->host) {
+        c->http = std::make_unique<httplib::Client>(host);
+        c->http->set_keep_alive(true);
+    }
+    c->params = params;
+    c->host   = host;
+    c->path   = path;
+    return true;
 }
 
 void llm_client_free(llm_client * c) {
@@ -105,6 +118,9 @@ static std::string llm_client_body(const llm_client * c, const std::vector<llm_m
     }
     if (s.seed >= 0) {
         yyjson_mut_obj_add_int(doc, root, "seed", s.seed);
+    }
+    if (!s.reasoning_effort.empty()) {
+        yyjson_mut_obj_add_str(doc, root, "reasoning_effort", s.reasoning_effort.c_str());
     }
 
     yyjson_mut_val * array = yyjson_mut_arr(doc);
@@ -181,7 +197,7 @@ bool llm_client_stream(llm_client *                     c,
         return false;
     }
 
-    httplib::Client client(c->host.c_str());
+    httplib::Client & client = *c->http;
     if (!client.is_valid()) {
         s2s_set_error("[LLM] Cannot reach %s, https needs an OpenSSL build", c->host.c_str());
         return false;

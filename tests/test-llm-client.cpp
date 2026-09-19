@@ -222,13 +222,14 @@ int main(int argc, char ** argv) {
         const rt_client_message message = rt_parse(
             "{\"type\":\"session.update\",\"session\":{\"llm_timeout_sec\":30,\"sampling\":{"
             "\"temperature\":0.7,\"top_p\":0.9,\"top_k\":40,\"min_p\":0.05,\"max_tokens\":256,"
-            "\"presence_penalty\":0.5,\"frequency_penalty\":0.25,\"seed\":42}}}");
+            "\"presence_penalty\":0.5,\"frequency_penalty\":0.25,\"seed\":42,\"reasoning_effort\":\"low\"}}}");
         const rt_session_patch & p = message.patch;
         printf(
             "[Parse] temperature %g top_p %g top_k %g min_p %g max_tokens %g presence %g frequency %g seed %g "
-            "timeout %g\n",
+            "timeout %g reasoning %s\n",
             (double) p.temperature, (double) p.top_p, (double) p.top_k, (double) p.min_p, (double) p.max_tokens,
-            (double) p.presence_penalty, (double) p.frequency_penalty, (double) p.seed, (double) p.llm_timeout_sec);
+            (double) p.presence_penalty, (double) p.frequency_penalty, (double) p.seed, (double) p.llm_timeout_sec,
+            p.reasoning_effort.c_str());
     }
 
     // Cancellation after three deltas.

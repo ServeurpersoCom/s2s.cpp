@@ -40,6 +40,11 @@ struct llm_sampling {
     float presence_penalty  = -100.0f;  // -2 to 2
     float frequency_penalty = -100.0f;  // -2 to 2
     int   seed              = -1;       // negative draws a random one
+
+    // How long a reasoning model thinks before it answers, in the words the
+    // endpoint takes (none, minimal, low, medium, high). The thinking is never
+    // spoken, but the voice waits for it.
+    std::string reasoning_effort;
 };
 
 // No endpoint and no model by default: they come from whoever runs the
@@ -57,6 +62,12 @@ typedef bool (*llm_delta_cb)(const char * text, void * user);
 
 llm_client * llm_client_new(const llm_client_params & params);
 void         llm_client_free(llm_client * c);
+
+// Points a client at new settings. The connection to the endpoint stays open
+// from one request to the next while the host stays the same, so a request
+// skips the TCP and TLS handshakes. Returns false, the client unchanged, on
+// a URL without a scheme.
+bool llm_client_set_params(llm_client * c, const llm_client_params & params);
 
 // Streams one completion. text receives the full answer, deltas included.
 // Returns false on a transport error or on cancellation, with the reason in

@@ -24,7 +24,8 @@ export function toOptions(): S2SOptions {
 			maxTokens: num(settings.maxTokens),
 			presencePenalty: num(settings.presencePenalty),
 			frequencyPenalty: num(settings.frequencyPenalty),
-			seed: num(settings.seed)
+			seed: num(settings.seed),
+			reasoningEffort: settings.reasoningEffort
 		},
 		llmTimeoutSec: num(settings.llmTimeoutSec),
 		tts: {

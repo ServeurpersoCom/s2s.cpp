@@ -113,6 +113,7 @@
 		settings.presencePenalty = '';
 		settings.frequencyPenalty = '';
 		settings.seed = '';
+		settings.reasoningEffort = '';
 		settings.llmTimeoutSec = '';
 	}
 
@@ -162,11 +163,14 @@
 
 	onMount(loadProps);
 
-	// nothing to list while the endpoint is out of the path
-	// Only the mode drives this: loadModels reads the endpoint fields, and
-	// tracking them would fire a request on every keystroke of the URL.
+	// The page lists the models once /props says the endpoint belongs to the
+	// session, and only in conversation. The effect follows this boolean alone:
+	// /props landing or a field being typed does not change it, so neither
+	// sends a request.
+	let listsModels = $derived(!!d && mode === 'conversation' && !d.llm_fixed);
+
 	$effect(() => {
-		if (mode === 'conversation' && !d?.llm_fixed) {
+		if (listsModels) {
 			untrack(loadModels);
 		}
 	});
@@ -374,6 +378,7 @@
 					<label>Presence <input type="text" bind:value={settings.presencePenalty} /></label>
 					<label>Frequency <input type="text" bind:value={settings.frequencyPenalty} /></label>
 					<label>Seed <input type="text" bind:value={settings.seed} /></label>
+					<label>Reasoning <input type="text" bind:value={settings.reasoningEffort} /></label>
 					<label
 						>Timeout s <input
 							type="text"

@@ -79,6 +79,7 @@ struct rt_session_patch {
     float       presence_penalty  = -100.0f;
     float       frequency_penalty = -100.0f;
     float       seed              = -1.0f;
+    std::string reasoning_effort;
     std::string tts_speaker;
     std::string tts_language;
     float       tts_temperature            = -1.0f;
@@ -242,6 +243,7 @@ static rt_client_message rt_parse(const std::string & frame) {
             message.patch.presence_penalty  = rt_json_num(llm, "presence_penalty", -100.0f);
             message.patch.frequency_penalty = rt_json_num(llm, "frequency_penalty", -100.0f);
             message.patch.seed              = rt_json_num(llm, "seed", -1.0f);
+            message.patch.reasoning_effort  = rt_json_str(llm, "reasoning_effort");
         }
 
         yyjson_val * tts = yyjson_obj_get(fields, "tts");
