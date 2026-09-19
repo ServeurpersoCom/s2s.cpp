@@ -21,6 +21,7 @@
 //                 path, which is how the microphone, the turn detection, the
 //                 recognizer and the voice get tested on their own
 
+#include "audio-resample.h"
 #include "httplib.h"
 #include "index.html.gz.hpp"
 #include "llm-client.h"
@@ -442,11 +443,11 @@ struct Connection {
     // the session by the reader, the only thread that touches the session.
     std::atomic<bool> speaking{ false };
 
-    // Input resampling state: the protocol carries 24 kHz, the models want
-    // 16 kHz, and the ratio is 3 to 2, so the decimation carries a remainder
-    // across frames. The reference follows the microphone sample for sample.
-    std::vector<float> input_tail;
-    std::vector<float> reference_tail;
+    // The protocol carries 24 kHz, the models want 16 kHz: the microphone and
+    // the reference go through the same Hann-windowed sinc, the one of
+    // torchaudio, so they stay aligned sample for sample.
+    AudioResampleStream mic_resample;
+    AudioResampleStream ref_resample;
 
     // Server side echo cancellation, alive while the client asks for it. The
     // canceller works in hops, so what does not fill one waits here.
@@ -488,26 +489,6 @@ static void conn_send(Connection * conn, std::string frame) {
 static void conn_error(Connection * conn, const char * message) {
     s2s_log(S2S_LOG_WARN, "%s", message);
     conn_send(conn, rt_event_error(message));
-}
-
-// 24 kHz to 16 kHz: three samples in, two out, with a short averaging window
-// instead of a full polyphase bank. The VAD and the recognizer both tolerate
-// it, and it costs nothing on the reader thread.
-static void resample_in(std::vector<float> & tail, const std::vector<float> & input, std::vector<float> & out) {
-    std::vector<float> buffer = tail;
-    buffer.insert(buffer.end(), input.begin(), input.end());
-
-    const size_t groups = buffer.size() / 3;
-    out.resize(groups * 2);
-    for (size_t i = 0; i < groups; i++) {
-        const float a  = buffer[3 * i];
-        const float b  = buffer[3 * i + 1];
-        const float c  = buffer[3 * i + 2];
-        out[2 * i]     = a * 0.5f + b * 0.5f;
-        out[2 * i + 1] = b * 0.25f + c * 0.75f;
-    }
-
-    tail.assign(buffer.begin() + (ptrdiff_t) (groups * 3), buffer.end());
 }
 
 // Runs the canceller over every complete hop and hands back in pcm what is
@@ -1027,13 +1008,13 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
         if (conn->aec) {
             s2s_log(S2S_LOG_INFO, "[AEC] Canceller on, fresh echo path");
         }
-        // The microphone and the reference are decimated in step, so their
-        // remainders restart together: two streams of equal length in give
-        // two of equal length out, hop for hop.
+        // The microphone and the reference restart their resampling together:
+        // two streams of equal length in give two of equal length out, hop
+        // for hop.
         conn->aec_mic.clear();
         conn->aec_ref.clear();
-        conn->input_tail.clear();
-        conn->reference_tail.clear();
+        audio_resample_stream_init(&conn->mic_resample, S2S_INPUT_RATE, S2S_MODEL_RATE);
+        audio_resample_stream_init(&conn->ref_resample, S2S_INPUT_RATE, S2S_MODEL_RATE);
         conn->aec_in         = 0.0;
         conn->aec_out        = 0.0;
         conn->aec_played     = 0;
@@ -1665,8 +1646,10 @@ int main(int argc, char ** argv) {
         s2s_log(S2S_LOG_INFO, "[Server] Connection from %s", origin.empty() ? "unknown origin" : origin.c_str());
 
         Connection conn;
-        conn.id      = id;
-        conn.ws      = &ws;
+        conn.id = id;
+        conn.ws = &ws;
+        audio_resample_stream_init(&conn.mic_resample, S2S_INPUT_RATE, S2S_MODEL_RATE);
+        audio_resample_stream_init(&conn.ref_resample, S2S_INPUT_RATE, S2S_MODEL_RATE);
         conn.client  = g_client_defaults;
         conn.session = s2s_session_new(g_models.vad, g_models.turn, conn.params, conn_on_session_event, &conn);
         if (!conn.session) {
@@ -1719,14 +1702,16 @@ int main(int argc, char ** argv) {
                         s2s_log(S2S_LOG_INFO, "[Realtime] Microphone streaming, %zu samples per frame",
                                 message.audio.size());
                     }
-                    resample_in(conn.input_tail, message.audio, resampled);
+                    audio_resample_stream_push(&conn.mic_resample, message.audio.data(), message.audio.size(),
+                                               resampled);
                     if (conn.aec) {
                         // a frame without reference is a frame where nothing played
                         const bool played = message.reference.size() == message.audio.size();
                         if (!played) {
                             silence.assign(message.audio.size(), 0.0f);
                         }
-                        resample_in(conn.reference_tail, played ? message.reference : silence, reference);
+                        const std::vector<float> & played_pcm = played ? message.reference : silence;
+                        audio_resample_stream_push(&conn.ref_resample, played_pcm.data(), played_pcm.size(), reference);
                         conn_cancel_echo(&conn, resampled, reference, played);
                     }
                     s2s_session_set_speaking(conn.session, conn.speaking.load());

@@ -1,6 +1,7 @@
 #pragma once
 #include "s2s-error.h"
-// audio-resample.h: torchaudio.functional.resample compatible reimplementation.
+// audio-resample.h: torchaudio.functional.resample compatible reimplementation,
+// on a whole buffer (audio_resample) or on a stream (AudioResampleStream).
 // Hann-windowed sinc interpolation with rolloff=0.99 and
 // lowpass_filter_width=6, matching torchaudio defaults bit for bit.
 //
@@ -178,4 +179,44 @@ static float * audio_resample(const float * in, int n_in, int sr_in, int sr_out,
     }
 
     return out;
+}
+
+// The same resampling as audio_resample, on a stream that arrives in pieces
+// of any length: the kernel is built once, and the input a group of outputs
+// still needs waits for the next piece. The output trails the input by the
+// lookahead of the kernel, width + orig samples at the input rate.
+struct AudioResampleStream {
+    int                orig  = 0;
+    int                newf  = 0;
+    int                width = 0;
+    int                K     = 0;
+    std::vector<float> kernel;   // [newf, K]
+    std::vector<float> history;  // input not consumed yet, the zero pad of the start included
+};
+
+// Starts the stream, or restarts it: the history is the zero pad alone.
+static void audio_resample_stream_init(AudioResampleStream * s, int sr_in, int sr_out) {
+    const int g = audio_resample_gcd(sr_in, sr_out);
+    s->orig     = sr_in / g;
+    s->newf     = sr_out / g;
+    s->kernel   = audio_resample_build_kernel(s->orig, s->newf, &s->width, &s->K);
+    s->history.assign((size_t) s->width, 0.0f);
+}
+
+static void audio_resample_stream_push(AudioResampleStream * s, const float * in, size_t n, std::vector<float> & out) {
+    s->history.insert(s->history.end(), in, in + n);
+    out.clear();
+    size_t pos = 0;
+    for (; pos + (size_t) s->K <= s->history.size(); pos += (size_t) s->orig) {
+        const float * x = s->history.data() + pos;
+        for (int j = 0; j < s->newf; j++) {
+            const float * w   = s->kernel.data() + (size_t) j * (size_t) s->K;
+            float         sum = 0.0f;
+            for (int k = 0; k < s->K; k++) {
+                sum += x[k] * w[k];
+            }
+            out.push_back(sum);
+        }
+    }
+    s->history.erase(s->history.begin(), s->history.begin() + (ptrdiff_t) pos);
 }

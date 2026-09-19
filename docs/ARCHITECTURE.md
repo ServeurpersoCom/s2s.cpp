@@ -33,7 +33,7 @@ loaded are logged at startup and published on `/props`.
 | --- | --- | --- |
 | main | `Main` | loading, then the listening socket |
 | HTTP pool | `HTTP` | the page, `/props`, `/v1/models`, `/log` |
-| reader, one per connection | `Reader-N` | the socket, frame decode, 24 to 16 kHz decimation, the echo canceller, the turn session, incoming events |
+| reader, one per connection | `Reader-N` | the socket, frame decode, 24 to 16 kHz resampling, the echo canceller, the turn session, incoming events |
 | responder, one per connection | `Responder-N` | recognition, the LLM stream, the sentence splitter, synthesis |
 | writer, one per connection | `Writer-N` | every outgoing frame, in order: a slow client stalls its own writer, never the TTS worker |
 | TTS worker, inside qwentts.cpp | `TTS` | the Qwen3-TTS backend and its queue, up to `--max-batch` syntheses per step |
@@ -158,7 +158,7 @@ duplex AudioWorklet, so each 20 ms microphone frame leaves with the samples
 played during the same render quanta: the exact echo reference, with only
 the loudspeaker to microphone path left to estimate. The microphone is
 taken raw, no browser echo cancellation, noise suppression or gain control
-bending the path. The server decimates the reference beside the
+bending the path. The server resamples the reference beside the
 microphone and runs LocalVQE v1.3 on hops of 256 samples before the VAD.
 The model estimates the echo delay itself by a soft cross-attention over
 the last 64 frames, about one second, and removes noise and reverberation
@@ -175,8 +175,8 @@ gain.
 
 `WS /v1/realtime`, a subset of the OpenAI Realtime API. Audio is PCM16
 at 24 kHz, base64 encoded, in both directions: it matches the codec
-output, and the input is decimated 3 to 2 to the 16 kHz the canceller,
-the VAD and the recognizer work at. `input_audio_buffer.append` carries
+output, and the input is resampled to the 16 kHz the canceller, the VAD
+and the recognizer work at, with the Hann-windowed sinc of torchaudio. `input_audio_buffer.append` carries
 an extra `reference` field, the audio played during the same samples,
 when the echo cancellation runs on the server and something played.
 
