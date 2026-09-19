@@ -66,7 +66,7 @@ bool llm_client_set_params(llm_client * c, const llm_client_params & params) {
     std::string host;
     std::string path;
     if (!llm_client_split_url(params.base_url, host, path)) {
-        s2s_set_error("[LLM] Base_url '%s' has no scheme", params.base_url.c_str());
+        s2s_set_error("[LLM] Base URL '%s' has no scheme", params.base_url.c_str());
         return false;
     }
     if (!c->http || host != c->host) {
@@ -318,7 +318,7 @@ bool llm_client_models(const llm_client_params & params, std::vector<std::string
     std::string host;
     std::string path;
     if (!llm_client_split_url(params.base_url, host, path)) {
-        s2s_set_error("[LLM] Base_url '%s' has no scheme", params.base_url.c_str());
+        s2s_set_error("[LLM] Base URL '%s' has no scheme", params.base_url.c_str());
         return false;
     }
 

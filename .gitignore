@@ -6,7 +6,6 @@ tests/*/
 checkpoints/
 models/*.gguf
 __pycache__/
-.venv/
 node_modules/
 tools/webui/dist/
 tools/webui/dist-lib/

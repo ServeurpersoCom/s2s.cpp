@@ -1,10 +1,10 @@
 // s2s-server.cpp: the voice loop behind a WebSocket
 //
-// One process, four models, any number of conversations. The models load once
-// and are shared: the VAD and the turn classifier are stateless per window and
-// keep their per stream state in the session, while the recognizer and the
-// voice serialize internally, so a second client queues rather than doubling
-// the VRAM.
+// One process, any number of conversations. Every model loads once and is
+// shared: the VAD, the turn classifier and the echo canceller keep their per
+// stream state in the session or the connection, while the recognizer and
+// the voice serialize internally, so a second client queues rather than
+// doubling the VRAM.
 //
 // Each connection runs three threads. The reader owns the incoming frames
 // and the listening half: it decodes them, feeds the session, and answers
@@ -100,6 +100,7 @@ static void fd_close(int fd) {
 }
 #endif
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -385,6 +386,9 @@ struct Connection {
     s2s_session *      session = nullptr;
     s2s_session_params params;
 
+    // Only server runs a canceller here: native and off leave the microphone
+    // as the client captured it. The default method is the component's, which
+    // picks its microphone constraints before the server is even reached.
     std::string echo = "native";
 
     // Written by the reader, copied whole by the responder when it answers a
@@ -815,8 +819,12 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
                 conn_speak(conn, tail, client.tts);
             }
 
-            s2s_log(S2S_LOG_INFO, "[Perf] Respond %.1f ms (first unit %.1f ms, %zu characters)", t_llm.ms(),
-                    stream_tap.first_unit_ms, answer.size());
+            if (stream_tap.first_unit_ms < 0.0) {
+                s2s_log(S2S_LOG_INFO, "[Perf] Respond %.1f ms (no unit, %zu characters)", t_llm.ms(), answer.size());
+            } else {
+                s2s_log(S2S_LOG_INFO, "[Perf] Respond %.1f ms (first unit %.1f ms, %zu characters)", t_llm.ms(),
+                        stream_tap.first_unit_ms, answer.size());
+            }
 
             if (!streamed && !conn->cancel.load()) {
                 conn_error(conn, llm_client_last_error());
@@ -1012,7 +1020,7 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     if (patch.frequency_penalty > -3.0f) {
         conn->client.llm.sampling.frequency_penalty = patch.frequency_penalty;
     }
-    if (patch.seed >= 0.0f) {
+    if (patch.seed >= 0) {
         conn->client.llm.sampling.seed = (int) patch.seed;
     }
     if (!patch.reasoning_effort.empty()) {
@@ -1062,8 +1070,8 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     if (patch.tts_max_new_tokens >= 0.0f) {
         conn->client.tts.sampling.max_new_tokens = (int) patch.tts_max_new_tokens;
     }
-    if (patch.tts_seed >= 0.0f) {
-        conn->client.tts.sampling.seed = (int64_t) patch.tts_seed;
+    if (patch.tts_seed >= 0) {
+        conn->client.tts.sampling.seed = patch.tts_seed;
     }
 
     if (patch.vad_threshold >= 0.0f) {
@@ -1219,6 +1227,11 @@ int main(int argc, char ** argv) {
     const std::string language = "auto";
     const std::string mode     = "loopback";
 
+    if (argc < 2) {
+        print_usage(argv[0]);
+        return 1;
+    }
+
     for (int i = 1; i < argc; i++) {
         const std::string arg       = argv[i];
         const bool        has_value = i + 1 < argc;
@@ -1364,9 +1377,10 @@ int main(int argc, char ** argv) {
     // Single source of truth for the session defaults: the UI leaves a field
     // empty to mean "whatever the server was started with", and shows this
     // value as the placeholder. The engine setup is not here: it belongs to
-    // the command line and to the startup log, like in the sibling projects. Sampling is absent on purpose: an empty sampling field
-    // leaves the endpoint to its own defaults, which is the only sane answer
-    // when the endpoint can be llama-server, Ollama or a cloud API.
+    // the command line and to the startup log. Sampling is absent on purpose:
+    // an empty sampling field leaves the endpoint to its own defaults, which
+    // is the only sane answer when the endpoint can be llama-server, Ollama
+    // or a cloud API.
     server.Get("/props", [&](const httplib::Request & req, httplib::Response & res) {
         if (!origin_allowed(origins, req)) {
             res.status = 403;
@@ -1553,7 +1567,7 @@ int main(int argc, char ** argv) {
     server.WebSocket("/v1/realtime", [&](const httplib::Request & req, httplib::ws::WebSocket & ws) {
         // WebSocket handshakes bypass CORS, so the origin is checked here.
         const std::string origin = req.get_header_value("Origin");
-        if (!origins.empty() && !origin.empty() && std::find(origins.begin(), origins.end(), origin) == origins.end()) {
+        if (!origin_allowed(origins, req)) {
             s2s_log(S2S_LOG_WARN, "[Server] Rejected origin %s", origin.c_str());
             ws.close(httplib::ws::CloseStatus::PolicyViolation, "origin not allowed");
             return;

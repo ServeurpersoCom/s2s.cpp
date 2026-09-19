@@ -34,8 +34,9 @@ const FRAME_SAMPLES = 480; // 20 ms
 
 // Who removes the assistant voice from the microphone. native asks the
 // browser to cancel everything the system plays, this page included, server
-// hands the raw microphone and the played reference to s2s-server, off hands
-// over the raw microphone and nothing else.
+// hands the raw microphone and the played reference to s2s-server, off
+// cancels nothing and leaves the echo to headphones, the browser still
+// suppressing noise and levelling the gain.
 export const ECHO_MODES = ['server', 'native', 'off'] as const;
 export const ECHO_DEFAULT: S2SEcho = 'server';
 export type S2SEcho = (typeof ECHO_MODES)[number];

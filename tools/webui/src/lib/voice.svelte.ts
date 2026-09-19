@@ -192,13 +192,14 @@ export function destroyVoice() {
 	voice.state = 'idle';
 }
 
-// Pushes a settings change to a running session. Everything but the server
-// URL applies live; a new URL needs a reconnection.
+// Forgets the conversation, in the component and on the page alike.
 export function clearContext() {
 	client?.clearHistory();
 	voice.chat = [];
 }
 
+// Pushes a settings change to a running session. Everything but the server
+// URL applies live; a new URL needs a reconnection.
 // The options are built before the call: `client?.update(toOptions())` would
 // skip the argument entirely while the component is still loading, and an
 // effect that never reads the store never tracks it, so a later change would

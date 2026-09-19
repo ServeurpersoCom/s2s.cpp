@@ -150,8 +150,9 @@ connection carries 2.3 MB of layer history. A log line closes every run of
 playback with the level of the microphone above the cleaned signal.
 
 `native` asks the browser for `echoCancellation: "all"`, which only
-Chrome based browsers honor for a page's own playback. `off` hands over
-the raw microphone.
+Chrome based browsers honor for a page's own playback. `off` cancels no
+echo, headphones do: the browser still suppresses noise and levels the
+gain.
 
 ## Protocol
 
@@ -219,7 +220,7 @@ session names its own. `/props` never publishes the endpoint: its
 | --- | --- |
 | `src/backend.h` | backend selection, CPU thread count, log dedup |
 | `src/gguf-weights.h`, `src/weight-ctx.h` | GGUF reader and weight upload |
-| `src/static-graph.h`, `src/graph-arena.h` | graph allocation |
+| `src/graph-arena.h` | graph allocation |
 | `src/conv-f32.h` | f32 convolutions, no f16 im2col staging |
 | `src/audio-resample.h` | polyphase resampler, any rate to 16 kHz for the recognizer |
 | `src/audio-mel.h`, `src/parakeet-mel.h` | log mel frontends |

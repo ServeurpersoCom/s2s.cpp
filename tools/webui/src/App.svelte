@@ -13,11 +13,7 @@
 
 	// The microphone needs a secure context: https, or localhost during
 	// development. Saying so up front beats a getUserMedia that fails later.
-	const secure = $derived(
-		location.protocol === 'https:' ||
-			location.hostname === 'localhost' ||
-			location.hostname === '127.0.0.1'
-	);
+	const secure = window.isSecureContext;
 </script>
 
 <div class="s2s-app">

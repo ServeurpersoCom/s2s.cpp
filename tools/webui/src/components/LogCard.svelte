@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { settings } from '../lib/state.svelte.js';
-	import { SSE_RECONNECT_MS, LOG_MAX_LINES } from '../lib/config.js';
+	import { SSE_RECONNECT_MS, LOG_MAX_LINES, NEWLINE } from '../lib/config.js';
 	import { ChevronDown, ChevronRight } from '@lucide/svelte';
 
 	let lines = $state<string[]>([]);
@@ -42,7 +42,7 @@
 		<span class="card-label">Server logs</span>
 	</button>
 	{#if settings.logsOpen}
-		<pre class="log-body">{lines.join('\n')}</pre>
+		<pre class="log-body">{lines.join(NEWLINE)}</pre>
 	{/if}
 </div>
 

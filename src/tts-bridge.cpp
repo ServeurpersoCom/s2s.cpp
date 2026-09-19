@@ -59,7 +59,7 @@ static bool tts_bridge_chunk(const float * samples, int n_samples, void * user_d
 
 tts_bridge * tts_bridge_load(const tts_bridge_params & params) {
     if (params.talker_path.empty() || params.codec_path.empty()) {
-        s2s_set_error("[TTS] Talker_path or codec_path is empty");
+        s2s_set_error("[TTS] Talker or codec path is empty");
         return nullptr;
     }
 

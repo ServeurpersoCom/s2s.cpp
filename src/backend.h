@@ -180,28 +180,3 @@ static BackendPair backend_init_cpu(const char * label, int n_threads) {
             n_threads > 0 ? n_threads : backend_cpu_n_threads());
     return bp;
 }
-
-// Create a scheduler from a backend pair.
-// max_nodes: graph size hint (4096 for small models, 8192 for large)
-// When a GPU is present, use its host buffer type for the CPU backend.
-// Pinned memory lets the scheduler keep more ops on GPU instead of
-// falling back to CPU with plain malloc.
-static ggml_backend_sched_t backend_sched_new(BackendPair bp, int max_nodes) {
-    ggml_backend_t             backends[2] = { bp.backend, bp.cpu_backend };
-    ggml_backend_buffer_type_t bufts[2]    = { NULL, NULL };
-    int                        n           = (bp.backend == bp.cpu_backend) ? 1 : 2;
-
-    bufts[0] = ggml_backend_get_default_buffer_type(bp.backend);
-    if (n == 2) {
-        ggml_backend_dev_t         gpu_dev   = ggml_backend_get_device(bp.backend);
-        ggml_backend_buffer_type_t host_buft = gpu_dev ? ggml_backend_dev_host_buffer_type(gpu_dev) : NULL;
-        bufts[1] = host_buft ? host_buft : ggml_backend_get_default_buffer_type(bp.cpu_backend);
-    }
-
-    ggml_backend_sched_t sched = ggml_backend_sched_new(backends, bufts, n, max_nodes, false, true);
-    if (!sched) {
-        s2s_log(S2S_LOG_ERROR, "[Load] Failed to create scheduler");
-        return nullptr;
-    }
-    return sched;
-}

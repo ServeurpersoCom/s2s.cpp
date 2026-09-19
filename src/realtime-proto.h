@@ -69,8 +69,6 @@ struct rt_session_patch {
     std::string llm_model;
     std::string llm_key;
     std::string system_prompt;
-    std::string voice;
-    std::string language;
     float       temperature       = -1.0f;
     float       top_p             = -1.0f;
     float       top_k             = -1.0f;
@@ -78,7 +76,7 @@ struct rt_session_patch {
     float       max_tokens        = -1.0f;
     float       presence_penalty  = -100.0f;
     float       frequency_penalty = -100.0f;
-    float       seed              = -1.0f;
+    int64_t     seed              = -1;
     std::string reasoning_effort;
     std::string tts_speaker;
     std::string tts_language;
@@ -90,7 +88,7 @@ struct rt_session_patch {
     float       tts_subtalker_top_k        = -1.0f;
     float       tts_subtalker_top_p        = -1.0f;
     float       tts_max_new_tokens         = -1.0f;
-    float       tts_seed                   = -1.0f;
+    int64_t     tts_seed                   = -1;
     float       tts_min_chars              = -1.0f;
     float       tts_chars_per_second       = -1.0f;
     float       tts_margin_seconds         = -1.0f;
@@ -206,6 +204,12 @@ static float rt_json_num(yyjson_val * object, const char * key, float fallback) 
     return value && yyjson_is_num(value) ? (float) yyjson_get_num(value) : fallback;
 }
 
+// Seeds are integers past what a float holds exactly, so they are read as such.
+static int64_t rt_json_int(yyjson_val * object, const char * key, int64_t fallback) {
+    yyjson_val * value = yyjson_obj_get(object, key);
+    return value && yyjson_is_int(value) ? yyjson_get_sint(value) : fallback;
+}
+
 // Parses one client frame. An unparsable frame comes back as RT_CLIENT_UNKNOWN
 // rather than as an error: the caller answers with an error event and keeps
 // the session alive.
@@ -229,8 +233,6 @@ static rt_client_message rt_parse(const std::string & frame) {
         message.patch.llm_model       = rt_json_str(fields, "llm_model");
         message.patch.llm_key         = rt_json_str(fields, "llm_key");
         message.patch.system_prompt   = rt_json_str(fields, "instructions");
-        message.patch.voice           = rt_json_str(fields, "voice");
-        message.patch.language        = rt_json_str(fields, "language");
         message.patch.llm_timeout_sec = rt_json_num(fields, "llm_timeout_sec", -1.0f);
 
         yyjson_val * llm = yyjson_obj_get(fields, "sampling");
@@ -242,7 +244,7 @@ static rt_client_message rt_parse(const std::string & frame) {
             message.patch.max_tokens        = rt_json_num(llm, "max_tokens", -1.0f);
             message.patch.presence_penalty  = rt_json_num(llm, "presence_penalty", -100.0f);
             message.patch.frequency_penalty = rt_json_num(llm, "frequency_penalty", -100.0f);
-            message.patch.seed              = rt_json_num(llm, "seed", -1.0f);
+            message.patch.seed              = rt_json_int(llm, "seed", -1);
             message.patch.reasoning_effort  = rt_json_str(llm, "reasoning_effort");
         }
 
@@ -264,7 +266,7 @@ static rt_client_message rt_parse(const std::string & frame) {
                 message.patch.tts_subtalker_top_k       = rt_json_num(sampling, "subtalker_top_k", -1.0f);
                 message.patch.tts_subtalker_top_p       = rt_json_num(sampling, "subtalker_top_p", -1.0f);
                 message.patch.tts_max_new_tokens        = rt_json_num(sampling, "max_new_tokens", -1.0f);
-                message.patch.tts_seed                  = rt_json_num(sampling, "seed", -1.0f);
+                message.patch.tts_seed                  = rt_json_int(sampling, "seed", -1);
             }
         }
 
