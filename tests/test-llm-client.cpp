@@ -6,12 +6,14 @@
 // first, a usage frame at the end, and [DONE] to close.
 //
 // Three passes: a full stream cut into synthesis units, a cancellation after
-// a few deltas, and an endpoint that answers 500. A last pass feeds the
-// splitter alone with accents and an emoji, one byte per delta, so every
-// multibyte character is cut across two deltas.
+// a few deltas, and an endpoint that answers 500. A pass feeds the splitter
+// alone with accents and an emoji, one byte per delta, so every multibyte
+// character is cut across two deltas, and another parses the endpoint
+// settings of a session.update the way the server receives them.
 
 #include "httplib.h"
 #include "llm-client.h"
+#include "realtime-proto.h"
 #include "sentence-split.h"
 #include "timer.h"
 #include "version.h"
@@ -200,6 +202,20 @@ int main(int argc, char ** argv) {
         }
         const SentenceUnit last = sentence_split_flush(&split);
         printf("[Split] end %zu \"%s\"\n", last.end, last.text.c_str());
+    }
+
+    // The endpoint settings of a session.update, in the shape s2s.js sends.
+    {
+        const rt_client_message message = rt_parse(
+            "{\"type\":\"session.update\",\"session\":{\"llm_timeout_sec\":30,\"sampling\":{"
+            "\"temperature\":0.7,\"top_p\":0.9,\"top_k\":40,\"min_p\":0.05,\"max_tokens\":256,"
+            "\"presence_penalty\":0.5,\"frequency_penalty\":0.25,\"seed\":42}}}");
+        const rt_session_patch & p = message.patch;
+        printf(
+            "[Parse] temperature %g top_p %g top_k %g min_p %g max_tokens %g presence %g frequency %g seed %g "
+            "timeout %g\n",
+            (double) p.temperature, (double) p.top_p, (double) p.top_k, (double) p.min_p, (double) p.max_tokens,
+            (double) p.presence_penalty, (double) p.frequency_penalty, (double) p.seed, (double) p.llm_timeout_sec);
     }
 
     // Cancellation after three deltas.

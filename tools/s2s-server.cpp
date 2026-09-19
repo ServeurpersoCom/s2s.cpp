@@ -6,12 +6,14 @@
 // voice serialize internally, so a second client queues rather than doubling
 // the VRAM.
 //
-// Each connection runs two threads. The reader owns the socket and the
-// listening half: it decodes frames, feeds the session, and answers the
-// events the state machine raises. The responder owns the talking half: it
-// recognizes a committed turn, asks the endpoint, and speaks the answer unit
-// by unit. Splitting them is what makes the barge-in work, since the reader
-// keeps consuming audio while the responder is busy.
+// Each connection runs three threads. The reader owns the incoming frames
+// and the listening half: it decodes them, feeds the session, and answers
+// the events the state machine raises. The responder owns the talking half:
+// it recognizes a committed turn, asks the endpoint, and speaks the answer
+// unit by unit. Splitting them is what makes the barge-in work, since the
+// reader keeps consuming audio while the responder is busy. The writer sends
+// every outgoing frame, so a client that reads slowly never holds the
+// synthesis worker the connections share.
 //
 // Modes:
 //   conversation  recognize, ask the LLM, speak the answer
@@ -357,24 +359,37 @@ struct TurnAudio {
     int                revision = 0;
 };
 
+// What the client sets for its answers, conversation included: the list is
+// the client's, pushed when it changes, and nothing survives here between two
+// turns.
+struct ClientSettings {
+    std::string              mode = "conversation";
+    tts_request              tts;
+    llm_client_params        llm;
+    std::string              system_prompt;
+    std::vector<llm_message> history;
+};
+
 struct Connection {
     httplib::ws::WebSocket * ws = nullptr;
 
     s2s_session *      session = nullptr;
     s2s_session_params params;
 
-    std::string mode = "conversation";
     std::string echo = "native";
-    tts_request tts;
 
-    llm_client_params llm;
-    std::string       system_prompt;
+    // Written by the reader, copied whole by the responder when it answers a
+    // turn: a change lands on the next answer, never under a running one.
+    std::mutex     client_mutex;
+    ClientSettings client;
 
-    // The conversation belongs to the client: it pushes its list when it
-    // changes, the responder copies it when it picks a turn up, and nothing
-    // survives here between two turns.
-    std::mutex               history_mutex;
-    std::vector<llm_message> history;
+    // Frames to the client. Every thread queues, one writer sends: a client
+    // that reads slowly stalls its own writer, never the synthesis worker
+    // every connection shares.
+    std::mutex              out_mutex;
+    std::condition_variable out_cv;
+    std::queue<std::string> out;
+    bool                    out_stop = false;
 
     // Committed turns waiting for the responder.
     std::mutex              queue_mutex;
@@ -433,9 +448,11 @@ struct Connection {
 // shorter gap is a pause between two sentences of the same answer.
 #define AEC_QUIET_FRAMES 25
 
-static void conn_send(Connection * conn, const std::string & frame) {
-    if (conn->ws && conn->ws->is_open()) {
-        conn->ws->send(frame);
+static void conn_send(Connection * conn, std::string frame) {
+    std::lock_guard<std::mutex> lock(conn->out_mutex);
+    if (!conn->out_stop) {
+        conn->out.push(std::move(frame));
+        conn->out_cv.notify_one();
     }
 }
 
@@ -532,10 +549,6 @@ static void conn_cancel_echo(Connection * conn, std::vector<float> & pcm, const 
     }
 }
 
-// Speaks one unit and streams it to the client. The transcript of the unit
-// goes out right before its first audio chunk, so the client only ever sees
-// text that has sound behind it, and places it in the audio stream. Returns
-// false when the floor was taken back.
 // Wakes whatever waits on the turn: a final turn, a new one, a cancel or the
 // end of the connection.
 static void conn_turn_notify(Connection * conn) {
@@ -543,18 +556,73 @@ static void conn_turn_notify(Connection * conn) {
     conn->turn_cv.notify_all();
 }
 
-// Holds the first unit of the answer until its turn is final, or until a
-// later turn opened. Returns false when the floor went back meanwhile.
+// Ends the talking half: the answer in flight stops and the queued turns are
+// dropped, nobody is left to hear them.
+static void conn_stop(Connection * conn) {
+    conn->cancel.store(true);
+    {
+        std::lock_guard<std::mutex> lock(conn->queue_mutex);
+        conn->stop = true;
+        conn->queue_cv.notify_one();
+    }
+    conn_turn_notify(conn);
+}
+
+// Sends the queued frames in order. A failed send means the client is gone,
+// or stopped reading for longer than the write timeout: the answer in flight
+// stops, and nothing more is queued for it.
+static void conn_writer(Connection * conn) {
+    for (;;) {
+        std::string frame;
+        {
+            std::unique_lock<std::mutex> lock(conn->out_mutex);
+            conn->out_cv.wait(lock, [conn]() { return conn->out_stop || !conn->out.empty(); });
+            if (conn->out_stop) {
+                return;
+            }
+            frame = std::move(conn->out.front());
+            conn->out.pop();
+        }
+        if (!conn->ws->send(frame)) {
+            s2s_log(S2S_LOG_WARN, "[Server] Send failed, the client is gone or too slow");
+            {
+                std::lock_guard<std::mutex> lock(conn->out_mutex);
+                conn->out_stop = true;
+                std::queue<std::string>().swap(conn->out);
+            }
+            conn_stop(conn);
+            conn->ws->close();
+            return;
+        }
+    }
+}
+
+// Whether a turn opened after this one: the user spoke again, so an answer to
+// this turn that nobody heard yet has lost its point.
+static bool conn_superseded(Connection * conn, int turn_id) {
+    std::lock_guard<std::mutex> lock(conn->turn_mutex);
+    return conn->open_turn > turn_id;
+}
+
+// Holds the first unit of the answer until its turn is final. Returns false
+// when the floor went back meanwhile, or when a later turn opened first.
 static bool conn_wait_final(Connection * conn) {
     std::unique_lock<std::mutex> lock(conn->turn_mutex);
     conn->turn_cv.wait(lock, [conn]() {
         return conn->stop || conn->cancel.load() || conn->final_turn >= conn->answer_turn ||
                conn->open_turn > conn->answer_turn;
     });
+    if (conn->open_turn > conn->answer_turn) {
+        conn->cancel.store(true);
+    }
     return !conn->stop && !conn->cancel.load();
 }
 
-static bool conn_speak(Connection * conn, const SentenceUnit & unit) {
+// Speaks one unit and streams it to the client. The transcript of the unit
+// goes out right before its first audio chunk, so the client only ever sees
+// text that has sound behind it, and places it in the audio stream. Returns
+// false when the floor was taken back.
+static bool conn_speak(Connection * conn, const SentenceUnit & unit, const tts_request & tts) {
     if (!conn->answer_released) {
         if (!conn_wait_final(conn)) {
             return false;
@@ -572,7 +640,7 @@ static bool conn_speak(Connection * conn, const SentenceUnit & unit) {
     speak_tap.unit = &unit;
 
     const bool spoke = tts_bridge_speak(
-        g_models.tts, unit.text, conn->tts,
+        g_models.tts, unit.text, tts,
         [](const float * pcm, size_t n_samples, void * user) {
             SpeakTap * self = (SpeakTap *) user;
             if (self->samples == 0 && n_samples > 0) {
@@ -595,6 +663,9 @@ static bool conn_speak(Connection * conn, const SentenceUnit & unit) {
 // Turn audio in, answer spoken out.
 static void conn_respond(Connection * conn, const TurnAudio & turn) {
     const std::vector<float> & pcm = turn.pcm;
+
+    // A cancel raised from here on belongs to this turn.
+    conn->cancel.store(false);
 
     Timer t_asr;
 
@@ -621,51 +692,62 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
             (double) pcm.size() / S2S_MODEL_RATE, turn.turn_id, turn.revision);
     conn_send(conn, rt_event_transcript("turn_" + std::to_string(turn.turn_id), transcript));
 
+    // The user spoke again during the recognition, or the floor went back:
+    // nobody waits for this answer any more.
+    if (conn->stop || conn->cancel.load() || conn_superseded(conn, turn.turn_id)) {
+        s2s_log(S2S_LOG_INFO, "[Turn] Turn %d dropped before its answer", turn.turn_id);
+        return;
+    }
+
+    // The settings and the list as they stand now: a change that arrives
+    // later belongs to the next turn, not to this one.
+    ClientSettings client;
+    {
+        std::lock_guard<std::mutex> lock(conn->client_mutex);
+        client = conn->client;
+    }
+
     conn->answer_turn     = turn.turn_id;
     conn->answer_released = false;
-    conn->cancel.store(false);
     conn->speaking.store(true);
     conn_send(conn, rt_event("response.created"));
 
     std::string answer;
 
-    if (conn->mode == "loopback") {
+    if (client.mode == "loopback") {
         // No endpoint in the path: the recognized text is the answer.
         answer = transcript;
         SentenceUnit unit;
         unit.text = answer;
         unit.end  = sentence_utf16_len(answer);
-        conn_speak(conn, unit);
+        conn_speak(conn, unit, client.tts);
     } else {
-        // The list as it stood when this turn was picked up: a push that
-        // arrives later belongs to the next turn, not to this one.
         std::vector<llm_message> messages;
-        if (!conn->system_prompt.empty()) {
-            messages.push_back({ "system", conn->system_prompt });
+        if (!client.system_prompt.empty()) {
+            messages.push_back({ "system", client.system_prompt });
         }
-        {
-            std::lock_guard<std::mutex> lock(conn->history_mutex);
-            messages.insert(messages.end(), conn->history.begin(), conn->history.end());
-        }
+        messages.insert(messages.end(), client.history.begin(), client.history.end());
         messages.push_back({ "user", transcript });
 
-        if (conn->llm.base_url.empty()) {
+        if (client.llm.base_url.empty()) {
             conn_error(conn, "[Realtime] No endpoint: name one in the session, or start the server with --llm-url");
-        } else if (llm_client * client = llm_client_new(conn->llm); !client) {
+        } else if (llm_client * llm = llm_client_new(client.llm); !llm) {
             conn_error(conn, llm_client_last_error());
         } else {
             struct StreamTap {
-                Connection *     conn = nullptr;
-                SentenceSplitter splitter;
-                Timer            timer;
-                double           first_unit_ms = -1.0;
+                Connection *        conn = nullptr;
+                const tts_request * tts  = nullptr;
+                SentenceSplitter    splitter;
+                Timer               timer;
+                double              first_unit_ms = -1.0;
             } stream_tap;
 
             stream_tap.conn = conn;
+            stream_tap.tts  = &client.tts;
 
             Timer      t_llm;
             const bool streamed = llm_client_stream(
-                client, messages,
+                llm, messages,
                 [](const char * delta, void * user) {
                     StreamTap * self = (StreamTap *) user;
 
@@ -677,7 +759,7 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
                         if (self->first_unit_ms < 0.0) {
                             self->first_unit_ms = self->timer.ms();
                         }
-                        if (!conn_speak(self->conn, unit)) {
+                        if (!conn_speak(self->conn, unit, *self->tts)) {
                             return false;
                         }
                     }
@@ -687,7 +769,7 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
 
             const SentenceUnit tail = sentence_split_flush(&stream_tap.splitter);
             if (streamed && !tail.text.empty()) {
-                conn_speak(conn, tail);
+                conn_speak(conn, tail, client.tts);
             }
 
             s2s_log(S2S_LOG_INFO, "[Perf] Respond %.1f ms (first unit %.1f ms, %zu characters)", t_llm.ms(),
@@ -696,7 +778,7 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
             if (!streamed && !conn->cancel.load()) {
                 conn_error(conn, llm_client_last_error());
             }
-            llm_client_free(client);
+            llm_client_free(llm);
         }
     }
 
@@ -713,7 +795,7 @@ static void conn_responder(Connection * conn) {
         {
             std::unique_lock<std::mutex> lock(conn->queue_mutex);
             conn->queue_cv.wait(lock, [conn]() { return conn->stop || !conn->queue.empty(); });
-            if (conn->stop && conn->queue.empty()) {
+            if (conn->stop) {
                 return;
             }
             turn = std::move(conn->queue.front());
@@ -798,8 +880,10 @@ static std::vector<std::string> g_llm_hosts;
 static bool g_llm_fixed = false;
 
 static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) {
+    std::lock_guard<std::mutex> lock(conn->client_mutex);
+
     if (!patch.mode.empty()) {
-        conn->mode = patch.mode;
+        conn->client.mode = patch.mode;
     }
     if (!patch.echo.empty() && patch.echo != conn->echo) {
         // A fresh canceller learns the echo path of the new setup from
@@ -832,93 +916,94 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
             conn_error(conn, "[Realtime] The endpoint is set by the server");
         }
     } else {
+        // A key travels with its URL: the URL of a patch takes the key of the
+        // same patch, none when it carries none, so a key never reaches a
+        // host it was not given for.
         if (!patch.llm_url.empty()) {
             if (host_allowed(g_llm_hosts, patch.llm_url)) {
-                conn->llm.base_url = patch.llm_url;
+                conn->client.llm.base_url = patch.llm_url;
+                conn->client.llm.api_key  = patch.llm_key;
             } else {
                 conn_error(conn, ("[Realtime] Endpoint host " + url_host(patch.llm_url) + " is not allowed").c_str());
             }
         }
         if (!patch.llm_model.empty()) {
-            conn->llm.model = patch.llm_model;
-        }
-        if (!patch.llm_key.empty()) {
-            conn->llm.api_key = patch.llm_key;
+            conn->client.llm.model = patch.llm_model;
         }
     }
     if (!patch.system_prompt.empty()) {
-        conn->system_prompt = patch.system_prompt;
+        conn->client.system_prompt = patch.system_prompt;
     }
     if (patch.temperature >= 0.0f) {
-        conn->llm.sampling.temperature = patch.temperature;
+        conn->client.llm.sampling.temperature = patch.temperature;
     }
     if (patch.top_p >= 0.0f) {
-        conn->llm.sampling.top_p = patch.top_p;
+        conn->client.llm.sampling.top_p = patch.top_p;
     }
     if (patch.top_k >= 0.0f) {
-        conn->llm.sampling.top_k = (int) patch.top_k;
+        conn->client.llm.sampling.top_k = (int) patch.top_k;
     }
     if (patch.min_p >= 0.0f) {
-        conn->llm.sampling.min_p = patch.min_p;
+        conn->client.llm.sampling.min_p = patch.min_p;
     }
     if (patch.max_tokens >= 0.0f) {
-        conn->llm.sampling.max_tokens = (int) patch.max_tokens;
+        conn->client.llm.sampling.max_tokens = (int) patch.max_tokens;
     }
     if (patch.presence_penalty > -3.0f) {
-        conn->llm.sampling.presence_penalty = patch.presence_penalty;
+        conn->client.llm.sampling.presence_penalty = patch.presence_penalty;
     }
     if (patch.frequency_penalty > -3.0f) {
-        conn->llm.sampling.frequency_penalty = patch.frequency_penalty;
+        conn->client.llm.sampling.frequency_penalty = patch.frequency_penalty;
     }
     if (patch.seed >= 0.0f) {
-        conn->llm.sampling.seed = (int) patch.seed;
+        conn->client.llm.sampling.seed = (int) patch.seed;
     }
     if (!patch.tts_speaker.empty()) {
-        conn->tts.speaker = patch.tts_speaker;
+        conn->client.tts.speaker = patch.tts_speaker;
     }
     if (!patch.tts_language.empty()) {
-        conn->tts.language = patch.tts_language;
+        conn->client.tts.language = patch.tts_language;
     }
     if (patch.tts_min_chars >= 0.0f) {
-        conn->tts.guards.min_chars = (int) patch.tts_min_chars;
+        conn->client.tts.guards.min_chars = (int) patch.tts_min_chars;
     }
     if (patch.tts_chars_per_second > 0.0f) {
-        conn->tts.guards.chars_per_second = patch.tts_chars_per_second;
+        conn->client.tts.guards.chars_per_second = patch.tts_chars_per_second;
     }
     if (patch.tts_margin_seconds >= 0.0f) {
-        conn->tts.guards.margin_seconds = patch.tts_margin_seconds;
+        conn->client.tts.guards.margin_seconds = patch.tts_margin_seconds;
     }
 
     if (patch.llm_timeout_sec > 0.0f) {
-        conn->llm.timeout_sec = (int) patch.llm_timeout_sec;
+        conn->client.llm.timeout_sec = (int) patch.llm_timeout_sec;
     }
 
     if (patch.tts_temperature >= 0.0f) {
-        conn->tts.sampling.temperature = patch.tts_temperature;
+        conn->client.tts.sampling.temperature = patch.tts_temperature;
     }
     if (patch.tts_top_k >= 0.0f) {
-        conn->tts.sampling.top_k = (int) patch.tts_top_k;
+        conn->client.tts.sampling.top_k = (int) patch.tts_top_k;
     }
     if (patch.tts_top_p >= 0.0f) {
-        conn->tts.sampling.top_p = patch.tts_top_p;
+        conn->client.tts.sampling.top_p = patch.tts_top_p;
     }
     if (patch.tts_repetition_penalty >= 0.0f) {
-        conn->tts.sampling.repetition_penalty = patch.tts_repetition_penalty;
+        conn->client.tts.sampling.repetition_penalty = patch.tts_repetition_penalty;
     }
     if (patch.tts_subtalker_temperature >= 0.0f) {
-        conn->tts.sampling.subtalker_temperature = patch.tts_subtalker_temperature;
+        conn->client.tts.sampling.subtalker_temperature = patch.tts_subtalker_temperature;
     }
     if (patch.tts_subtalker_top_k >= 0.0f) {
-        conn->tts.sampling.subtalker_top_k = (int) patch.tts_subtalker_top_k;
+        conn->client.tts.sampling.subtalker_top_k = (int) patch.tts_subtalker_top_k;
     }
     if (patch.tts_subtalker_top_p >= 0.0f) {
-        conn->tts.sampling.subtalker_top_p = patch.tts_subtalker_top_p;
+        conn->client.tts.sampling.subtalker_top_p = patch.tts_subtalker_top_p;
     }
     if (patch.tts_max_new_tokens >= 0.0f) {
-        conn->tts.sampling.max_new_tokens = (int) patch.tts_max_new_tokens;
+        conn->client.tts.sampling.max_new_tokens = (int) patch.tts_max_new_tokens;
     }
     if (patch.tts_seed >= 0.0f) {
-        conn->tts.sampling.seed = (int64_t) patch.tts_seed;
+        conn->client.tts.sampling.seed = (int64_t) patch.tts_seed;
     }
 
     // Only the listening thresholds need the session rebuilt: everything else
@@ -1423,18 +1508,19 @@ int main(int argc, char ** argv) {
         s2s_log(S2S_LOG_INFO, "[Server] Connection from %s", origin.empty() ? "unknown origin" : origin.c_str());
 
         Connection conn;
-        conn.ws            = &ws;
-        conn.mode          = mode;
-        conn.tts           = tts_bridge_defaults_request(g_models.tts);
-        conn.llm           = llm_defaults;
-        conn.system_prompt = system_prompt;
-        conn.session       = s2s_session_new(g_models.vad, g_models.turn, conn.params, conn_on_session_event, &conn);
+        conn.ws                   = &ws;
+        conn.client.mode          = mode;
+        conn.client.tts           = tts_bridge_defaults_request(g_models.tts);
+        conn.client.llm           = llm_defaults;
+        conn.client.system_prompt = system_prompt;
+        conn.session = s2s_session_new(g_models.vad, g_models.turn, conn.params, conn_on_session_event, &conn);
         if (!conn.session) {
             s2s_log(S2S_LOG_WARN, "%s", sv_last_error());
             ws.send(rt_event_error(sv_last_error()));
             return;
         }
 
+        std::thread writer(conn_writer, &conn);
         std::thread responder(conn_responder, &conn);
         conn_send(&conn, rt_event("session.created"));
 
@@ -1459,9 +1545,10 @@ int main(int argc, char ** argv) {
                     conn_apply_patch(&conn, message.patch);
                     s2s_log(S2S_LOG_INFO,
                             "[Realtime] Session update: mode %s, echo %s, endpoint %s, model %s, voice %s, language %s",
-                            conn.mode.c_str(), conn.echo.c_str(), conn.llm.base_url.c_str(), conn.llm.model.c_str(),
-                            conn.tts.speaker.empty() ? "default" : conn.tts.speaker.c_str(),
-                            conn.tts.language.empty() ? "default" : conn.tts.language.c_str());
+                            conn.client.mode.c_str(), conn.echo.c_str(), conn.client.llm.base_url.c_str(),
+                            conn.client.llm.model.c_str(),
+                            conn.client.tts.speaker.empty() ? "default" : conn.client.tts.speaker.c_str(),
+                            conn.client.tts.language.empty() ? "default" : conn.client.tts.language.c_str());
                     conn_send(&conn, rt_event("session.updated"));
                     break;
 
@@ -1498,12 +1585,12 @@ int main(int argc, char ** argv) {
 
                 case RT_CLIENT_HISTORY:
                     {
-                        std::lock_guard<std::mutex> lock(conn.history_mutex);
-                        conn.history.clear();
+                        std::lock_guard<std::mutex> lock(conn.client_mutex);
+                        conn.client.history.clear();
                         for (const rt_message & item : message.messages) {
-                            conn.history.push_back({ item.role, item.content });
+                            conn.client.history.push_back({ item.role, item.content });
                         }
-                        s2s_log(S2S_LOG_INFO, "[Realtime] History: %zu messages", conn.history.size());
+                        s2s_log(S2S_LOG_INFO, "[Realtime] History: %zu messages", conn.client.history.size());
                     }
                     break;
 
@@ -1514,14 +1601,14 @@ int main(int argc, char ** argv) {
             }
         }
 
-        conn.cancel.store(true);
-        {
-            std::lock_guard<std::mutex> lock(conn.queue_mutex);
-            conn.stop = true;
-            conn.queue_cv.notify_one();
-        }
-        conn_turn_notify(&conn);
+        conn_stop(&conn);
         responder.join();
+        {
+            std::lock_guard<std::mutex> lock(conn.out_mutex);
+            conn.out_stop = true;
+            conn.out_cv.notify_one();
+        }
+        writer.join();
         s2s_session_free(conn.session);
         lv_state_free(conn.aec);
         s2s_log(S2S_LOG_INFO, "[Server] Connection closed");

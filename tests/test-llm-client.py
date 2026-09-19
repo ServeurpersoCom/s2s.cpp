@@ -4,8 +4,9 @@
 # The harness carries its own chat completions endpoint, so this checks the
 # client and the sentence splitter and never depends on a model being loaded
 # somewhere. What matters for the loop: the first synthesis unit leaves well
-# before the answer ends, a raised cancel flag stops the request, and a
-# failing endpoint is reported instead of swallowed.
+# before the answer ends, a raised cancel flag stops the request, a failing
+# endpoint is reported instead of swallowed, and the sampling of a
+# session.update reaches the server.
 # Run from the tests/ directory.
 #
 # Usage:
@@ -39,8 +40,9 @@ def main():
     units = re.findall(r'\[Unit\] \d+: end \d+ "(.*)"', log)
     ends = [int(e) for e in re.findall(r'\[Unit\] \d+: end (\d+) ', log)]
     written = re.search(r"Written (\d+) UTF-16 units, the last unit ends at (\d+)", log)
+    parsed = re.search(r"\[Parse\] (.*)", log)
 
-    ok = check("parsed", bool(streamed and first and cancelled and broken and written),
+    ok = check("parsed", bool(streamed and first and cancelled and broken and written and parsed),
                "harness reported every stage")
     if not ok:
         return 1
@@ -71,6 +73,10 @@ def main():
     expected = [utf16(mixed[: mixed.index("?") + 1]), utf16(mixed[: mixed.index(".") + 1]), utf16(mixed)]
     split = [int(e) for e in re.findall(r"\[Split\] end (\d+) ", log)]
     ok = check("utf-16", split == expected, "ends %s, expected %s" % (split, expected)) and ok
+
+    # Every sampling field the panel edits reaches the patch, with its value.
+    sent = "temperature 0.7 top_p 0.9 top_k 40 min_p 0.05 max_tokens 256 presence 0.5 frequency 0.25 seed 42 timeout 30"
+    ok = check("session sampling", parsed.group(1) == sent, parsed.group(1)) and ok
 
     ok = check("cancel honored", returned == "false", "request reported cancelled") and ok
     ok = check("cancel truncates", cut_chars < n_chars, "%d of %d characters" % (cut_chars, n_chars)) and ok

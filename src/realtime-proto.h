@@ -217,22 +217,31 @@ static rt_client_message rt_parse(const std::string & frame) {
     const std::string type = rt_json_str(root, "type");
 
     if (type == "session.update") {
-        message.type                = RT_CLIENT_SESSION_UPDATE;
-        yyjson_val * session        = yyjson_obj_get(root, "session");
-        yyjson_val * fields         = session ? session : root;
-        message.patch.mode          = rt_json_str(fields, "mode");
-        message.patch.echo          = rt_json_str(fields, "echo");
-        message.patch.llm_url       = rt_json_str(fields, "llm_url");
-        message.patch.llm_model     = rt_json_str(fields, "llm_model");
-        message.patch.llm_key       = rt_json_str(fields, "llm_key");
-        message.patch.system_prompt = rt_json_str(fields, "instructions");
-        message.patch.voice         = rt_json_str(fields, "voice");
-        message.patch.language      = rt_json_str(fields, "language");
-        message.patch.temperature   = rt_json_num(fields, "temperature", -1.0f);
+        message.type                  = RT_CLIENT_SESSION_UPDATE;
+        yyjson_val * session          = yyjson_obj_get(root, "session");
+        yyjson_val * fields           = session ? session : root;
+        message.patch.mode            = rt_json_str(fields, "mode");
+        message.patch.echo            = rt_json_str(fields, "echo");
+        message.patch.llm_url         = rt_json_str(fields, "llm_url");
+        message.patch.llm_model       = rt_json_str(fields, "llm_model");
+        message.patch.llm_key         = rt_json_str(fields, "llm_key");
+        message.patch.system_prompt   = rt_json_str(fields, "instructions");
+        message.patch.voice           = rt_json_str(fields, "voice");
+        message.patch.language        = rt_json_str(fields, "language");
+        message.patch.llm_timeout_sec = rt_json_num(fields, "llm_timeout_sec", -1.0f);
 
-        // The two models that decide when a turn ends are configured apart,
-        // because they are apart: Silero scores every window, Smart Turn only
-        // scores a boundary.
+        yyjson_val * llm = yyjson_obj_get(fields, "sampling");
+        if (llm) {
+            message.patch.temperature       = rt_json_num(llm, "temperature", -1.0f);
+            message.patch.top_p             = rt_json_num(llm, "top_p", -1.0f);
+            message.patch.top_k             = rt_json_num(llm, "top_k", -1.0f);
+            message.patch.min_p             = rt_json_num(llm, "min_p", -1.0f);
+            message.patch.max_tokens        = rt_json_num(llm, "max_tokens", -1.0f);
+            message.patch.presence_penalty  = rt_json_num(llm, "presence_penalty", -100.0f);
+            message.patch.frequency_penalty = rt_json_num(llm, "frequency_penalty", -100.0f);
+            message.patch.seed              = rt_json_num(llm, "seed", -1.0f);
+        }
+
         yyjson_val * tts = yyjson_obj_get(fields, "tts");
         if (tts) {
             message.patch.tts_speaker          = rt_json_str(tts, "speaker");
@@ -255,6 +264,9 @@ static rt_client_message rt_parse(const std::string & frame) {
             }
         }
 
+        // The two models that decide when a turn ends are configured apart,
+        // because they are apart: Silero scores every window, Smart Turn only
+        // scores a boundary.
         yyjson_val * vad = yyjson_obj_get(fields, "vad");
         if (vad) {
             message.patch.vad_threshold              = rt_json_num(vad, "threshold", -1.0f);

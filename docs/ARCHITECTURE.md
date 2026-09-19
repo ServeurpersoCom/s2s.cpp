@@ -32,13 +32,18 @@ loaded are logged at startup and published on `/props`.
 | Thread | Owns |
 | --- | --- |
 | reader, one per connection | the socket, frame decode, 24 to 16 kHz decimation, the echo canceller, the turn session, incoming events |
-| responder, one per connection | recognition, the LLM stream, the sentence splitter, synthesis, outgoing audio |
+| responder, one per connection | recognition, the LLM stream, the sentence splitter, synthesis |
+| writer, one per connection | every outgoing frame, in order: a slow client stalls its own writer, never the TTS worker |
 | TTS worker, inside qwentts.cpp | the Qwen3-TTS backend and its queue, up to `--max-batch` syntheses per step |
 | log reader, one per process | stderr capture, the ring behind `/logs` |
 
 The reader keeps consuming audio while the responder talks, which is what
 makes the barge-in possible. The responder takes committed turns from a
-queue, so a turn spoken during an answer waits for the next one.
+queue, so a turn spoken during an answer waits for the next one. It copies
+the session settings and the conversation when it answers a turn: a
+`session.update` lands on the next answer, never under a running one. A
+turn that a later one superseded during its recognition gets no answer, and
+a closed connection drops the turns still queued.
 
 LocalVQE, Silero, Smart Turn and Parakeet each keep one context for the
 whole process and serialize their compute behind a mutex. Only the TTS
