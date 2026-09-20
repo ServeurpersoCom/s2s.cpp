@@ -1145,20 +1145,23 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
         conn->client.tts.sampling.seed = patch.tts_seed;
     }
 
-    if (patch.vad_threshold >= 0.0f) {
-        conn->params.vad_threshold = patch.vad_threshold;
-    }
     if (patch.vad_neg_threshold >= 0.0f) {
         conn->params.vad_neg_threshold = patch.vad_neg_threshold;
+    }
+    if (patch.vad_threshold >= 0.0f) {
+        conn->params.vad_threshold = patch.vad_threshold;
     }
     if (patch.min_speech_ms >= 0) {
         conn->params.min_speech_ms = patch.min_speech_ms;
     }
-    if (patch.min_speech_continuation_ms >= 0) {
-        conn->params.min_speech_continuation_ms = patch.min_speech_continuation_ms;
+    if (patch.barge_in_ms >= 0) {
+        conn->params.barge_in_ms = patch.barge_in_ms;
     }
     if (patch.min_silence_ms >= 0) {
         conn->params.min_silence_ms = patch.min_silence_ms;
+    }
+    if (patch.min_speech_continuation_ms >= 0) {
+        conn->params.min_speech_continuation_ms = patch.min_speech_continuation_ms;
     }
     if (patch.speech_pad_ms >= 0) {
         conn->params.speech_pad_ms = patch.speech_pad_ms;
@@ -1526,11 +1529,12 @@ int main(int argc, char ** argv) {
         // The ceiling in force, not the submodule maximum: this server caps
         // it lower, and the placeholder must say what actually applies.
         body += "\"tts_max_new_tokens\":" + std::to_string(S2S_TTS_MAX_NEW_TOKENS) + ",";
-        body += "\"vad_threshold\":" + std::to_string(turn.vad_threshold) + ",";
         body += "\"vad_neg_threshold\":" + std::to_string(turn.vad_neg_threshold) + ",";
+        body += "\"vad_threshold\":" + std::to_string(turn.vad_threshold) + ",";
         body += "\"min_speech_ms\":" + std::to_string(turn.min_speech_ms) + ",";
-        body += "\"min_speech_continuation_ms\":" + std::to_string(turn.min_speech_continuation_ms) + ",";
+        body += "\"barge_in_ms\":" + std::to_string(turn.barge_in_ms) + ",";
         body += "\"min_silence_ms\":" + std::to_string(turn.min_silence_ms) + ",";
+        body += "\"min_speech_continuation_ms\":" + std::to_string(turn.min_speech_continuation_ms) + ",";
         body += "\"speech_pad_ms\":" + std::to_string(turn.speech_pad_ms) + ",";
         body += "\"turn_threshold\":" + std::to_string(turn.turn_threshold) + ",";
         body += "\"turn_max_wait_ms\":" + std::to_string(turn.turn_max_wait_ms) + ",";

@@ -37,11 +37,12 @@ export interface Settings {
 	frequencyPenalty: string;
 	seed: string;
 	reasoningEffort: string;
-	vadThreshold: string;
 	vadNegThreshold: string;
+	vadThreshold: string;
 	minSpeechMs: string;
-	minSpeechContinuationMs: string;
+	bargeInMs: string;
 	minSilenceMs: string;
+	minSpeechContinuationMs: string;
 	speechPadMs: string;
 	turnThreshold: string;
 	turnMaxWaitMs: string;
@@ -84,11 +85,12 @@ function defaults(): Settings {
 		frequencyPenalty: '',
 		seed: '',
 		reasoningEffort: '',
-		vadThreshold: '',
 		vadNegThreshold: '',
+		vadThreshold: '',
 		minSpeechMs: '',
-		minSpeechContinuationMs: '',
+		bargeInMs: '',
 		minSilenceMs: '',
+		minSpeechContinuationMs: '',
 		speechPadMs: '',
 		turnThreshold: '',
 		turnMaxWaitMs: '',
@@ -167,11 +169,12 @@ $effect.root(() => {
 			frequencyPenalty: settings.frequencyPenalty,
 			seed: settings.seed,
 			reasoningEffort: settings.reasoningEffort,
-			vadThreshold: settings.vadThreshold,
 			vadNegThreshold: settings.vadNegThreshold,
+			vadThreshold: settings.vadThreshold,
 			minSpeechMs: settings.minSpeechMs,
-			minSpeechContinuationMs: settings.minSpeechContinuationMs,
+			bargeInMs: settings.bargeInMs,
 			minSilenceMs: settings.minSilenceMs,
+			minSpeechContinuationMs: settings.minSpeechContinuationMs,
 			speechPadMs: settings.speechPadMs,
 			turnThreshold: settings.turnThreshold,
 			turnMaxWaitMs: settings.turnMaxWaitMs,

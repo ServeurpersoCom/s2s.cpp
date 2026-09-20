@@ -96,11 +96,12 @@ struct rt_session_patch {
     float       tts_chars_per_second       = -1.0f;
     float       tts_margin_seconds         = -1.0f;
     int         llm_timeout_sec            = -1;
-    float       vad_threshold              = -1.0f;
     float       vad_neg_threshold          = -1.0f;
+    float       vad_threshold              = -1.0f;
     int         min_speech_ms              = -1;
-    int         min_speech_continuation_ms = -1;
+    int         barge_in_ms                = -1;
     int         min_silence_ms             = -1;
+    int         min_speech_continuation_ms = -1;
     int         speech_pad_ms              = -1;
     float       turn_threshold             = -1.0f;
     int         turn_max_wait_ms           = -1;
@@ -322,15 +323,16 @@ static rt_client_message rt_parse(const std::string & frame) {
         // scores a boundary.
         yyjson_val * vad = yyjson_obj_get(fields, "vad");
         if (vad) {
-            message.patch.vad_threshold =
-                (float) rt_json_value(vad, "threshold", -1.0, 0.0, 1.0, message.patch.invalid);
             message.patch.vad_neg_threshold =
                 (float) rt_json_value(vad, "neg_threshold", -1.0, 0.0, 1.0, message.patch.invalid);
-            message.patch.min_speech_ms = rt_json_ms(vad, "min_speech_ms", message.patch.invalid);
+            message.patch.vad_threshold =
+                (float) rt_json_value(vad, "threshold", -1.0, 0.0, 1.0, message.patch.invalid);
+            message.patch.min_speech_ms  = rt_json_ms(vad, "min_speech_ms", message.patch.invalid);
+            message.patch.barge_in_ms    = rt_json_ms(vad, "barge_in_ms", message.patch.invalid);
+            message.patch.min_silence_ms = rt_json_ms(vad, "min_silence_ms", message.patch.invalid);
             message.patch.min_speech_continuation_ms =
                 rt_json_ms(vad, "min_speech_continuation_ms", message.patch.invalid);
-            message.patch.min_silence_ms = rt_json_ms(vad, "min_silence_ms", message.patch.invalid);
-            message.patch.speech_pad_ms  = rt_json_ms(vad, "speech_pad_ms", message.patch.invalid);
+            message.patch.speech_pad_ms = rt_json_ms(vad, "speech_pad_ms", message.patch.invalid);
         }
 
         yyjson_val * turn = yyjson_obj_get(fields, "turn");

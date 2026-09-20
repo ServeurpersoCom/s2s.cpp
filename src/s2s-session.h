@@ -6,6 +6,7 @@
 // speech to silence boundary, and reports what it decided through events.
 //
 //   IDLE          --speech >= min_speech_ms-->            USER_SPEAKING
+//   IDLE, speaking --speech >= barge_in_ms-->             barge-in, USER_SPEAKING
 //   USER_SPEAKING --silence >= min_silence_ms-->          PENDING_END
 //   PENDING_END   --turn complete-->                      committed, IDLE
 //   PENDING_END   --incomplete, then turn_max_wait_ms-->  committed, IDLE
@@ -28,6 +29,10 @@
 // silent for reopen_grace_ms, counted on the audio: a breath inside a
 // sentence never lets the assistant cut in. A commit forced by
 // turn_max_wait_ms or by the caller has waited already and has no grace.
+//
+// The committed audio ends speech_pad_ms after the last speech: the silence
+// a turn keeps while it waits is not handed over, since a short word drowned
+// in seconds of it comes back from the recognizer empty.
 //
 // The session never transcribes and never speaks. It hands the committed
 // audio to the caller, which owns the recognizer worker, and it is told when
@@ -58,12 +63,15 @@ enum s2s_session_event {
 };
 
 struct s2s_session_params {
-    float vad_threshold              = 0.6f;   // speech starts at this probability
-    float vad_neg_threshold          = 0.45f;  // and lasts while it stays at or above this one
-    int   min_speech_ms              = 384;
-    int   min_speech_continuation_ms = 192;
-    int   min_silence_ms             = 64;
-    int   speech_pad_ms              = 500;
+    // In the order a turn goes through them. Speech starts at vad_threshold
+    // and lasts while the probability stays at or above vad_neg_threshold.
+    float vad_neg_threshold          = 0.45f;
+    float vad_threshold              = 0.6f;
+    int   min_speech_ms              = 192;  // opens a turn while the assistant is silent
+    int   barge_in_ms                = 384;  // opens one over the assistant, and cuts it
+    int   min_silence_ms             = 64;   // ends the speech
+    int   min_speech_continuation_ms = 192;  // resumes it
+    int   speech_pad_ms              = 500;  // audio kept before the onset and after the end
     float turn_threshold             = 0.5f;
     int   turn_max_wait_ms           = 2000;
     int   reopen_grace_ms            = 800;
@@ -103,7 +111,8 @@ void s2s_session_set_params(s2s_session * s, const s2s_session_params & params);
 void s2s_session_push(s2s_session * s, const float * pcm, size_t n_samples);
 
 // Tells the session whether the assistant holds the floor, which is what
-// turns a speech start into a barge-in. The session holds no lock: a caller
+// turns a speech start into a barge-in, held to barge_in_ms: a word said
+// over the assistant has to outlast what the echo canceller leaves of it. The session holds no lock: a caller
 // that shares it between threads serializes every call, this one included.
 void s2s_session_set_speaking(s2s_session * s, bool speaking);
 

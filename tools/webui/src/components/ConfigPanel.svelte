@@ -122,11 +122,12 @@
 	}
 
 	function clearVad() {
-		settings.vadThreshold = '';
 		settings.vadNegThreshold = '';
+		settings.vadThreshold = '';
 		settings.minSpeechMs = '';
-		settings.minSpeechContinuationMs = '';
+		settings.bargeInMs = '';
 		settings.minSilenceMs = '';
+		settings.minSpeechContinuationMs = '';
 		settings.speechPadMs = '';
 	}
 
@@ -247,10 +248,10 @@
 					/></label
 				>
 				<label
-					>Continuation ms <input
+					>Barge-in ms <input
 						type="text"
-						placeholder={ph(d?.min_speech_continuation_ms)}
-						bind:value={settings.minSpeechContinuationMs}
+						placeholder={ph(d?.barge_in_ms)}
+						bind:value={settings.bargeInMs}
 					/></label
 				>
 				<label
@@ -258,6 +259,13 @@
 						type="text"
 						placeholder={ph(d?.min_silence_ms)}
 						bind:value={settings.minSilenceMs}
+					/></label
+				>
+				<label
+					>Continuation ms <input
+						type="text"
+						placeholder={ph(d?.min_speech_continuation_ms)}
+						bind:value={settings.minSpeechContinuationMs}
 					/></label
 				>
 				<label

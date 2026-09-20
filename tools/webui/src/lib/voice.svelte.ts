@@ -47,11 +47,12 @@ export function toOptions(): S2SOptions {
 			}
 		},
 		vad: {
-			threshold: num(settings.vadThreshold),
 			negThreshold: num(settings.vadNegThreshold),
+			threshold: num(settings.vadThreshold),
 			minSpeechMs: num(settings.minSpeechMs),
-			minSpeechContinuationMs: num(settings.minSpeechContinuationMs),
+			bargeInMs: num(settings.bargeInMs),
 			minSilenceMs: num(settings.minSilenceMs),
+			minSpeechContinuationMs: num(settings.minSpeechContinuationMs),
 			speechPadMs: num(settings.speechPadMs)
 		},
 		turn: {

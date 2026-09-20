@@ -65,6 +65,7 @@ batch the connections together, each through its worker.
 
 ```
 IDLE          --speech >= min_speech_ms-->               USER_SPEAKING
+IDLE, speaking --speech >= barge_in_ms-->                barge-in, USER_SPEAKING
 USER_SPEAKING --silence >= min_silence_ms-->             PENDING_END
 PENDING_END   --turn complete-->                         committed, IDLE
 PENDING_END   --incomplete, then turn_max_wait_ms-->     committed, IDLE
@@ -74,7 +75,13 @@ committed     --grace over and released-->               final
 ```
 
 The session is told when the assistant holds the floor. Speech of
-`min_speech_ms` during that time raises a barge-in.
+`barge_in_ms` during that time raises a barge-in: cutting the assistant
+costs more than a turn opened on a noise, and the echo canceller leaves a
+residue, so it asks for longer speech than `min_speech_ms`, which lets a
+one word answer open a turn. The committed audio ends `speech_pad_ms`
+after the last speech: the silence a turn keeps while it waits is not
+handed to the recognizer, which returns nothing for a short word drowned
+in seconds of it.
 
 Recognition and the endpoint request start at the commit, but the first
 unit waits until the session reports the turn final, which takes two
@@ -102,12 +109,13 @@ Defaults, published on `/props` and patchable per session:
 
 | Parameter | Default | Role |
 | --- | --- | --- |
-| `vad_threshold` | 0.6 | Silero probability where speech starts |
 | `vad_neg_threshold` | 0.45 | probability speech has to stay at or above to go on |
-| `min_speech_ms` | 384 | opens a turn, and arms a barge-in |
-| `min_speech_continuation_ms` | 192 | reopens a turn from `PENDING_END` |
+| `vad_threshold` | 0.6 | Silero probability where speech starts |
+| `min_speech_ms` | 192 | opens a turn while the assistant is silent |
+| `barge_in_ms` | 384 | opens one while it speaks, and cuts it |
 | `min_silence_ms` | 64 | speech to silence boundary |
-| `speech_pad_ms` | 500 | audio kept before the speech onset |
+| `min_speech_continuation_ms` | 192 | reopens a turn from `PENDING_END` |
+| `speech_pad_ms` | 500 | audio kept before the speech onset and after its end |
 | `turn_threshold` | 0.5 | Smart Turn completion probability |
 | `turn_max_wait_ms` | 2000 | commit an incomplete turn anyway |
 | `reopen_grace_ms` | 800 | least silence kept on the answer to a complete commit |

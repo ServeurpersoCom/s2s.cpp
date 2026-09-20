@@ -7,8 +7,10 @@
 // Two hystereses make the loop usable in a room. On the probability, speech
 // starts at vad_threshold and lasts down to vad_neg_threshold, so a dip in
 // the middle of a word does not break it. On time, opening a turn needs
-// min_speech_ms of speech, so a chair or a breath never starts one, while
-// reopening a turn that the classifier judged unfinished needs only
+// min_speech_ms of speech, so a chair or a breath never starts one, and
+// barge_in_ms while the assistant speaks, since cutting it costs more than a
+// turn opened on a noise, and the echo canceller leaves a residue. Reopening
+// a turn that the classifier judged unfinished needs only
 // min_speech_continuation_ms, because the speaker is already talking and the
 // first syllable must not be lost.
 
@@ -78,6 +80,7 @@ struct s2s_session {
     int window         = 0;  // samples per VAD window
     int sample_rate    = 0;
     int open_windows   = 0;  // windows of speech needed to open a turn
+    int barge_windows  = 0;  // the same while the assistant speaks
     int reopen_windows = 0;
     int close_windows  = 0;  // windows of silence that end the speech
     int pad_windows    = 0;
@@ -86,19 +89,20 @@ struct s2s_session {
 
     s2s_session_state phase = S2S_SESSION_IDLE;
 
-    std::vector<float> partial;   // samples that did not fill a window
+    std::vector<float> partial;         // samples that did not fill a window
     std::vector<float> turn_pcm;
-    SampleRing         lookback;  // recent windows, the speech pad reads from here
-    SampleRing         stream;    // the classifier window, independent of the turn
-    std::vector<float> scratch;   // the classifier window, laid out for the model
+    size_t             speech_end = 0;  // samples of turn_pcm up to the last speech
+    SampleRing         lookback;        // recent windows, the speech pad reads from here
+    SampleRing         stream;          // the classifier window, independent of the turn
+    std::vector<float> scratch;         // the classifier window, laid out for the model
 
-    int speech_run  = 0;          // consecutive windows above the threshold
+    int speech_run  = 0;                // consecutive windows above the threshold
     int silence_run = 0;
-    int pending_run = 0;          // windows spent in PENDING_END
+    int pending_run = 0;                // windows spent in PENDING_END
 
-    int  grace_left = 0;          // windows of grace left to the committed turn
-    bool committed  = false;      // a committed turn not final yet, resumable until it is
-    bool released   = false;      // its answer is ready to be heard, or over
+    int  grace_left = 0;                // windows of grace left to the committed turn
+    bool committed  = false;            // a committed turn not final yet, resumable until it is
+    bool released   = false;            // its answer is ready to be heard, or over
     int  turn_id    = 0;
     int  revision   = 0;
     bool speaking   = false;
@@ -154,6 +158,7 @@ void s2s_session_set_params(s2s_session * s, const s2s_session_params & params) 
     }
     s->params         = params;
     s->open_windows   = s2s_session_windows(params.min_speech_ms, s->window, s->sample_rate);
+    s->barge_windows  = s2s_session_windows(params.barge_in_ms, s->window, s->sample_rate);
     s->reopen_windows = s2s_session_windows(params.min_speech_continuation_ms, s->window, s->sample_rate);
     s->close_windows  = s2s_session_windows(params.min_silence_ms, s->window, s->sample_rate);
     s->pad_windows    = s2s_session_windows(params.speech_pad_ms, s->window, s->sample_rate);
@@ -164,10 +169,12 @@ void s2s_session_set_params(s2s_session * s, const s2s_session_params & params) 
     // The lookback holds the windows a turn needs to open plus the speech pad,
     // so the audio starts before the first syllable that crossed the
     // threshold instead of in the middle of it.
-    s->lookback.resize((size_t) (s->open_windows + s->pad_windows) * (size_t) s->window);
+    s->lookback.resize((size_t) (std::max(s->open_windows, s->barge_windows) + s->pad_windows) * (size_t) s->window);
 
-    s2s_log(S2S_LOG_INFO, "[Session] Window %d samples, open %d, reopen %d, close %d, wait %d, grace %d windows",
-            s->window, s->open_windows, s->reopen_windows, s->close_windows, s->wait_windows, s->grace_windows);
+    s2s_log(S2S_LOG_INFO,
+            "[Session] Window %d samples, open %d, barge-in %d, reopen %d, close %d, wait %d, grace %d windows",
+            s->window, s->open_windows, s->barge_windows, s->reopen_windows, s->close_windows, s->wait_windows,
+            s->grace_windows);
 }
 
 void s2s_session_free(s2s_session * s) {
@@ -227,8 +234,9 @@ static void s2s_session_emit(s2s_session * s, s2s_session_event event, float sco
     report.time_sec           = (double) (s->n_windows * (size_t) s->window) / (double) s->sample_rate;
     report.turn_score         = score;
     if (event == S2S_EVENT_TURN_COMMITTED) {
+        const size_t pad = (size_t) s->pad_windows * (size_t) s->window;
         report.pcm       = s->turn_pcm.data();
-        report.n_samples = s->turn_pcm.size();
+        report.n_samples = std::min(s->turn_pcm.size(), s->speech_end + pad);
     }
     s->cb(&report, s->user);
 }
@@ -259,7 +267,8 @@ static void s2s_session_open_turn(s2s_session * s) {
     s->grace_left = 0;
     s->committed  = false;
     s->lookback.read(s->turn_pcm);
-    s->phase = S2S_SESSION_USER_SPEAKING;
+    s->speech_end = s->turn_pcm.size();
+    s->phase      = S2S_SESSION_USER_SPEAKING;
     s2s_session_emit(s, S2S_EVENT_SPEECH_STARTED, 0.0f);
 }
 
@@ -304,6 +313,9 @@ static void s2s_session_window(s2s_session * s, const float * window) {
 
     if (s->phase != S2S_SESSION_IDLE || s->committed) {
         s->turn_pcm.insert(s->turn_pcm.end(), window, window + s->window);
+        if (is_speech) {
+            s->speech_end = s->turn_pcm.size();
+        }
     }
 
     switch (s->phase) {
@@ -317,7 +329,7 @@ static void s2s_session_window(s2s_session * s, const float * window) {
                     s->revision++;
                     s->phase = S2S_SESSION_USER_SPEAKING;
                     s2s_session_emit(s, S2S_EVENT_TURN_RESUMED, 0.0f);
-                } else if (s->speech_run >= s->open_windows) {
+                } else if (s->speech_run >= (s->speaking ? s->barge_windows : s->open_windows)) {
                     if (s->speaking) {
                         s2s_session_emit(s, S2S_EVENT_BARGE_IN, 0.0f);
                     }

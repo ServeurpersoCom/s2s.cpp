@@ -65,13 +65,18 @@ export interface S2SMessage {
 // Silero scores every 32 ms window, Smart Turn only scores a speech to
 // silence boundary, so the two are configured apart.
 export interface S2SVad {
-	// speech starts at threshold and lasts while the probability stays at or
-	// above negThreshold
-	threshold?: number;
+	// In the order a turn goes through them. Speech starts at threshold and
+	// lasts while the probability stays at or above negThreshold.
 	negThreshold?: number;
+	threshold?: number;
+	// speech that opens a turn while the assistant is silent, and while it
+	// speaks, which also cuts it
 	minSpeechMs?: number;
-	minSpeechContinuationMs?: number;
+	bargeInMs?: number;
+	// silence that ends the speech, and speech that resumes it
 	minSilenceMs?: number;
+	minSpeechContinuationMs?: number;
+	// audio kept before the onset and after the end
 	speechPadMs?: number;
 }
 
@@ -566,11 +571,12 @@ export class S2S {
 					}
 				},
 				vad: {
-					threshold: this.options.vad?.threshold,
 					neg_threshold: this.options.vad?.negThreshold,
+					threshold: this.options.vad?.threshold,
 					min_speech_ms: this.options.vad?.minSpeechMs,
-					min_speech_continuation_ms: this.options.vad?.minSpeechContinuationMs,
+					barge_in_ms: this.options.vad?.bargeInMs,
 					min_silence_ms: this.options.vad?.minSilenceMs,
+					min_speech_continuation_ms: this.options.vad?.minSpeechContinuationMs,
 					speech_pad_ms: this.options.vad?.speechPadMs
 				},
 				turn: {

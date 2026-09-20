@@ -17,11 +17,12 @@ export interface S2SDefaults {
 	tts_chars_per_second: number;
 	tts_margin_seconds: number;
 	llm_timeout_sec: number;
-	vad_threshold: number;
 	vad_neg_threshold: number;
+	vad_threshold: number;
 	min_speech_ms: number;
-	min_speech_continuation_ms: number;
+	barge_in_ms: number;
 	min_silence_ms: number;
+	min_speech_continuation_ms: number;
 	speech_pad_ms: number;
 	turn_threshold: number;
 	turn_max_wait_ms: number;
