@@ -16,11 +16,6 @@
 	// the mode in force: the field when set, the server default otherwise
 	let mode = $derived(settings.mode || d?.mode || '');
 
-	// a language model is in the path only when the mode asks for one and the
-	// endpoint answered: every consumer reads this, nobody recomputes it
-	// a server that owns its endpoint answers for it, and keeps it out of the page
-	let endpointReady = $derived(mode === 'conversation' && (app.endpointOk || !!d?.llm_fixed));
-
 	// modes are lowercase on the wire, spelled out on screen
 	const MODE_LABELS: Record<string, string> = {
 		loopback: 'Loopback, to test the system',
@@ -73,7 +68,6 @@
 	async function loadModels() {
 		if (!settings.llmUrl) {
 			models = [];
-			app.endpointOk = false;
 			return;
 		}
 		try {
@@ -81,10 +75,8 @@
 			if (models.length > 0 && !models.includes(settings.llmModel)) {
 				settings.llmModel = models[0];
 			}
-			app.endpointOk = models.length > 0;
 		} catch {
 			models = [];
-			app.endpointOk = false;
 		}
 	}
 
@@ -502,11 +494,8 @@
 	</details>
 
 	<div class="action-row">
-		<button
-			type="button"
-			disabled={!endpointReady}
-			onclick={clearContext}
-			title="Drop the conversation history">Clear context</button
+		<button type="button" onclick={clearContext} title="Drop the conversation history"
+			>Clear context</button
 		>
 		<button
 			type="button"

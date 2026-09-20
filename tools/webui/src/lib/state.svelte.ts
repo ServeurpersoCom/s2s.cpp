@@ -119,9 +119,6 @@ export const settings = $state(load());
 // when something the user did could not happen
 export const app = $state({
 	props: null as S2SProps | null,
-	// true once the endpoint answered its model list: what tells the rest of
-	// the UI whether a language model is in the path at all
-	endpointOk: false,
 	toast: '' as string,
 	toastOk: false
 });
