@@ -5,6 +5,12 @@
 // and nothing else: no merges, no scores, no encoder. Decoding concatenates
 // the pieces, turns the U+2581 word marker back into a space, and drops the
 // leading space the Metaspace scheme always prepends.
+//
+// Special pieces are left out of the text, the way the reference decodes
+// with skip_special_tokens: <unk>, which the model emits for a character
+// its vocabulary lacks, such as the + of "C++", and the <|...|> control
+// tokens. Every special piece has the form <...>, and no other piece holds
+// an angle bracket. The decoder still feeds them to its prediction network.
 
 #include "gguf-weights.h"
 
@@ -15,6 +21,7 @@
 
 struct SpDetok {
     std::vector<std::string> pieces;
+    std::vector<bool>        special;
 };
 
 static void sp_detok_load(SpDetok * sp, const GGUFModel & gf, const char * key) {
@@ -24,8 +31,11 @@ static void sp_detok_load(SpDetok * sp, const GGUFModel & gf, const char * key) 
     }
     const int64_t n = gguf_get_arr_n(gf.gguf, index);
     sp->pieces.resize((size_t) n);
+    sp->special.resize((size_t) n);
     for (int64_t i = 0; i < n; i++) {
-        sp->pieces[(size_t) i] = gguf_get_arr_str(gf.gguf, index, i);
+        const std::string piece = gguf_get_arr_str(gf.gguf, index, i);
+        sp->special[(size_t) i] = piece.size() >= 2 && piece.front() == '<' && piece.back() == '>';
+        sp->pieces[(size_t) i]  = piece;
     }
 }
 
@@ -33,6 +43,9 @@ static void sp_detok_load(SpDetok * sp, const GGUFModel & gf, const char * key) 
 static void sp_detok_append(const SpDetok & sp, int id, std::string & text) {
     if (id < 0 || (size_t) id >= sp.pieces.size()) {
         s2s_throw("[SP] Id %d outside the %zu piece table", id, sp.pieces.size());
+    }
+    if (sp.special[(size_t) id]) {
+        return;
     }
     const std::string & piece = sp.pieces[(size_t) id];
 
