@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
-# test-server.py: one conversation through s2s-server, end to end.
+# test-server.py: the behavior of s2s-server, one scenario at a time.
 #
-# Starts the server on a test port, the client asks for loopback itself, waits for it to answer
-# /health, streams a WAV through the Realtime WebSocket in real time, then
-# checks that the loop did what a conversation needs: speech was detected,
-# turns were committed and recognized, and audio came back.
+# Each scenario runs the scripted client, test-server, against one server: a
+# script of passages of the example file, silences, commits and a microphone
+# cut, and for a conversation a mock endpoint whose latency the scenario sets.
+# The client prints a timeline, and the checks judge it in time windows
+# relative to its own events, so they hold whatever the machine.
 #
-# Loopback keeps the language model out of the path, so the check never
-# depends on an endpoint being up.
+# The passages of examples/freeman.wav are three sentences:
+#     A  0.0 to 6.0 s   "If you go into different cultures, ... concepts of creation."
+#     B  6.0 to 11.6 s  "They have their own creation story ... afterlife is."
+#     C  11.6 to 16.0 s "Um where you go, what you do, who you're gonna be with, you know."
 #
-# A second run puts the client in a simulated room with the server echo
-# canceller: its answers come back into the microphone as echo, and the
-# speaker talks over one of them. The loop has to hear the speaker through
-# the echo, stop the playback, and transcribe the interruption without a word
-# of the assistant.
+# Every script ends on 3 s of silence, enough for an unfinished sentence to be
+# committed anyway, then the client settles until its answer is over.
+#
+# Every scenario also checks two invariants: each response.created is closed
+# by exactly one response.done or response.cancelled, and the transcripts of
+# a turn come in a row, never after another turn.
 #
 # A server that owns its endpoint runs last: /props and the log say nothing
 # of it, the model list is closed, and a client naming another endpoint is
 # refused.
-#
-# A third run asks for a conversation on a server without an endpoint,
-# naming none either. Across all three, every response.created is closed by exactly one
-# response.done or response.cancelled.
-# Run from the tests/ directory.
+# Run from the tests/ directory; the timelines land in tmp/.
 #
 # Usage:
 #     ./test-server.py
@@ -43,19 +43,20 @@ MODELS = "../models"
 VOICES = "../voices"
 WAV = "../examples/freeman.wav"
 PORT = 18088
-SECONDS = "7"
-ROOM_SECONDS = "12"
-TALK_OVER_WORDS = "where you go"
-ECHO_WORDS = ("different", "cultures", "creation", "afterlife")
-REACTION_S = 1.5
 OWNED_PORT = 18087
 OWNED_URL = "http://127.0.0.1:18086/v1"
 OWNED_MODEL = "owned-model"
 OWNED_KEY = "s2s-test-key"
-GRACE_S = 0.8  # reopen_grace_ms at its default
 TMP = "tmp"
 
+A, B, C, AB = "0-6", "6-11.6", "11.6-16", "0-11.6"
+GRACE_S = 0.8     # reopen_grace_ms at its default
+REACTION_S = 1.5  # longest a talk over may take to stop the playback
+ECHO_WORDS = ("different", "cultures", "creation", "afterlife")
+
 BOOT_TIMEOUT_S = 120
+
+LINE = re.compile(r"\[(Event|Client|Mock)\]\s+([\d.]+)s\s+(\S+)(.*)")
 
 
 def check(label, ok, detail):
@@ -63,7 +64,192 @@ def check(label, ok, detail):
     return ok
 
 
-def wait_for_health(process, port=PORT):
+class Timeline:
+    def __init__(self, out):
+        self.lines = [(m.group(1), float(m.group(2)), m.group(3), m.group(4).strip())
+                      for m in map(LINE.match, out.splitlines()) if m]
+        summary = re.search(r"([\d.]+)s of audio received", out)
+        self.audio_sec = float(summary.group(1)) if summary else 0.0
+
+    def at(self, source, name, after=0.0):
+        return [(t, rest) for s, t, n, rest in self.lines if s == source and n == name and t >= after]
+
+    def first(self, source, name, after=0.0):
+        found = self.at(source, name, after)
+        return found[0][0] if found else None
+
+    # When the client started saying a passage, and when it was done with it.
+    def said(self, passage):
+        start, end = map(float, passage.split("-"))
+        return next((t for t, rest in self.at("Client", "say") if rest == "%.2f-%.2f" % (start, end)), None)
+
+    def said_end(self, passage):
+        start, end = map(float, passage.split("-"))
+        t = self.said(passage)
+        return None if t is None else t + end - start
+
+    def items(self):
+        found = []
+        for t, rest in self.at("Event", "conversation.item.input_audio_transcription.completed"):
+            m = re.match(r'(\S*) "(.*)"', rest)
+            found.append((t, m.group(1), m.group(2)))
+        return found
+
+    def spoken(self):
+        return [re.match(r'"(.*)"', rest).group(1) for _, rest in self.at("Event", "response.output_audio_transcript.delta")]
+
+    def errors(self):
+        return [rest for _, rest in self.at("Event", "error")]
+
+
+# Each response.created is closed by exactly one response.done or
+# response.cancelled before the next one opens, and the transcripts of a
+# turn come in a row.
+def invariants(label, run):
+    open_response, closed = False, True
+    for source, _, name, _ in run.lines:
+        if source != "Event":
+            continue
+        if name == "response.created":
+            closed = closed and not open_response
+            open_response = True
+        elif name in ("response.done", "response.cancelled"):
+            closed = closed and open_response
+            open_response = False
+    closed = closed and not open_response
+    ok = check("%s terminals" % label, closed,
+               "%d responses, each closed exactly once" % len(run.at("Event", "response.created")))
+    named = [item for _, item, _ in run.items()]
+    grouped = all(named[i] == named[i - 1] or named[i] not in named[:i] for i in range(1, len(named)))
+    return check("%s items" % label, grouped, "%d transcripts of %d turns, revisions in a row" %
+                 (len(named), len(set(named)))) and ok
+
+
+# One sentence in loopback: the answer is its transcript, word for word, and
+# it starts once the grace has run out.
+def check_loopback(run):
+    items = run.items()
+    stopped = run.at("Event", "input_audio_buffer.speech_stopped")
+    audio = run.first("Event", "response.output_audio.delta")
+    ok = check("loopback turn", len(set(i for _, i, _ in items)) == 1 and bool(items), "%d transcripts" % len(items))
+    if not ok or not stopped or audio is None:
+        return check("loopback audio", False, "no answer")
+    ok = check("loopback verbatim", " ".join(run.spoken()) == items[-1][2], "the answer is the transcript") and ok
+    gap = audio - stopped[-1][0]
+    ok = check("loopback latency", GRACE_S - 0.1 <= gap <= GRACE_S + 1.5,
+               "first audio %.2fs after the speech stopped" % gap) and ok
+    return check("loopback length", run.audio_sec > 1.0, "%.2fs of audio" % run.audio_sec) and ok
+
+
+# A monologue: the speaker goes on during the grace, the turn is resumed and
+# recognized again whole, and nothing is spoken before the speaker is done.
+def check_grace(run):
+    items = run.items()
+    ended = run.said_end(AB)
+    audio = run.first("Event", "response.output_audio.delta")
+    ok = check("grace one turn", bool(items) and len(set(i for _, i, _ in items)) == 1 and len(items) >= 2,
+               "%d transcripts of one turn" % len(items))
+    whole = items[-1][2].lower() if items else ""
+    ok = check("grace whole", "creation" in whole and "afterlife" in whole, "last transcript: %s" % whole) and ok
+    return check("grace silent", audio is not None and ended is not None and audio >= ended,
+                 "first audio %.2fs after the monologue ended" % ((audio or 0.0) - (ended or 0.0))) and ok
+
+
+# The speaker goes on after the grace but before the slow endpoint answered:
+# nothing was heard, so the turn is the same one, the pending request is
+# aborted, and the model reads both sentences as one message.
+def check_before_answer(run):
+    items = run.items()
+    ended = run.said_end(B)
+    audio = run.first("Event", "response.output_audio.delta")
+    requests = run.at("Mock", "request")
+    ok = check("before answer one turn", bool(items) and len(set(i for _, i, _ in items)) == 1,
+               "%d transcripts, turns %s" % (len(items), sorted(set(i for _, i, _ in items))))
+    ok = check("before answer nothing heard", audio is not None and ended is not None and audio >= ended,
+               "first audio %.2fs after the second sentence ended" % ((audio or 0.0) - (ended or 0.0))) and ok
+    last = requests[-1][1] if requests else ""
+    ok = check("before answer one message", last.startswith("1 user messages") and "creation" in last and
+               "afterlife" in last, "last request: %s" % last) and ok
+    return check("before answer aborted", bool(run.at("Mock", "aborted")), "the request of the first sentence aborted") and ok
+
+
+# The speaker talks over an answer already playing while the endpoint still
+# writes it: a new turn, the playback, the response and the request stopped
+# at once.
+def check_barge_in(run):
+    t0 = run.said(C)
+    if t0 is None:
+        return check("barge-in", False, "no talk over, no answer was heard")
+    items = run.items()
+    flushed = run.first("Client", "playback", t0)
+    cancelled = run.first("Event", "response.cancelled", t0)
+    ok = check("barge-in new turn", len(set(i for _, i, _ in items)) == 2, "turns %s" % sorted(set(i for _, i, _ in items)))
+    ok = check("barge-in playback", flushed is not None and flushed - t0 <= REACTION_S,
+               "playback flushed %.2fs after the talk over" % ((flushed or t0) - t0)) and ok
+    ok = check("barge-in response", cancelled is not None and cancelled - t0 <= REACTION_S,
+               "response cancelled %.2fs after the talk over" % ((cancelled or t0) - t0)) and ok
+    ok = check("barge-in request", bool(run.at("Mock", "aborted", t0)), "the endpoint request aborted") and ok
+    heard = [text for t, _, text in items if t >= t0]
+    return check("barge-in transcript", any("where you go" in text.lower() for text in heard),
+                 "the interruption heard: %s" % (heard[0] if heard else "nothing")) and ok
+
+
+# A push to talk: the client commits mid sentence and cuts its microphone,
+# and the answer still comes.
+def check_push_to_talk(run):
+    committed = run.first("Client", "commit")
+    audio = run.first("Event", "response.output_audio.delta", committed or 0.0)
+    ok = check("push to talk turn", bool(run.items()), "%d transcripts" % len(run.items()))
+    return check("push to talk answer", committed is not None and audio is not None and audio - committed < GRACE_S,
+                 "first audio %.2fs after the commit, no grace" % ((audio or 0.0) - (committed or 0.0))) and ok
+
+
+# A laptop on speakers: the answer comes back into the microphone, the speaker
+# talks over it, and the server echo canceller keeps the assistant out of
+# what is heard.
+def check_room(run):
+    t0 = run.said(C)
+    if t0 is None:
+        return check("room", False, "no talk over, no answer was heard")
+    flushed = run.first("Client", "playback", t0)
+    ok = check("room barge-in", flushed is not None and flushed - t0 <= REACTION_S,
+               "playback flushed %.2fs after the talk over" % ((flushed or t0) - t0))
+    heard = [text for t, _, text in run.items() if t >= t0]
+    ok = check("room transcript", any("where you go" in text.lower() for text in heard),
+               "the interruption heard: %s" % (heard[0] if heard else "nothing")) and ok
+    echo = [text for text in heard if any(w in text.lower() for w in ECHO_WORDS)]
+    return check("room echo", not echo, "no word of the assistant in what was heard") and ok
+
+
+def check_error(expected):
+    def judge(run):
+        errors = run.errors()
+        return check("error", bool(errors) and all(expected in e for e in errors),
+                     "%d answers told: %s" % (len(errors), errors[0] if errors else "nothing"))
+    return judge
+
+
+CONVERSATION = ["--mode", "conversation", "--llm", "v1"]
+
+SCENARIOS = [
+    ("loopback", ["--mode", "loopback", "say:" + A, "pause:3"], check_loopback),
+    ("grace", ["--mode", "loopback", "say:" + AB, "pause:3"], check_grace),
+    ("before answer", CONVERSATION + ["--llm-first-ms", "3000", "say:" + A, "pause:1.5", "say:" + B, "pause:3"],
+     check_before_answer),
+    ("barge-in", CONVERSATION + ["--llm-token-ms", "150", "say:" + A, "heard:1000", "say:" + C, "pause:3"],
+     check_barge_in),
+    ("push to talk", CONVERSATION + ["say:0-3", "commit", "mute:3"], check_push_to_talk),
+    ("room", ["--mode", "loopback", "--echo", "server", "--room", "say:" + A, "heard:1000", "say:" + C, "pause:3"],
+     check_room),
+    ("no endpoint", ["--mode", "conversation", "say:" + A, "pause:3"], check_error("No endpoint")),
+    ("broken endpoint", ["--mode", "conversation", "--llm", "broken", "say:" + A, "pause:3"],
+     check_error("model not loaded")),
+    ("midstream", ["--mode", "conversation", "--llm", "midstream", "say:" + A, "pause:3"],
+     check_error("context size exceeded")),
+]
+
+
+def wait_for_health(process, port):
     deadline = time.time() + BOOT_TIMEOUT_S
     while time.time() < deadline:
         if process.poll() is not None:
@@ -77,6 +263,14 @@ def wait_for_health(process, port=PORT):
     return False
 
 
+def run_client(port, name, args):
+    out = subprocess.run([CLIENT, "ws://127.0.0.1:%d/v1/realtime" % port, WAV] + args, check=True,
+                         stdout=subprocess.PIPE, text=True).stdout
+    with open("%s/%s.txt" % (TMP, name.replace(" ", "-")), "w") as f:
+        f.write(out)
+    return Timeline(out)
+
+
 def main():
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     os.makedirs(TMP, exist_ok=True)
@@ -87,67 +281,43 @@ def main():
         stdout=log,
         stderr=subprocess.STDOUT,
     )
-
+    ok = True
     try:
-        if not wait_for_health(server):
-            print("[Check] boot: server never answered /health FAIL")
+        if not wait_for_health(server, PORT):
+            check("boot", False, "server never answered /health")
             return 1
-
-        url = "ws://127.0.0.1:%d/v1/realtime" % PORT
-        out = subprocess.run([CLIENT, url, WAV, SECONDS], check=True, stdout=subprocess.PIPE, text=True).stdout
-        print(out, end="")
-        room = subprocess.run([CLIENT, url, WAV, ROOM_SECONDS, "--room"], check=True, stdout=subprocess.PIPE,
-                              text=True).stdout
-        print(room, end="")
-        broken = subprocess.run([CLIENT, url, WAV, SECONDS, "--no-endpoint"], check=True, stdout=subprocess.PIPE,
-                                text=True).stdout
-        print(broken, end="")
+        for name, args, judge in SCENARIOS:
+            run = run_client(PORT, name, args)
+            ok = invariants(name, run) and ok
+            ok = judge(run) and ok
     finally:
         server.terminate()
         server.wait(timeout=30)
         log.close()
 
-    events = re.findall(r"\[Event\]\s+[\d.]+s\s+(\S+)", out)
-    items = re.findall(r'input_audio_transcription.completed\s+(\S*) "(.*)"', out)
-    transcripts = [text for _, text in items]
-    summary = re.search(r"(\d+) events, ([\d.]+)s of audio received", out)
+    ok = check_grace_log(TMP + "/server.log") and ok
+    ok = check_owned_endpoint() and ok
+    return 0 if ok else 1
 
-    ok = check("boot", bool(summary), "server answered and the client ran")
-    if not ok:
-        return 1
 
-    audio_sec = float(summary.group(2))
-
-    ok = check("session", "session.created" in events, "session.created received") and ok
-    ok = check("speech", events.count("input_audio_buffer.speech_started") > 0,
-               "%d speech starts" % events.count("input_audio_buffer.speech_started")) and ok
-    ok = check("turns", len(transcripts) > 0, "%d turns recognized" % len(transcripts)) and ok
-    ok = check("transcripts", all(t.strip() for t in transcripts), "no empty transcript") and ok
-    # Each transcript names its turn, and a turn comes back only as its own
-    # revision, right after the previous one: never after another turn.
-    named = [item for item, _ in items if item.startswith("turn_")]
-    grouped = all(named[i] == named[i - 1] or named[i] not in named[:i] for i in range(1, len(named)))
-    ok = check("items", len(named) == len(items) and grouped,
-               "%d transcripts of %d turns, revisions in a row" % (len(items), len(set(named)))) and ok
-    # The example is a monologue: the next words arrive during the grace, so
-    # the speaker resumes the turn and the whole utterance is transcribed
-    # again under the same item.
-    ok = check("resumed", len(set(named)) < len(named),
-               "%d revisions of a turn the speaker went on with" % (len(named) - len(set(named)))) and ok
-    # The answer to an earlier revision is dropped before anyone hears it.
-    # Every answer that is heard speaks back the transcript that opened it.
-    heard, verbatim = spoken_back(out)
-    ok = check("loopback", heard > 0 and verbatim, "%d answers heard, each its turn verbatim" % heard) and ok
-    ok = check("audio", audio_sec > 1.0, "%.2fs of synthesized audio" % audio_sec) and ok
-    ok = check_grace(TMP + "/server.log") and ok
-
-    ok = check_room(room) and ok
-    for label, run in (("plain", out), ("room", room), ("no endpoint", broken)):
-        ok = check_terminals(label, run) and ok
-    errors = re.findall(r"\[Event\]\s+[\d.]+s\s+error\s+(.*)", broken)
-    ok = check("no endpoint", bool(errors) and all("No endpoint" in e for e in errors),
-               "%d answers told there is no endpoint" % len(errors)) and ok
-    return 0 if check_owned_endpoint() and ok else 1
+# From the server log, over every scenario: a turn committed as complete
+# turns final no sooner than the grace. A forced commit has none, which the
+# push to talk shows with an answer sooner than the grace.
+def check_grace_log(path):
+    commits, graced, ok = {}, 0, True
+    for line in open(path, errors="replace"):
+        if "Server] Connection from" in line:
+            commits = {}
+        m = re.search(r"Turn committed at ([\d.]+)s \(turn (\d+) .*completion ([\d.]+)", line)
+        if m:
+            commits[m.group(2)] = (float(m.group(1)), float(m.group(3)))
+        m = re.search(r"Turn final at ([\d.]+)s \(turn (\d+) ", line)
+        if m and m.group(2) in commits:
+            at, score = commits.pop(m.group(2))
+            if score > 0.0:
+                graced += 1
+                ok = ok and float(m.group(1)) - at >= GRACE_S - 0.001
+    return check("grace log", ok and graced > 0, "%d answers to a complete commit held for the grace" % graced)
 
 
 def check_owned_endpoint():
@@ -172,9 +342,7 @@ def check_owned_endpoint():
             models = 200
         except urllib.error.HTTPError as e:
             models = e.code
-        out = subprocess.run([CLIENT, "ws://127.0.0.1:%d/v1/realtime" % OWNED_PORT, WAV, SECONDS, "--other-endpoint"],
-                             check=True, stdout=subprocess.PIPE, text=True).stdout
-        print(out, end="")
+        run = run_client(OWNED_PORT, "owned", ["--mode", "conversation", "--other-endpoint", "say:" + A, "pause:3"])
     finally:
         server.terminate()
         server.wait(timeout=30)
@@ -190,89 +358,10 @@ def check_owned_endpoint():
         logged = f.read()
     ok = check("owned log", not any(secret in logged for secret in (OWNED_URL, OWNED_MODEL, OWNED_KEY)),
                "the endpoint URL, model and key never logged") and ok
-    refused = re.findall(r"\[Event\]\s+[\d.]+s\s+error\s+(.*)", out)
+    refused = run.errors()
     ok = check("owned endpoint", any("set by the server" in e for e in refused),
                "another endpoint refused: %s" % (refused[0] if refused else "no error")) and ok
-    return check_terminals("owned", out) and ok
-
-# The completed responses that spoke, and whether each one spoke back the
-# transcript that opened it, word for word.
-def spoken_back(out):
-    heard, verbatim, question, answer = 0, True, None, []
-    for name, rest in re.findall(r"\[Event\]\s+[\d.]+s\s+(\S+)(.*)", out):
-        if name == "conversation.item.input_audio_transcription.completed":
-            question = re.search(r'"(.*)"', rest).group(1)
-        elif name == "response.created":
-            answer = []
-        elif name == "response.output_audio_transcript.delta":
-            answer.append(re.search(r'"(.*)"', rest).group(1))
-        elif name == "response.done" and answer:
-            heard += 1
-            verbatim = verbatim and " ".join(answer) == question
-    return heard, verbatim
-
-
-# From the server log: a turn committed as complete turns final no sooner
-# than the grace, a forced commit has no grace and turns final as soon as the
-# responder releases it, its answer ready.
-def check_grace(path):
-    commits, graced, forced, ok = {}, 0, 0, True
-    for line in open(path, errors="replace"):
-        if "Server] Connection from" in line:
-            commits = {}
-        m = re.search(r"Turn committed at ([\d.]+)s \(turn (\d+) .*completion ([\d.]+)", line)
-        if m:
-            commits[m.group(2)] = (float(m.group(1)), float(m.group(3)))
-        m = re.search(r"Turn final at ([\d.]+)s \(turn (\d+) ", line)
-        if m and m.group(2) in commits:
-            at, score = commits.pop(m.group(2))
-            gap = float(m.group(1)) - at
-            if score == 0.0:
-                forced += 1
-                ok = ok and gap < GRACE_S
-            else:
-                graced += 1
-                ok = ok and gap >= GRACE_S - 0.001
-    return check("grace", ok and graced > 0, "%d answers held for the grace, %d forced commits final on release" % (graced, forced))
-
-
-# Each response.created is closed by exactly one response.done or
-# response.cancelled before the next one opens.
-def check_terminals(label, out):
-    events = re.findall(r"\[Event\]\s+[\d.]+s\s+(\S+)", out)
-    open_response, closed = False, True
-    for name in events:
-        if name == "response.created":
-            closed = closed and not open_response
-            open_response = True
-        elif name in ("response.done", "response.cancelled"):
-            closed = closed and open_response
-            open_response = False
-    closed = closed and not open_response
-    return check("%s terminals" % label, closed,
-                 "%d responses, each closed exactly once" % events.count("response.created"))
-
-
-def check_room(out):
-    at = lambda what: [float(t) for t in re.findall(r"\[Client\]\s+([\d.]+)s\s+%s" % what, out)]
-    started = at("talking over the answer")
-    ok = check("room talk over", bool(started), "the speaker talked over an answer")
-    if not ok:
-        return False
-    t0 = started[0]
-
-    flushed = [t for t in at("playback flushed") if t >= t0]
-    ok = check("room barge-in", bool(flushed) and flushed[0] - t0 <= REACTION_S,
-               "playback stopped %.2fs after the speaker started" % (flushed[0] - t0 if flushed else -1.0)) and ok
-
-    heard = [(float(t), text) for t, text in
-             re.findall(r'\[Event\]\s+([\d.]+)s\s+conversation.item.input_audio_transcription.completed.*"(.*)"', out)
-             if float(t) >= t0]
-    words = [text for _, text in heard if TALK_OVER_WORDS in text.lower()]
-    ok = check("room transcript", bool(words), "the interruption heard: %s" % (words[0] if words else "nothing")) and ok
-    echo = [text for _, text in heard if any(w in text.lower() for w in ECHO_WORDS)]
-    ok = check("room echo", not echo, "no word of the assistant in what was heard") and ok
-    return ok
+    return invariants("owned", run) and ok
 
 
 if __name__ == "__main__":

@@ -291,8 +291,9 @@ same keys.
 
 ## Validation
 
-`tests/` holds one harness per layer: a C++ target or the binary itself,
-driven by a Python script that prints `[Parity]` or `[Check]` lines.
+`tests/` holds two kinds of harness, each a C++ target or the binary
+itself driven by a Python script that prints `[Parity]` or `[Check]`
+lines. The parity harnesses hold every model to its reference:
 
 | Test | Checks |
 | --- | --- |
@@ -300,10 +301,26 @@ driven by a Python script that prints `[Parity]` or `[Check]` lines.
 | `test-silero` | probabilities and decisions against onnxruntime |
 | `test-smart-turn` | completion probabilities and decisions against onnxruntime |
 | `test-parakeet` | mel, encoder, projection and transcript against transformers `ParakeetForTDT` |
-| `test-session` | invariants of the turn state machine, which has no upstream reference |
-| `test-llm-client` | streaming, splitting and cancellation, against a mock endpoint |
-| `test-tts-bridge` | chunked streaming, first chunk latency and cancellation of the synthesis |
-| `test-server` | one loopback conversation end to end over the WebSocket |
+
+`test-server` holds the behavior of the whole server. A scripted client
+plays passages of the example file, silences, commits and a microphone
+cut in real time, as a browser on a loudspeaker, and runs a mock endpoint
+in process whose latency the scenario sets. The checks judge its timeline
+in windows relative to its own events:
+
+| Scenario | Checks |
+| --- | --- |
+| loopback | the answer is the transcript, first audio once the grace ran out |
+| grace | a monologue resumed during the grace, recognized whole, silent until it ends |
+| before answer | speech after the grace but before a slow endpoint answered stays in the turn, one message reaches the model |
+| barge-in | a talk over an answer in flight: new turn, playback, response and endpoint request stopped |
+| push to talk | a commit mid sentence and a microphone cut still get an answer, with no grace |
+| room | the echo canceller keeps the assistant out of what is heard through a room |
+| no endpoint, broken endpoint, midstream | the error reaches the client, the response still closes |
+| owned endpoint | nothing of the endpoint published or logged, another endpoint refused |
+
+Every scenario also checks that each response closes exactly once and that
+the transcripts of a turn come in a row.
 
 The Parakeet sweep covers CUDA, Vulkan and CPU against F32, Q8_0 and
 Q4_K_M. The synthesis itself has its parity harnesses in qwentts.cpp.
