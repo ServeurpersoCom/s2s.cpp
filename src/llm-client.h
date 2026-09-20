@@ -41,10 +41,11 @@ struct llm_sampling {
     float frequency_penalty = -100.0f;  // -2 to 2
     int   seed              = -1;       // negative draws a random one
 
-    // How long a reasoning model thinks before it answers, in the words the
-    // endpoint takes (none, minimal, low, medium, high). The thinking is never
-    // spoken, but the voice waits for it.
-    std::string reasoning_effort;
+    // How long a reasoning model thinks before it answers, sent as the OpenAI
+    // compatible reasoning_effort. none turns the thinking off, which suits a
+    // conversation: the voice waits for the thinking, never speaks it. Other
+    // values depend on the model: its chat template, or the provider's docs.
+    std::string reasoning_effort = "none";
 };
 
 // No endpoint and no model by default: they come from whoever runs the

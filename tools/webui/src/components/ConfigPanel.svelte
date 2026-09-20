@@ -366,13 +366,28 @@
 
 				<label
 					>System prompt <textarea
-						rows="8"
+						rows="4"
 						placeholder={ph(d?.instructions)}
 						bind:value={settings.systemPrompt}
 					></textarea></label
 				>
 
 				<div class="meta-grid">
+					<label
+						>Timeout <input
+							type="text"
+							placeholder={ph(d?.llm_timeout_sec)}
+							bind:value={settings.llmTimeoutSec}
+						/></label
+					>
+					<label
+						title="Sent as reasoning_effort, OpenAI compatible. none is the best for a conversation: no thinking, the fastest answer, and llama.cpp takes it with any model. For other values, see the chat template of the model or the documentation of the provider."
+						>Reasoning <input
+							type="text"
+							placeholder={ph(d?.reasoning_effort)}
+							bind:value={settings.reasoningEffort}
+						/></label
+					>
 					<label>Temperature <input type="text" bind:value={settings.temperature} /></label>
 					<label>Top P <input type="text" bind:value={settings.topP} /></label>
 					<label>Top K <input type="text" bind:value={settings.topK} /></label>
@@ -381,14 +396,6 @@
 					<label>Presence <input type="text" bind:value={settings.presencePenalty} /></label>
 					<label>Frequency <input type="text" bind:value={settings.frequencyPenalty} /></label>
 					<label>Seed <input type="text" bind:value={settings.seed} /></label>
-					<label>Reasoning <input type="text" bind:value={settings.reasoningEffort} /></label>
-					<label
-						>Timeout s <input
-							type="text"
-							placeholder={ph(d?.llm_timeout_sec)}
-							bind:value={settings.llmTimeoutSec}
-						/></label
-					>
 				</div>
 			</div>
 		</details>

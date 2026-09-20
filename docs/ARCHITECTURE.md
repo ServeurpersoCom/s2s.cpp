@@ -153,6 +153,14 @@ starts on the first complete sentence while the model keeps writing:
 the time to first audio is the time to the first sentence, not to the
 whole answer.
 
+A reasoning model thinks before its first sentence, and the voice waits
+for it without ever speaking it. The request carries the OpenAI
+compatible `reasoning_effort`, `none` by default: no thinking, the
+fastest answer, which suits a conversation, and llama.cpp takes it with
+any model. Other values depend on the model, its chat template or the
+documentation of its provider, and one it does not know fails every
+turn with an error that reaches the client.
+
 The stream is split into synthesis units, the sentence and nothing
 else. A terminator is confirmed by the character after it, which keeps
 decimals and abbreviations whole, and a line break ends a unit too. There

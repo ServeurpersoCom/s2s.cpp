@@ -1526,6 +1526,7 @@ int main(int argc, char ** argv) {
         body += "\"tts_chars_per_second\":" + std::to_string(guards.chars_per_second) + ",";
         body += "\"tts_margin_seconds\":" + std::to_string(guards.margin_seconds) + ",";
         body += "\"llm_timeout_sec\":" + std::to_string(llm_defaults.timeout_sec) + ",";
+        body += "\"reasoning_effort\":\"" + rt_escape(llm_defaults.sampling.reasoning_effort) + "\",";
         body += "\"tts_temperature\":" + std::to_string(tts.temperature) + ",";
         body += "\"tts_top_k\":" + std::to_string(tts.top_k) + ",";
         body += "\"tts_top_p\":" + std::to_string(tts.top_p) + ",";

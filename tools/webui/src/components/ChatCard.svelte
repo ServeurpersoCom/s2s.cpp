@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { ChevronDown, ChevronRight } from '@lucide/svelte';
-	import { settings } from '../lib/state.svelte.js';
+	import { app, settings } from '../lib/state.svelte.js';
 	import { voice } from '../lib/voice.svelte.js';
 
 	let body: HTMLDivElement | null = $state(null);
@@ -9,6 +9,18 @@
 	// column. The one place indentation is welcome: it is alignment, not code.
 	const ASSISTANT = '[Assistant]';
 	const USER = '[User]'.padStart(ASSISTANT.length);
+	const SYSTEM = '[System]'.padStart(ASSISTANT.length);
+
+	const LOOPBACK_HELP =
+		'Loopback: say something and the voice speaks back what it heard, word for word. No language model in the path, to tune the listening and the voice before switching to Conversation.';
+
+	// The first line of the log: the system prompt the model reads, or in
+	// loopback, where no model reads anything, what the mode is for.
+	let d = $derived(app.props?.defaults);
+	let mode = $derived(settings.mode || d?.mode || '');
+	let system = $derived(
+		mode === 'loopback' ? LOOPBACK_HELP : settings.systemPrompt || d?.instructions || ''
+	);
 
 	// follow the stream, the way a terminal does
 	$effect(() => {
@@ -31,6 +43,12 @@
 	</button>
 	{#if settings.chatOpen}
 		<div class="chat-body" bind:this={body}>
+			{#if system}
+				<div class="turn">
+					<span class="who system">{SYSTEM}</span>
+					{system}
+				</div>
+			{/if}
 			{#each voice.chat as turn, i (i)}
 				<div class="turn">
 					<span class="who {turn.role}">{turn.role === 'user' ? USER : ASSISTANT}</span>
@@ -90,6 +108,9 @@
 	}
 	.who.assistant {
 		color: var(--who-assistant);
+	}
+	.who.system {
+		color: var(--fg-dim);
 	}
 	/* written by the model and not spoken: ahead of the voice, or never said */
 	.ahead {

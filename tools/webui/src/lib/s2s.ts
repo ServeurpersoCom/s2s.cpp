@@ -97,8 +97,10 @@ export interface S2SSampling {
 	presencePenalty?: number;
 	frequencyPenalty?: number;
 	seed?: number;
-	// how long a reasoning model thinks before it answers, in the words the
-	// endpoint takes: none, minimal, low, medium, high
+	// how long a reasoning model thinks before it answers, the OpenAI
+	// compatible reasoning_effort: none, the server default, suits a
+	// conversation; other values depend on the model's chat template or the
+	// provider's documentation
 	reasoningEffort?: string;
 }
 
