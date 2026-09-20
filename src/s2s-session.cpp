@@ -265,9 +265,12 @@ static void s2s_session_open_turn(s2s_session * s) {
 
 // Hands the turn over and keeps its audio, which a resumption continues,
 // until the turn is final. A forced commit waited already and has no grace.
+// A resumption takes speech that starts after the commit: a commit made
+// mid word does not resume on the rest of that word.
 static void s2s_session_commit(s2s_session * s, float score, bool forced) {
     s->phase       = S2S_SESSION_IDLE;
     s->pending_run = 0;
+    s->speech_run  = 0;
     s->committed   = true;
     s->released    = false;
     s->grace_left  = forced ? 0 : s->grace_windows;
