@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <random>
 #include <string>
 
 // Bits per packed code in a .rvq file: the 2048 entry codebooks of the 12 Hz
@@ -403,8 +404,15 @@ bool tts_bridge_speak(tts_bridge *              b,
         if (request.sampling.subtalker_top_p >= 0.0f) {
             params.subtalker_top_p = request.sampling.subtalker_top_p;
         }
+        // The seed is drawn here rather than in the submodule, so the log
+        // names the one every sentence used and any take can be replayed.
+        // 53 bits: a JavaScript number holds it exactly, so the seed copied
+        // from the log into the page is the one that reaches the talker.
         if (request.sampling.seed >= 0) {
             params.seed = request.sampling.seed;
+        } else {
+            std::random_device rd;
+            params.seed = (int64_t) ((((uint64_t) rd() << 32) ^ (uint64_t) rd()) >> 11);
         }
 
         params.max_new_tokens = tts_bridge_budget(b, request, (size_t) n_chars);
@@ -415,7 +423,8 @@ bool tts_bridge_speak(tts_bridge *              b,
     params.on_chunk           = tts_bridge_chunk;
     params.on_chunk_user_data = &call;
 
-    s2s_log(S2S_LOG_INFO, "[TTS] Speaking %d characters, budget %d frames", n_chars, params.max_new_tokens);
+    s2s_log(S2S_LOG_INFO, "[TTS] Speaking %d characters, budget %d frames, seed %lld", n_chars, params.max_new_tokens,
+            (long long) params.seed);
 
     qt_audio        audio  = {};
     const qt_status status = qt_synthesize(b->ctx, &params, &audio);

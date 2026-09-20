@@ -546,7 +546,10 @@
 						bind:value={settings.ttsSubtalkerTopP}
 					/></label
 				>
-				<label>Seed <input type="text" bind:value={settings.ttsSeed} /></label>
+				<label
+					title="Empty draws a new seed for every sentence, shown in the log. Set one to replay a sentence exactly, to compare two settings on the same take."
+					>Seed <input type="text" bind:value={settings.ttsSeed} /></label
+				>
 			</div>
 		</div>
 	</details>

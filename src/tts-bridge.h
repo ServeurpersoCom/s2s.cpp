@@ -41,7 +41,7 @@ struct tts_sampling {
     int     subtalker_top_k       = -1;
     float   subtalker_top_p       = -1.0f;
     int     max_new_tokens        = -1;
-    int64_t seed                  = -1;  // negative draws a hardware seed
+    int64_t seed                  = -1;  // negative draws a hardware seed, logged with the sentence
 };
 
 // The two guards that bound a synthesis. They are settings and not buried
