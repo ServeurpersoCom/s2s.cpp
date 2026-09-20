@@ -6,8 +6,12 @@
 //
 // The voices are latent references read once from the voices directory: a
 // <name>.spk speaker embedding alone conditions the timbre, and a <name>.rvq
-// with its <name>.txt transcript next to it turns on ICL, where the talker
-// continues the reference recording on every unit.
+// with its <name>.txt transcript next to it is reference speech, which the
+// talker continues on every unit. A voice with all three files is offered
+// both ways, the reference speech first:
+//
+//   freeman.{spk,rvq,txt} reference speech
+//   freeman.spk speaker embedding only
 //
 // Two guards live here, both learned from a talker that ran to its frame cap
 // on a degenerate input: a text shorter than the floor is not spoken at all,
@@ -30,8 +34,8 @@
 // codec.
 #define TTS_RVQ_CODE_BITS 11
 
-// One reference voice. codes and text are empty for a voice that only carries
-// its speaker embedding.
+// One voice as its files hold it. codes and text are empty for a voice that
+// only carries its speaker embedding.
 struct TtsVoice {
     std::string          name;
     std::vector<float>   spk;
@@ -40,11 +44,19 @@ struct TtsVoice {
     std::string          text;
 };
 
+// One way to speak with a voice, under the label a session names it by.
+struct TtsVoiceEntry {
+    std::string label;
+    size_t      voice     = 0;
+    bool        reference = false;  // the reference speech on top of the embedding
+};
+
 struct tts_bridge {
     qt_context * ctx = nullptr;
 
-    std::vector<TtsVoice>    voices;
-    std::vector<std::string> voice_names;
+    std::vector<TtsVoice>      voices;
+    std::vector<TtsVoiceEntry> entries;
+    std::vector<std::string>   labels;
 
     // What a request falls back on, and what the caller publishes: the model
     // table, the submodule sampling and the guards of this build.
@@ -147,8 +159,9 @@ static bool tts_bridge_load_voice(const tts_bridge * b, const std::filesystem::p
     return true;
 }
 
-// Every <name>.spk of the directory, sorted by name so the default voice is
-// stable.
+// Every <name>.spk of the directory, sorted by name, each voice with its
+// entries: the default is the first voice, with its reference speech when it
+// has one.
 static bool tts_bridge_load_voices(tts_bridge * b, const std::string & dir) {
     std::vector<std::filesystem::path> paths;
     std::error_code                    error;
@@ -168,23 +181,29 @@ static bool tts_bridge_load_voices(tts_bridge * b, const std::string & dir) {
         if (!tts_bridge_load_voice(b, path, voice)) {
             return false;
         }
+        const size_t index = b->voices.size();
         if (voice.codes.empty()) {
-            s2s_log(S2S_LOG_INFO, "[TTS] Voice %s, speaker embedding of %zu values", voice.name.c_str(),
+            s2s_log(S2S_LOG_INFO, "[TTS] Voice %s.spk: speaker embedding of %zu values", voice.name.c_str(),
                     voice.spk.size());
         } else {
-            s2s_log(S2S_LOG_INFO, "[TTS] Voice %s, speaker embedding of %zu values, ICL on %d reference frames",
+            s2s_log(S2S_LOG_INFO,
+                    "[TTS] Voice %s.{spk,rvq,txt}: speaker embedding of %zu values, reference speech of %d frames",
                     voice.name.c_str(), voice.spk.size(), voice.n_frames);
+            b->entries.push_back({ voice.name + ".{spk,rvq,txt} reference speech", index, true });
         }
-        b->voice_names.push_back(voice.name);
+        b->entries.push_back({ voice.name + ".spk speaker embedding only", index, false });
         b->voices.push_back(std::move(voice));
+    }
+    for (const TtsVoiceEntry & entry : b->entries) {
+        b->labels.push_back(entry.label);
     }
     return true;
 }
 
-static const TtsVoice * tts_bridge_find_voice(const tts_bridge * b, const std::string & name) {
-    for (const TtsVoice & voice : b->voices) {
-        if (voice.name == name) {
-            return &voice;
+static const TtsVoiceEntry * tts_bridge_find_voice(const tts_bridge * b, const std::string & label) {
+    for (const TtsVoiceEntry & entry : b->entries) {
+        if (entry.label == label) {
+            return &entry;
         }
     }
     return nullptr;
@@ -235,7 +254,7 @@ tts_bridge * tts_bridge_load(const tts_bridge_params & params) {
         tts_bridge_free(b);
         return nullptr;
     }
-    b->defaults.voice = b->voice_names.front();
+    b->defaults.voice = b->labels.front();
 
     // The defaults belong to the submodule: read them once, publish them,
     // never copy them into this project.
@@ -273,7 +292,7 @@ int tts_bridge_sample_rate(const tts_bridge * b) {
 
 const std::vector<std::string> & tts_bridge_voices(const tts_bridge * b) {
     static const std::vector<std::string> empty;
-    return b ? b->voice_names : empty;
+    return b ? b->labels : empty;
 }
 
 const tts_sampling & tts_bridge_defaults(const tts_bridge * b) {
@@ -321,9 +340,9 @@ bool tts_bridge_speak(tts_bridge *              b,
         return false;
     }
 
-    const std::string & name  = request.voice.empty() ? b->defaults.voice : request.voice;
-    const TtsVoice *    voice = tts_bridge_find_voice(b, name);
-    if (!voice) {
+    const std::string &   name  = request.voice.empty() ? b->defaults.voice : request.voice;
+    const TtsVoiceEntry * entry = tts_bridge_find_voice(b, name);
+    if (!entry) {
         s2s_set_error("[TTS] Unknown voice %s", name.c_str());
         return false;
     }
@@ -339,13 +358,14 @@ bool tts_bridge_speak(tts_bridge *              b,
     {
         // No language id: the model reads the text in the language it is
         // written in, and the reference carries the accent.
-        params.text        = text.c_str();
-        params.ref_spk_emb = voice->spk.data();
-        params.ref_spk_dim = (int) voice->spk.size();
-        if (!voice->codes.empty()) {
-            params.ref_codes = voice->codes.data();
-            params.ref_T     = voice->n_frames;
-            params.ref_text  = voice->text.c_str();
+        params.text            = text.c_str();
+        const TtsVoice & voice = b->voices[entry->voice];
+        params.ref_spk_emb     = voice.spk.data();
+        params.ref_spk_dim     = (int) voice.spk.size();
+        if (entry->reference) {
+            params.ref_codes = voice.codes.data();
+            params.ref_T     = voice.n_frames;
+            params.ref_text  = voice.text.c_str();
         }
 
         if (request.sampling.temperature >= 0.0f) {

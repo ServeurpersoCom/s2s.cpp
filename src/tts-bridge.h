@@ -65,7 +65,7 @@ struct tts_engine {
 struct tts_bridge_params {
     std::string  talker_path;
     std::string  codec_path;
-    std::string  voices_dir;  // one voice per <name>.spk, with <name>.rvq and <name>.txt for ICL
+    std::string  voices_dir;  // one voice per <name>.spk, with <name>.rvq and <name>.txt as reference speech
     tts_sampling sampling;
     tts_guards   guards;
     tts_engine   engine;
@@ -75,7 +75,7 @@ struct tts_bridge_params {
 // handle is shared: two sessions speak with two voices at the same time, and
 // a setting posted by one must never reach the other.
 struct tts_request {
-    std::string  voice;  // name of the voice, empty keeps the default voice
+    std::string  voice;  // one of the labels tts_bridge_voices lists, empty keeps the default
     tts_sampling sampling;
     tts_guards   guards;
 };
@@ -89,8 +89,9 @@ void         tts_bridge_free(tts_bridge * b);
 
 int tts_bridge_sample_rate(const tts_bridge * b);
 
-// The voices loaded from the voices directory, by name, sorted. The
-// first one is the default voice.
+// Every way to speak with the loaded voices, one label each, voices sorted
+// by name: freeman.{spk,rvq,txt} reference speech, then freeman.spk speaker
+// embedding only. The first label is the default.
 const std::vector<std::string> & tts_bridge_voices(const tts_bridge * b);
 
 // The submodule defaults, so a caller can publish them instead of guessing.
