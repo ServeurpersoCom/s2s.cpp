@@ -57,6 +57,7 @@ struct tts_bridge {
     std::vector<TtsVoice>      voices;
     std::vector<TtsVoiceEntry> entries;
     std::vector<std::string>   labels;
+    std::vector<std::string>   languages;
 
     // What a request falls back on, and what the caller publishes: the model
     // table, the submodule sampling and the guards of this build.
@@ -254,7 +255,11 @@ tts_bridge * tts_bridge_load(const tts_bridge_params & params) {
         tts_bridge_free(b);
         return nullptr;
     }
-    b->defaults.voice = b->labels.front();
+    b->defaults.voice    = b->labels.front();
+    b->defaults.language = "auto";
+    for (int i = 0; i < qt_n_languages(ctx); i++) {
+        b->languages.emplace_back(qt_language_name(ctx, i));
+    }
 
     // The defaults belong to the submodule: read them once, publish them,
     // never copy them into this project.
@@ -270,8 +275,8 @@ tts_bridge * tts_bridge_load(const tts_bridge_params & params) {
     b->sampling_defaults.max_new_tokens        = reference.max_new_tokens;
     b->sampling_defaults.seed                  = reference.seed;
 
-    s2s_log(S2S_LOG_INFO, "[TTS] %s, %zu voices, default %s, %d Hz", qt_version(), b->voices.size(),
-            b->defaults.voice.c_str(), b->sample_rate);
+    s2s_log(S2S_LOG_INFO, "[TTS] %s, %zu voices, default %s, %zu languages, %d Hz", qt_version(), b->voices.size(),
+            b->defaults.voice.c_str(), b->languages.size(), b->sample_rate);
     s2s_log(S2S_LOG_INFO, "[TTS] Engine: batch %d, flash attention %s, clamp fp16 %s, codec chunk %.1f s",
             b->engine.max_batch, b->engine.use_fa ? "on" : "off", b->engine.clamp_fp16 ? "on" : "off",
             (double) b->engine.codec_chunk_sec);
@@ -288,6 +293,11 @@ void tts_bridge_free(tts_bridge * b) {
 
 int tts_bridge_sample_rate(const tts_bridge * b) {
     return b ? b->sample_rate : 0;
+}
+
+const std::vector<std::string> & tts_bridge_languages(const tts_bridge * b) {
+    static const std::vector<std::string> empty;
+    return b ? b->languages : empty;
 }
 
 const std::vector<std::string> & tts_bridge_voices(const tts_bridge * b) {
@@ -356,12 +366,16 @@ bool tts_bridge_speak(tts_bridge *              b,
     qt_tts_default_params(&params);
 
     {
-        // No language id: the model reads the text in the language it is
-        // written in, and the reference carries the accent.
-        params.text            = text.c_str();
-        const TtsVoice & voice = b->voices[entry->voice];
-        params.ref_spk_emb     = voice.spk.data();
-        params.ref_spk_dim     = (int) voice.spk.size();
+        // The language id comes first in the prompt, whatever the voice: auto
+        // leaves it out and the model reads the text as it is written. With
+        // the embedding only it sets the pronunciation; reference speech
+        // carries its own, which another language pulls against.
+        const std::string & language = request.language.empty() ? b->defaults.language : request.language;
+        params.text                  = text.c_str();
+        params.lang                  = language == "auto" ? nullptr : language.c_str();
+        const TtsVoice & voice       = b->voices[entry->voice];
+        params.ref_spk_emb           = voice.spk.data();
+        params.ref_spk_dim           = (int) voice.spk.size();
         if (entry->reference) {
             params.ref_codes = voice.codes.data();
             params.ref_T     = voice.n_frames;

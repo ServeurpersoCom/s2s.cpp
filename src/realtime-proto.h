@@ -83,6 +83,7 @@ struct rt_session_patch {
     int64_t     seed              = -1;
     std::string reasoning_effort;
     std::string tts_voice;
+    std::string tts_language;
     float       tts_temperature            = -1.0f;
     int         tts_top_k                  = -1;
     float       tts_top_p                  = -1.0f;
@@ -295,6 +296,7 @@ static rt_client_message rt_parse(const std::string & frame) {
         yyjson_val * tts = yyjson_obj_get(fields, "tts");
         if (tts) {
             message.patch.tts_voice     = rt_json_str(tts, "voice");
+            message.patch.tts_language  = rt_json_str(tts, "language");
             message.patch.tts_min_chars = rt_json_count(tts, "min_chars", message.patch.invalid);
             message.patch.tts_chars_per_second =
                 (float) rt_json_value(tts, "chars_per_second", -1.0, 1.0, 1000.0, message.patch.invalid);

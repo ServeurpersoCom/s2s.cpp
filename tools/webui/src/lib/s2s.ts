@@ -119,6 +119,10 @@ export interface S2STtsSampling {
 export interface S2STts {
 	// name of a voice the server loaded, one of tts_voices on /props
 	voice?: string;
+	// auto, the default, or one of tts_languages on /props: the language the
+	// talker speaks, which sets the pronunciation of the embedding only
+	// voices; reference speech carries its own
+	language?: string;
 	sampling?: S2STtsSampling;
 	// guards: a unit shorter than minChars is not spoken, and the frame budget
 	// of a synthesis is derived from the text length
@@ -560,6 +564,7 @@ export class S2S {
 				},
 				tts: {
 					voice: this.options.tts?.voice,
+					language: this.options.tts?.language,
 					min_chars: this.options.tts?.minChars,
 					chars_per_second: this.options.tts?.charsPerSecond,
 					margin_seconds: this.options.tts?.marginSeconds,

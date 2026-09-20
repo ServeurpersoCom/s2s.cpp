@@ -1115,6 +1115,9 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     if (!patch.tts_voice.empty()) {
         conn->client.tts.voice = patch.tts_voice;
     }
+    if (!patch.tts_language.empty()) {
+        conn->client.tts.language = patch.tts_language;
+    }
     if (patch.tts_min_chars >= 0) {
         conn->client.tts.guards.min_chars = patch.tts_min_chars;
     }
@@ -1517,12 +1520,20 @@ int main(int argc, char ** argv) {
         body += std::string("\"llm_fixed\":") + (g_llm_fixed ? "true" : "false") + ",";
         body += "\"instructions\":\"" + rt_escape(system_prompt) + "\",";
         body += "\"voice\":\"" + rt_escape(tts_bridge_defaults_request(g_models.tts).voice) + "\",";
+        body += "\"language\":\"" + rt_escape(tts_bridge_defaults_request(g_models.tts).language) + "\",";
         const tts_sampling & tts = tts_bridge_defaults(g_models.tts);
 
         body += "\"tts_voices\":[";
         const std::vector<std::string> & voices = tts_bridge_voices(g_models.tts);
         for (size_t i = 0; i < voices.size(); i++) {
             body += std::string(i ? "," : "") + "\"" + rt_escape(voices[i]) + "\"";
+        }
+        body += "],";
+
+        body += "\"tts_languages\":[";
+        const std::vector<std::string> & languages = tts_bridge_languages(g_models.tts);
+        for (size_t i = 0; i < languages.size(); i++) {
+            body += std::string(i ? "," : "") + "\"" + rt_escape(languages[i]) + "\"";
         }
         body += "],";
 
@@ -1723,10 +1734,11 @@ int main(int argc, char ** argv) {
                     }
                     // The log is streamed to every page on /logs: it says
                     // whether an endpoint is set, never which one.
-                    s2s_log(S2S_LOG_INFO, "[Realtime] Session update: mode %s, echo %s, endpoint %s, voice %s",
-                            conn.client.mode.c_str(), conn.echo.c_str(),
-                            conn.client.llm.base_url.empty() ? "none" : "set",
-                            conn.client.tts.voice.empty() ? "default" : conn.client.tts.voice.c_str());
+                    s2s_log(
+                        S2S_LOG_INFO, "[Realtime] Session update: mode %s, echo %s, endpoint %s, voice %s, language %s",
+                        conn.client.mode.c_str(), conn.echo.c_str(), conn.client.llm.base_url.empty() ? "none" : "set",
+                        conn.client.tts.voice.empty() ? "default" : conn.client.tts.voice.c_str(),
+                        conn.client.tts.language.empty() ? "default" : conn.client.tts.language.c_str());
                     conn_send(&conn, rt_event("session.updated"));
                     break;
 

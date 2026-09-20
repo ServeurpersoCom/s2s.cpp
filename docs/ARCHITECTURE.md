@@ -187,8 +187,13 @@ parameters.
 Every unit is a clone of one reference voice, read once at startup from
 `--voices`: a `<name>.spk` speaker embedding, and when the voice has them
 a `<name>.rvq` and `<name>.txt` pair, reference speech the talker
-continues. The prompt carries no language id, so the talker reads the
-text in its own language and the reference sets the accent. `/props`
+continues. The language id leads the prompt, whatever the voice, and
+`auto`, the default, leaves it out: the talker then reads the text in the
+language it is written in. With the embedding only, the language of the
+answers fixes the pronunciation; reference speech carries its own
+language and accent, which another id pulls against. `/props` lists the
+languages of the talker in `tts_languages`, and a session picks one with
+`tts.language`. `/props`
 lists in `tts_voices` every way to speak with the voices, a voice with
 reference speech twice, `freeman.{spk,rvq,txt} reference speech` then
 `freeman.spk speaker embedding only`; the first label is the default, and

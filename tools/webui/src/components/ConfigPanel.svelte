@@ -61,6 +61,10 @@
 		settings.voice = (e.target as HTMLSelectElement).value;
 	}
 
+	function onLanguage(e: Event) {
+		settings.language = (e.target as HTMLSelectElement).value;
+	}
+
 	// an endpoint that answers fills the selector, one that does not leaves the
 	// free text field. The failure itself lands in the server logs.
 	// the selector is either filled by the endpoint or empty: a model name is
@@ -107,6 +111,7 @@
 
 	function clearTts() {
 		settings.voice = '';
+		settings.language = '';
 		settings.ttsTemperature = '';
 		settings.ttsTopK = '';
 		settings.ttsTopP = '';
@@ -424,7 +429,10 @@
 			<X size={20} />
 		</button>
 		<div class="details-body">
-			<div class="model-row">
+			<div
+				class="model-row"
+				title="The voice every sentence is cloned from, read from voices/ at startup. reference speech continues a recording: timbre, pace and accent. speaker embedding only keeps the timbre, and starts faster."
+			>
 				<span class="model-label">Voice</span>
 				<select class="model-select" value={settings.voice || d?.voice || ''} onchange={onVoice}>
 					{#if settings.voice && !d?.tts_voices.includes(settings.voice)}
@@ -436,7 +444,59 @@
 				</select>
 			</div>
 
+			<div
+				class="model-row"
+				title="The language the talker speaks. With speaker embedding only, set it to the language of the answers: it fixes the pronunciation. With reference speech, the reference sets the language and accent: leave it on auto, or set the language of the reference."
+			>
+				<span class="model-label">Language</span>
+				<select
+					class="model-select"
+					value={settings.language || d?.language || 'auto'}
+					onchange={onLanguage}
+				>
+					<option value="auto">auto</option>
+					{#if settings.language && settings.language !== 'auto' && !d?.tts_languages.includes(settings.language)}
+						<option value={settings.language}>{settings.language}</option>
+					{/if}
+					{#each d?.tts_languages ?? [] as name (name)}
+						<option value={name}>{name}</option>
+					{/each}
+				</select>
+			</div>
+
 			<div class="meta-grid">
+				<label
+					title="A sentence shorter than this is not spoken at all: a talker given a lone character or two may never find its end of speech."
+					>Min chars <input
+						type="text"
+						placeholder={ph(d?.tts_min_chars)}
+						bind:value={settings.ttsMinChars}
+					/></label
+				>
+				<label
+					title="Speaking rate the time budget of a sentence assumes: its length divided by this, plus the margin. A talker still speaking at the end of its budget is stopped. Lower gives a slow voice more room."
+					>Chars per s <input
+						type="text"
+						placeholder={ph(d?.tts_chars_per_second)}
+						bind:value={settings.ttsCharsPerSecond}
+					/></label
+				>
+				<label
+					title="Seconds added to the budget of every sentence, for its pauses and a slow start. It only cuts a talker that runs on without ending."
+					>Margin s <input
+						type="text"
+						placeholder={ph(d?.tts_margin_seconds)}
+						bind:value={settings.ttsMarginSeconds}
+					/></label
+				>
+				<label
+					title="Hard cap on the budget of any sentence, in codec frames at 12.5 per second, whatever its length."
+					>Max frames <input
+						type="text"
+						placeholder={ph(d?.tts_max_new_tokens)}
+						bind:value={settings.ttsMaxNewTokens}
+					/></label
+				>
 				<label
 					>Temperature <input
 						type="text"
@@ -486,35 +546,7 @@
 						bind:value={settings.ttsSubtalkerTopP}
 					/></label
 				>
-				<label
-					>Max frames <input
-						type="text"
-						placeholder={ph(d?.tts_max_new_tokens)}
-						bind:value={settings.ttsMaxNewTokens}
-					/></label
-				>
 				<label>Seed <input type="text" bind:value={settings.ttsSeed} /></label>
-				<label
-					>Min chars <input
-						type="text"
-						placeholder={ph(d?.tts_min_chars)}
-						bind:value={settings.ttsMinChars}
-					/></label
-				>
-				<label
-					>Chars per s <input
-						type="text"
-						placeholder={ph(d?.tts_chars_per_second)}
-						bind:value={settings.ttsCharsPerSecond}
-					/></label
-				>
-				<label
-					>Margin s <input
-						type="text"
-						placeholder={ph(d?.tts_margin_seconds)}
-						bind:value={settings.ttsMarginSeconds}
-					/></label
-				>
 			</div>
 		</div>
 	</details>
