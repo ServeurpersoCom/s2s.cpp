@@ -32,7 +32,20 @@ export async function fetchModels(llmUrl: string, apiKey: string): Promise<strin
 }
 
 // POST /log: browser side events, so they land in the same stream as the
-// server stages. Fire and forget: a failed log must never break a session.
+// server stages. One request in flight at a time keeps the lines in order,
+// and the timeout keeps a stalled request from holding the ones behind it.
+// Fire and forget: a failed log must never break a session.
+let logTail: Promise<void> = Promise.resolve();
+
 export function postLog(line: string) {
-	fetch('log', { method: 'POST', body: line }).catch(() => {});
+	logTail = logTail.then(() =>
+		fetch('log', {
+			method: 'POST',
+			body: line,
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+		}).then(
+			() => {},
+			() => {}
+		)
+	);
 }
