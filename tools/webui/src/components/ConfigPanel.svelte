@@ -227,6 +227,7 @@
 		<div class="details-body">
 			<div class="meta-grid">
 				<label
+					title="Speech goes on while the voice probability stays at or above this value, from 0 to 1. Lower keeps a word whole through a dip or a faint consonant; higher cuts sooner on noise."
 					>Threshold min <input
 						type="text"
 						placeholder={ph(d?.vad_neg_threshold)}
@@ -234,6 +235,7 @@
 					/></label
 				>
 				<label
+					title="Speech starts when the voice probability reaches this value, from 0 to 1. Higher ignores more noise and echo; lower catches a softer voice."
 					>Threshold max <input
 						type="text"
 						placeholder={ph(d?.vad_threshold)}
@@ -241,6 +243,7 @@
 					/></label
 				>
 				<label
+					title="Speech needed to open a turn while the assistant is silent. Lower lets a short 'yes' through; higher keeps coughs and clicks out."
 					>Min speech ms <input
 						type="text"
 						placeholder={ph(d?.min_speech_ms)}
@@ -248,6 +251,7 @@
 					/></label
 				>
 				<label
+					title="Speech needed to cut the assistant while it talks. Longer than Min speech on purpose: interrupting costs more than a turn opened on a noise, and the echo canceller leaves a residue."
 					>Barge-in ms <input
 						type="text"
 						placeholder={ph(d?.barge_in_ms)}
@@ -255,6 +259,7 @@
 					/></label
 				>
 				<label
+					title="Silence that ends the speech and asks the end of turn detection whether the turn is over. Lower judges sooner; higher lets short pauses pass unjudged."
 					>Min silence ms <input
 						type="text"
 						placeholder={ph(d?.min_silence_ms)}
@@ -262,6 +267,7 @@
 					/></label
 				>
 				<label
+					title="Speech needed to go on after a pause, in the same turn. Short, since the speaker is already talking and the first syllable must not be lost."
 					>Continuation ms <input
 						type="text"
 						placeholder={ph(d?.min_speech_continuation_ms)}
@@ -269,6 +275,7 @@
 					/></label
 				>
 				<label
+					title="Audio kept before the speech starts and after it ends, so the recognizer gets the first consonant and the last one. The silence beyond it is left out."
 					>Speech pad ms <input
 						type="text"
 						placeholder={ph(d?.speech_pad_ms)}
@@ -293,6 +300,7 @@
 		<div class="details-body">
 			<div class="meta-grid">
 				<label
+					title="Smart Turn decides at each pause whether the sentence is finished, from 0 to 1. Above this value the turn is committed; below, it waits for more speech. Higher waits more readily; lower answers sooner, at the risk of cutting a thought."
 					>Threshold <input
 						type="text"
 						placeholder={ph(d?.turn_threshold)}
@@ -300,6 +308,7 @@
 					/></label
 				>
 				<label
+					title="Longest a pause judged unfinished can last before the turn is committed anyway, so a conversation never stalls. It is also the delay of a single word the model finds unfinished."
 					>Max wait ms <input
 						type="text"
 						placeholder={ph(d?.turn_max_wait_ms)}
@@ -307,6 +316,7 @@
 					/></label
 				>
 				<label
+					title="Least silence kept after a finished sentence before the answer may be heard. Going on within it, or before any answer is heard, continues the same turn, recognized again as one sentence."
 					>Reopen grace ms <input
 						type="text"
 						placeholder={ph(d?.reopen_grace_ms)}
@@ -374,6 +384,7 @@
 
 				<div class="meta-grid">
 					<label
+						title="Longest the endpoint may stay silent, in seconds, before the answer is dropped with an error. It bounds the wait between two pieces of the stream, not the whole answer: a long prompt to read or a slow first word count, a long answer does not."
 						>Timeout <input
 							type="text"
 							placeholder={ph(d?.llm_timeout_sec)}
