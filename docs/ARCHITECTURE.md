@@ -339,4 +339,6 @@ the transcripts of a turn come in a row. The time windows need the
 synthesis faster than real time, so the script runs on the GPU backends.
 
 The Parakeet sweep covers CUDA, Vulkan and CPU against F32, Q8_0 and
-Q4_K_M. The synthesis itself has its parity harnesses in qwentts.cpp.
+Q4_K_M, the LocalVQE sweep CUDA, Vulkan and CPU, one log per backend.
+Silero and Smart Turn only ever run on the CPU, so one log each covers
+them. The synthesis itself has its parity harnesses in qwentts.cpp.

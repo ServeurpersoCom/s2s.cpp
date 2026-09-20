@@ -2,4 +2,6 @@
 
 set -eo pipefail
 
-./test-localvqe.py 2>&1 | tee localvqe.log
+for backend in CUDA0 Vulkan0 CPU; do
+    env GGML_BACKEND=$backend ./test-localvqe.py 2>&1 | tee ${backend}-localvqe.log
+done
