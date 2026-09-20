@@ -237,6 +237,7 @@ static void s2s_session_emit(s2s_session * s, s2s_session_event event, float sco
         const size_t pad = (size_t) s->pad_windows * (size_t) s->window;
         report.pcm       = s->turn_pcm.data();
         report.n_samples = std::min(s->turn_pcm.size(), s->speech_end + pad);
+        report.n_held    = s->turn_pcm.size();
     }
     s->cb(&report, s->user);
 }

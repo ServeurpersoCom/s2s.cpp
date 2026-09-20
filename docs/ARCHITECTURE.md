@@ -161,7 +161,8 @@ is no length cap: cutting on a character count lands mid syntagm.
 Markdown markers and emoji (Extended_Pictographic and the emoji
 components of the Unicode emoji data, `src/emoji.h`) are dropped, and a
 unit left without a single letter or digit is not emitted: a talker given
-nothing to say never finds its end of speech.
+nothing to say never finds its end of speech. The log says so, with the
+length of the unit and never its text.
 
 The TTS bridge then skips a unit shorter than `tts_min_chars` characters,
 and bounds each synthesis to a frame budget derived from the text length,

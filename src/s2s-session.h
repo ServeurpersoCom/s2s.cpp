@@ -85,7 +85,8 @@ struct s2s_session_report {
     double            time_sec;    // position in the stream where the event fired
     float             turn_score;  // classifier output, only on a boundary
     const float *     pcm;         // committed turn audio, only on a commit
-    size_t            n_samples;
+    size_t            n_samples;   // up to speech_pad_ms after the last speech
+    size_t            n_held;      // what the turn holds, the silence it waited through included
 };
 
 typedef void (*s2s_session_cb)(const s2s_session_report * report, void * user);

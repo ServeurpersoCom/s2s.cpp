@@ -17,6 +17,7 @@
 // digit is not emitted at all.
 
 #include "emoji.h"
+#include "s2s-error.h"
 
 #include <cstdint>
 #include <string>
@@ -119,6 +120,19 @@ static std::string sentence_clean(const std::string & text) {
     return out;
 }
 
+// A unit the model wrote that the cleaning left without anything to say is
+// logged, its length only: the answer is the user's conversation, and the log
+// is streamed to every page. A bare line break is no loss and goes unsaid.
+static void sentence_dropped(const std::string & written) {
+    size_t n = 0;
+    for (char c : written) {
+        n += c != ' ' && c != '\n' && c != '\r' && c != '\t';
+    }
+    if (n > 0) {
+        s2s_log(S2S_LOG_INFO, "[Split] Dropped a unit of %zu bytes with nothing to say", n);
+    }
+}
+
 // Length of the leading sentence of pending, or 0 while none is complete.
 static size_t sentence_cut_point(const SentenceSplitter & s) {
     for (size_t i = 0; i < s.pending.size(); i++) {
@@ -165,6 +179,8 @@ static std::vector<SentenceUnit> sentence_split_push(SentenceSplitter * s, const
         unit.end  = s->consumed;
         if (!unit.text.empty()) {
             units.push_back(unit);
+        } else {
+            sentence_dropped(written);
         }
     }
     return units;
@@ -178,6 +194,9 @@ static SentenceUnit sentence_split_flush(SentenceSplitter * s) {
     SentenceUnit unit;
     unit.text = sentence_clean(s->pending);
     unit.end  = s->consumed;
+    if (unit.text.empty()) {
+        sentence_dropped(s->pending);
+    }
     s->pending.clear();
     return unit;
 }

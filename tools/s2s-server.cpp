@@ -642,7 +642,9 @@ static bool conn_wait_final(Connection * conn) {
         return conn->stop || conn->cancel.load() || conn->final_turn >= conn->answer_turn ||
                conn_outdated(conn, conn->answer_turn, conn->answer_revision);
     });
-    if (conn_outdated(conn, conn->answer_turn, conn->answer_revision)) {
+    if (!conn->cancel.load() && conn_outdated(conn, conn->answer_turn, conn->answer_revision)) {
+        s2s_log(S2S_LOG_INFO, "[Turn] Answer to turn %d rev %d voided by turn %d rev %d before its first unit",
+                conn->answer_turn, conn->answer_revision, conn->open_turn, conn->open_revision);
         conn->cancel.store(true);
     }
     return !conn->stop && !conn->cancel.load();
@@ -906,7 +908,11 @@ static void conn_opened(Connection * conn, int turn_id, int revision) {
         conn->open_turn     = turn_id;
         conn->open_revision = revision;
     }
-    if (conn->speaking.load() && conn_outdated(conn, conn->answer_turn, conn->answer_revision)) {
+    if (conn->speaking.load() && !conn->cancel.load() &&
+        conn_outdated(conn, conn->answer_turn, conn->answer_revision)) {
+        s2s_log(S2S_LOG_INFO,
+                "[Turn] Answer to turn %d rev %d voided by turn %d rev %d, its synthesis and endpoint request stop",
+                conn->answer_turn, conn->answer_revision, turn_id, revision);
         conn->cancel.store(true);
     }
     conn->turn_cv.notify_all();
@@ -970,10 +976,11 @@ static void conn_on_session_event(const s2s_session_report * report, void * user
 
         case S2S_EVENT_TURN_COMMITTED:
             {
-                s2s_log(S2S_LOG_INFO,
-                        "[Session] Turn committed at %.2fs (turn %d rev %d), %.2fs of audio, completion %.3f",
-                        report->time_sec, report->turn_id, report->revision,
-                        (double) report->n_samples / S2S_MODEL_RATE, (double) report->turn_score);
+                s2s_log(
+                    S2S_LOG_INFO,
+                    "[Session] Turn committed at %.2fs (turn %d rev %d), %.2fs of audio kept of %.2fs, completion %.3f",
+                    report->time_sec, report->turn_id, report->revision, (double) report->n_samples / S2S_MODEL_RATE,
+                    (double) report->n_held / S2S_MODEL_RATE, (double) report->turn_score);
 
                 TurnAudio turn;
                 turn.pcm.assign(report->pcm, report->pcm + report->n_samples);
