@@ -11,7 +11,7 @@
 //
 // The model is stateless: every call re-reads the audio it is given, so
 // one st_context serves any number of streams. Concurrent calls are
-// serialized internally.
+// serialized onto one internal worker thread, which runs every forward pass.
 //
 //   st_context * turn = st_init("models/smart-turn-v3.2-F32.gguf", 0);
 //   float        p    = st_predict(turn, pcm, n_samples);

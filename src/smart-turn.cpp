@@ -16,6 +16,10 @@
 // split sits where the Whisper normalization needs a global maximum over
 // the spectrogram, which GGML cannot reduce in graph: the mel graph runs,
 // the host normalizes, the encoder graph runs.
+//
+// One worker thread runs every forward pass. A caller hands it the audio and
+// waits, so the CPU backend always computes from the same thread and a
+// single OpenMP team of encoder threads serves the whole process.
 
 #include "smart-turn.h"
 
@@ -30,8 +34,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <mutex>
+#include <string>
+#include <thread>
 #include <vector>
 
 #define ST_NORM_EPS 1e-5f
@@ -117,7 +124,19 @@ struct st_context {
     std::vector<float> log_mel;  // [(n_frames + 1) * n_mels]
     std::vector<float> mel;      // [n_frames * n_mels]
 
-    std::mutex mutex;
+    // call_mutex holds one caller for its whole request, which serializes
+    // the streams. The job fields change hands under job_mutex.
+    std::thread             worker;
+    std::mutex              call_mutex;
+    std::mutex              job_mutex;
+    std::condition_variable job_cv;
+    const float *           job_pcm     = nullptr;
+    int                     job_samples = 0;
+    bool                    job_ready   = false;
+    bool                    job_done    = false;
+    bool                    stop        = false;
+    float                   job_prob    = 0.0f;
+    std::string             job_error;
 };
 
 static st_log_cb g_st_log_cb = nullptr;
@@ -272,6 +291,66 @@ static bool st_load_mel_constants(st_context * ctx) {
     return true;
 }
 
+// The forward pass, on the worker thread only.
+static float st_compute(st_context * ctx, const float * pcm, int n_samples) {
+    const int half = ctx->mel_cfg.n_fft / 2;
+    const int kept = std::min(n_samples, ctx->window);
+    const int skip = n_samples - kept;
+
+    // Center padding for the STFT, zero padding on the right for a turn
+    // shorter than the window: both match the upstream feature extractor.
+    std::fill(ctx->audio.begin(), ctx->audio.end(), 0.0f);
+    memcpy(ctx->audio.data() + half, pcm + skip, (size_t) kept * sizeof(float));
+    for (int i = 0; i < half; i++) {
+        ctx->audio[(size_t) half - 1 - (size_t) i] = ctx->audio[(size_t) half + 1 + (size_t) i];
+        ctx->audio[(size_t) ctx->window + (size_t) half + (size_t) i] =
+            ctx->audio[(size_t) ctx->window + (size_t) half - 2 - (size_t) i];
+    }
+
+    ggml_backend_tensor_set(ctx->mel_in, ctx->audio.data(), 0, ctx->audio.size() * sizeof(float));
+    if (ggml_backend_graph_compute(ctx->backend, ctx->mel_graph) != GGML_STATUS_SUCCESS) {
+        s2s_set_error("[SmartTurn] Mel graph compute failed");
+        return -1.0f;
+    }
+    ggml_backend_tensor_get(ctx->mel_out, ctx->log_mel.data(), 0, ctx->log_mel.size() * sizeof(float));
+
+    audio_mel_normalize(ctx->log_mel, ctx->mel_cfg.n_mels, (size_t) ctx->n_frames + 1, ctx->mel);
+
+    ggml_backend_tensor_set(ctx->enc_in, ctx->mel.data(), 0, ctx->mel.size() * sizeof(float));
+    if (ggml_backend_graph_compute(ctx->backend, ctx->enc_graph) != GGML_STATUS_SUCCESS) {
+        s2s_set_error("[SmartTurn] Encoder graph compute failed");
+        return -1.0f;
+    }
+
+    float prob = 0.0f;
+    ggml_backend_tensor_get(ctx->enc_out, &prob, 0, sizeof(float));
+    return prob;
+}
+
+// Runs one job at a time until st_free raises stop. The diagnostic of a
+// failed pass is recorded on this thread, so it travels back with the result.
+static void st_worker(st_context * ctx) {
+    s2s_log_thread("SmartTurn");
+
+    std::unique_lock<std::mutex> lock(ctx->job_mutex);
+    for (;;) {
+        ctx->job_cv.wait(lock, [ctx] { return ctx->job_ready || ctx->stop; });
+        if (ctx->stop) {
+            return;
+        }
+        ctx->job_ready = false;
+        lock.unlock();
+
+        const float prob = st_compute(ctx, ctx->job_pcm, ctx->job_samples);
+
+        lock.lock();
+        ctx->job_prob  = prob;
+        ctx->job_error = prob < 0.0f ? s2s_last_error() : "";
+        ctx->job_done  = true;
+        ctx->job_cv.notify_all();
+    }
+}
+
 st_context * st_init(const char * gguf_path, int n_threads) {
     if (!gguf_path) {
         s2s_set_error("[SmartTurn] Gguf_path is NULL");
@@ -390,6 +469,8 @@ st_context * st_init(const char * gguf_path, int n_threads) {
         ctx->audio.assign((size_t) ctx->window + (size_t) ctx->mel_cfg.n_fft, 0.0f);
         ctx->log_mel.assign((size_t) (ctx->n_frames + 1) * (size_t) ctx->mel_cfg.n_mels, 0.0f);
 
+        ctx->worker = std::thread(st_worker, ctx);
+
         s2s_log(S2S_LOG_INFO, "[SmartTurn] %d Hz, %.1fs window, %d frames, %d layers, %d heads, d_model %d",
                 ctx->sample_rate, (double) ctx->window / ctx->sample_rate, ctx->n_frames, ctx->n_layers, ctx->n_heads,
                 ctx->d_model);
@@ -404,6 +485,14 @@ st_context * st_init(const char * gguf_path, int n_threads) {
 void st_free(st_context * ctx) {
     if (!ctx) {
         return;
+    }
+    if (ctx->worker.joinable()) {
+        {
+            std::lock_guard<std::mutex> lock(ctx->job_mutex);
+            ctx->stop = true;
+        }
+        ctx->job_cv.notify_all();
+        ctx->worker.join();
     }
     if (ctx->mel_alloc) {
         ggml_gallocr_free(ctx->mel_alloc);
@@ -439,40 +528,20 @@ float st_predict(st_context * ctx, const float * pcm, int n_samples) {
         return -1.0f;
     }
 
-    std::lock_guard<std::mutex> lock(ctx->mutex);
+    std::lock_guard<std::mutex>  call(ctx->call_mutex);
+    std::unique_lock<std::mutex> lock(ctx->job_mutex);
 
-    const int half = ctx->mel_cfg.n_fft / 2;
-    const int kept = std::min(n_samples, ctx->window);
-    const int skip = n_samples - kept;
+    ctx->job_pcm     = pcm;
+    ctx->job_samples = n_samples;
+    ctx->job_done    = false;
+    ctx->job_ready   = true;
+    ctx->job_cv.notify_all();
+    ctx->job_cv.wait(lock, [ctx] { return ctx->job_done; });
 
-    // Center padding for the STFT, zero padding on the right for a turn
-    // shorter than the window: both match the upstream feature extractor.
-    std::fill(ctx->audio.begin(), ctx->audio.end(), 0.0f);
-    memcpy(ctx->audio.data() + half, pcm + skip, (size_t) kept * sizeof(float));
-    for (int i = 0; i < half; i++) {
-        ctx->audio[(size_t) half - 1 - (size_t) i] = ctx->audio[(size_t) half + 1 + (size_t) i];
-        ctx->audio[(size_t) ctx->window + (size_t) half + (size_t) i] =
-            ctx->audio[(size_t) ctx->window + (size_t) half - 2 - (size_t) i];
+    if (ctx->job_prob < 0.0f) {
+        s2s_set_error("%s", ctx->job_error.c_str());
     }
-
-    ggml_backend_tensor_set(ctx->mel_in, ctx->audio.data(), 0, ctx->audio.size() * sizeof(float));
-    if (ggml_backend_graph_compute(ctx->backend, ctx->mel_graph) != GGML_STATUS_SUCCESS) {
-        s2s_set_error("[SmartTurn] Mel graph compute failed");
-        return -1.0f;
-    }
-    ggml_backend_tensor_get(ctx->mel_out, ctx->log_mel.data(), 0, ctx->log_mel.size() * sizeof(float));
-
-    audio_mel_normalize(ctx->log_mel, ctx->mel_cfg.n_mels, (size_t) ctx->n_frames + 1, ctx->mel);
-
-    ggml_backend_tensor_set(ctx->enc_in, ctx->mel.data(), 0, ctx->mel.size() * sizeof(float));
-    if (ggml_backend_graph_compute(ctx->backend, ctx->enc_graph) != GGML_STATUS_SUCCESS) {
-        s2s_set_error("[SmartTurn] Encoder graph compute failed");
-        return -1.0f;
-    }
-
-    float prob = 0.0f;
-    ggml_backend_tensor_get(ctx->enc_out, &prob, 0, sizeof(float));
-    return prob;
+    return ctx->job_prob;
 }
 
 const char * st_last_error(void) {

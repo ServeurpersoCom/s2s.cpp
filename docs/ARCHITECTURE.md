@@ -38,6 +38,7 @@ loaded are logged at startup and published on `/props`.
 | writer, one per connection | `Writer-N` | every outgoing frame, in order: a slow client stalls its own writer, never the TTS worker |
 | TTS worker, inside qwentts.cpp | `TTS` | the Qwen3-TTS backend and its queue, up to `--max-batch` syntheses per step |
 | echo canceller worker | `AEC` | every hop waiting from every connection, in one pass |
+| end of turn worker | `SmartTurn` | every end of turn classification, from every connection, one at a time |
 | log reader, one per process | | stderr capture, the ring behind `/logs` |
 
 A log line opens with its thread, then its component: `[Reader-4-Session]`
@@ -54,8 +55,10 @@ the session settings and the conversation when it answers a turn: a
 turn that a later one superseded during its recognition gets no answer, and
 a closed connection drops the turns still queued.
 
-Every model keeps one context for the whole process. Silero, Smart Turn
-and Parakeet serialize their compute behind a mutex; LocalVQE and the TTS
+Every model keeps one context for the whole process. Silero and Parakeet
+serialize their compute behind a mutex, Smart Turn on its own worker
+thread, which keeps a single OpenMP team of encoder threads whatever
+connection asks; LocalVQE and the TTS
 batch the connections together, each through its worker.
 
 ## Turn state machine
