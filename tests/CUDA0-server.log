@@ -1,0 +1,55 @@
+[Check] grace 0.2 terminals: 5 responses, each closed exactly once OK
+[Check] grace 0.2 items: 5 transcripts of 1 turns, revisions in a row OK
+[Check] grace 0.2 one turn: 5 transcripts, turns ['turn_1'] OK
+[Check] grace 0.2 one message: last request: 1 user messages, last "If you go into different cultures, they have different concepts of creation. They have their own creation story and uh of what an afterlife is." OK
+[Check] grace 0.2 aborted: the request of A aborted OK
+[Check] grace 0.2 silent: first audio 4.42s after B ended OK
+[Check] grace 0.4 terminals: 4 responses, each closed exactly once OK
+[Check] grace 0.4 items: 4 transcripts of 1 turns, revisions in a row OK
+[Check] grace 0.4 one turn: 4 transcripts, turns ['turn_1'] OK
+[Check] grace 0.4 one message: last request: 1 user messages, last "If you go into different cultures, they have different concepts of creation. They have their own creation story and uh of what an afterlife is." OK
+[Check] grace 0.4 aborted: the request of A aborted OK
+[Check] grace 0.4 silent: first audio 4.40s after B ended OK
+[Check] before answer 1.0 terminals: 4 responses, each closed exactly once OK
+[Check] before answer 1.0 items: 4 transcripts of 1 turns, revisions in a row OK
+[Check] before answer 1.0 one turn: 4 transcripts, turns ['turn_1'] OK
+[Check] before answer 1.0 one message: last request: 1 user messages, last "If you go into different cultures, they have different concepts of creation. They have their own creation story and uh of what an afterlife is." OK
+[Check] before answer 1.0 aborted: the request of A aborted OK
+[Check] before answer 1.0 silent: first audio 4.40s after B ended OK
+[Check] before answer 2.5 terminals: 3 responses, each closed exactly once OK
+[Check] before answer 2.5 items: 3 transcripts of 1 turns, revisions in a row OK
+[Check] before answer 2.5 one turn: 3 transcripts, turns ['turn_1'] OK
+[Check] before answer 2.5 one message: last request: 1 user messages, last "If you go into different cultures, they have different concepts of creation. They have their own creation story and uh of what an afterlife is." OK
+[Check] before answer 2.5 aborted: the request of A aborted OK
+[Check] before answer 2.5 silent: first audio 6.42s after B ended OK
+[Check] heard 1000 terminals: 4 responses, each closed exactly once OK
+[Check] heard 1000 items: 4 transcripts of 2 turns, revisions in a row OK
+[Check] heard 1000 new turn: turns ['turn_1', 'turn_2'] OK
+[Check] heard 1000 response: response cancelled 0.44s after the talk over OK
+[Check] heard 1000 request: the endpoint request aborted OK
+[Check] heard 1000 transcript: the talk over heard: They have their own creation story. OK
+[Check] heard 2000 terminals: 4 responses, each closed exactly once OK
+[Check] heard 2000 items: 4 transcripts of 2 turns, revisions in a row OK
+[Check] heard 2000 new turn: turns ['turn_1', 'turn_2'] OK
+[Check] heard 2000 response: response cancelled 0.44s after the talk over OK
+[Check] heard 2000 request: the endpoint request aborted OK
+[Check] heard 2000 transcript: the talk over heard: They have their own creation story. OK
+[Check] push to talk terminals: 1 responses, each closed exactly once OK
+[Check] push to talk items: 1 transcripts of 1 turns, revisions in a row OK
+[Check] push to talk answer: first audio 0.34s after the commit, no grace OK
+[Check] broken endpoint terminals: 2 responses, each closed exactly once OK
+[Check] broken endpoint items: 2 transcripts of 1 turns, revisions in a row OK
+[Check] broken endpoint error: 2 answers told: [LLM] HTTP 500, model not loaded OK
+[Check] room terminals: 3 responses, each closed exactly once OK
+[Check] room items: 3 transcripts of 2 turns, revisions in a row OK
+[Check] room new turn: turns ['turn_1', 'turn_2'] OK
+[Check] room playback: playback flushed 0.92s after the talk over OK
+[Check] room transcript: the talk over heard: Um where you go, what you do, who you're gonna be with, you know. OK
+[Check] room echo: no word of the assistant in what was heard OK
+[Check] owned terminals: 2 responses, each closed exactly once OK
+[Check] owned items: 2 transcripts of 1 turns, revisions in a row OK
+[Check] owned props: the endpoint is the server's, its URL, model and key unpublished OK
+[Check] owned models: model list closed with 403 OK
+[Check] owned log: the endpoint URL, model and key never logged OK
+[Check] owned endpoint: another endpoint refused: [Realtime] The endpoint is set by the server OK
+[Check] grace log: 9 answers to a complete commit held for the grace OK

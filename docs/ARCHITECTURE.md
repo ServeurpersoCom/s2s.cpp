@@ -305,22 +305,25 @@ lines. The parity harnesses hold every model to its reference:
 `test-server` holds the behavior of the whole server. A scripted client
 plays passages of the example file, silences, commits and a microphone
 cut in real time, as a browser on a loudspeaker, and runs a mock endpoint
-in process whose latency the scenario sets. The checks judge its timeline
-in windows relative to its own events:
+in process whose latency the case sets. Every case is one connection, all
+of them in parallel against a server that batches them, and the checks
+judge each timeline in windows relative to its own events. The core is
+one pattern, a sentence, a pause, a second sentence, with the pause in
+one of three brackets:
 
-| Scenario | Checks |
+| Case | Checks |
 | --- | --- |
-| loopback | the answer is the transcript, first audio once the grace ran out |
-| grace | a monologue resumed during the grace, recognized whole, silent until it ends |
-| before answer | speech after the grace but before a slow endpoint answered stays in the turn, one message reaches the model |
-| barge-in | a talk over an answer in flight: new turn, playback, response and endpoint request stopped |
+| grace | the pause ends before the grace ran out: one turn, one message to the model, silent until the end |
+| before answer | the pause ends after the grace but before a slow endpoint answered: the same |
+| answer heard | the second sentence talks over the answer: a new turn, response and endpoint request stopped |
 | push to talk | a commit mid sentence and a microphone cut still get an answer, with no grace |
-| room | the echo canceller keeps the assistant out of what is heard through a room |
-| no endpoint, broken endpoint, midstream | the error reaches the client, the response still closes |
+| broken endpoint | the error reaches the client, the response still closes |
+| room | the echo canceller keeps the assistant out of what is heard, the playback flushed |
 | owned endpoint | nothing of the endpoint published or logged, another endpoint refused |
 
-Every scenario also checks that each response closes exactly once and that
-the transcripts of a turn come in a row.
+Every case also checks that each response closes exactly once and that
+the transcripts of a turn come in a row. The time windows need the
+synthesis faster than real time, so the script runs on the GPU backends.
 
 The Parakeet sweep covers CUDA, Vulkan and CPU against F32, Q8_0 and
 Q4_K_M. The synthesis itself has its parity harnesses in qwentts.cpp.
