@@ -82,8 +82,6 @@
 		color: var(--fg-dim);
 		background: var(--bg-card);
 		white-space: pre;
-		/* half the original height, the conversation card takes the other half */
-		max-height: 24rem;
-		overflow: auto;
+		overflow-x: auto;
 	}
 </style>

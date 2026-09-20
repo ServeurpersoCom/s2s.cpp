@@ -2,7 +2,7 @@
 
 export const FETCH_TIMEOUT_MS = 2000;
 export const SSE_RECONNECT_MS = 2000;
-export const LOG_MAX_LINES = 50;
+export const LOG_MAX_LINES = 25;
 export const NEWLINE = '\n';
 
 // Pipeline modes. Loopback skips the language model and speaks the recognized

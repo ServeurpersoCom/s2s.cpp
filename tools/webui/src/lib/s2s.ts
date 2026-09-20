@@ -491,11 +491,11 @@ export class S2S {
 			);
 	}
 
-	// What the browser really runs on the microphone, which is not always
-	// what was asked.
+	// What really runs on the microphone: the server canceller, and what the
+	// browser applies, which is not always what was asked.
 	private micApplied(): string {
 		const settings = this.stream?.getAudioTracks()[0]?.getSettings();
-		return `echo ${this.echo()}, browser echo cancellation ${settings?.echoCancellation}, noise suppression ${settings?.noiseSuppression}, gain control ${settings?.autoGainControl}`;
+		return `server echo cancellation ${this.echo() === 'server'}, browser echo cancellation ${settings?.echoCancellation}, noise suppression ${settings?.noiseSuppression}, gain control ${settings?.autoGainControl}`;
 	}
 
 	private setState(state: S2SState) {
