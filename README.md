@@ -26,7 +26,8 @@ completions endpoint. Runs on CUDA, Vulkan, SYCL, Metal and CPU.
   pause is not mistaken for a finished sentence; the answer is computed
   at once but stays silent for a short grace, so a breath inside a
   sentence never lets the assistant cut in, and a speaker who goes on
-  resumes the same turn, recognized again as one utterance
+  before hearing anything of the answer resumes the same turn,
+  recognized again as one utterance
 - Parakeet TDT 0.6B v3 recognition, 25 European languages with
   punctuation and casing, non autoregressive duration prediction
 - Qwen3-TTS 1.7B Base synthesis through the qwentts.cpp C ABI, in

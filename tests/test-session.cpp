@@ -39,11 +39,15 @@ static void print_usage(const char * prog) {
             prog);
 }
 
+// The harness answers at once: a committed turn is released with the chunk
+// that committed it, and turns final at the end of its grace.
 struct SessionTap {
-    pk_context * asr     = nullptr;
-    FILE *       out     = nullptr;
-    int          n_turns = 0;
-    double       asr_ms  = 0.0;
+    pk_context * asr      = nullptr;
+    FILE *       out      = nullptr;
+    int          n_turns  = 0;
+    double       asr_ms   = 0.0;
+    int          turn_id  = 0;
+    int          revision = 0;
 };
 
 static const char * event_name(s2s_session_event event) {
@@ -78,6 +82,9 @@ static void emit(const s2s_session_report * report, void * user) {
     }
 
     if (report->event == S2S_EVENT_TURN_COMMITTED) {
+        tap->turn_id  = report->turn_id;
+        tap->revision = report->revision;
+
         Timer                t_asr;
         pk_transcribe_params params = pk_transcribe_default_params();
         char *               text   = nullptr;
@@ -218,10 +225,12 @@ int main(int argc, char ** argv) {
     for (int off = 0; off < n_frames; off += chunk) {
         const int n = std::min(chunk, n_frames - off);
         s2s_session_push(session, mono.data() + off, (size_t) n);
+        s2s_session_release(session, tap.turn_id, tap.revision);
     }
     // The stream ends mid turn on a file, so the last turn is committed the
     // way a push to talk release or a disconnect would.
     s2s_session_commit_now(session);
+    s2s_session_release(session, tap.turn_id, tap.revision);
     const double stream_ms = t_stream.ms();
 
     const double audio_sec = (double) n_frames / sv_sample_rate(vad);

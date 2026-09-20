@@ -388,6 +388,11 @@ struct Connection {
     // Reader-N, Responder-N and Writer-N, so one grep follows one client.
     int id = 0;
 
+    // The turn state machine. The reader feeds it and the responder releases
+    // its turns, each call under session_mutex. Its events run under that
+    // lock and take the turn, queue and output locks after it; a session
+    // update takes it under client_mutex. Never the reverse.
+    std::mutex         session_mutex;
     s2s_session *      session = nullptr;
     s2s_session_params params;
 
@@ -440,7 +445,7 @@ struct Connection {
     bool answer_released = false;
 
     // Whether the assistant holds the floor: set by the responder, handed to
-    // the session by the reader, the only thread that touches the session.
+    // the session by the reader with every push.
     std::atomic<bool> speaking{ false };
 
     // The protocol carries 24 kHz, the models want 16 kHz: the microphone and
@@ -621,6 +626,14 @@ static bool conn_revised(Connection * conn, int turn_id, int revision) {
     return conn->open_turn == turn_id && conn->open_revision > revision;
 }
 
+// Tells the session that the answer to this turn and revision is ready to be
+// heard, or over: a turn stays resumable until the user can hear something.
+// Called with no other lock held, like every session call.
+static void conn_release(Connection * conn, int turn_id, int revision) {
+    std::lock_guard<std::mutex> lock(conn->session_mutex);
+    s2s_session_release(conn->session, turn_id, revision);
+}
+
 // Holds the first unit of the answer until its turn is final. Returns false
 // when the floor went back meanwhile, or when something opened after it.
 static bool conn_wait_final(Connection * conn) {
@@ -641,6 +654,7 @@ static bool conn_wait_final(Connection * conn) {
 // false when the floor was taken back.
 static bool conn_speak(Connection * conn, const SentenceUnit & unit, const tts_request & tts) {
     if (!conn->answer_released) {
+        conn_release(conn, conn->answer_turn, conn->answer_revision);
         if (!conn_wait_final(conn)) {
             return false;
         }
@@ -701,6 +715,16 @@ static void llm_push(std::vector<llm_message> & messages, const llm_message & me
 // Turn audio in, answer spoken out.
 static void conn_respond(Connection * conn, const TurnAudio & turn) {
     const std::vector<float> & pcm = turn.pcm;
+
+    // Whatever way the turn ends here, the responder is done with it: a turn
+    // with nothing to answer is released like one whose answer is ready.
+    struct TurnRelease {
+        Connection * conn;
+        int          turn_id;
+        int          revision;
+
+        ~TurnRelease() { conn_release(conn, turn_id, revision); }
+    } release = { conn, turn.turn_id, turn.revision };
 
     // A later revision of the same turn carries this audio and more: only the
     // last one is worth recognizing.
@@ -1152,6 +1176,7 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     // Only a change of the listening thresholds reaches the session, which
     // keeps the turn it is in the middle of hearing.
     if (memcmp(&listening, &conn->params, sizeof(listening)) != 0) {
+        std::lock_guard<std::mutex> session_lock(conn->session_mutex);
         s2s_session_set_params(conn->session, conn->params);
     }
 }
@@ -1705,13 +1730,19 @@ int main(int argc, char ** argv) {
                         audio_resample_stream_push(&conn.ref_resample, played_pcm.data(), played_pcm.size(), reference);
                         conn_cancel_echo(&conn, resampled, reference, played);
                     }
-                    s2s_session_set_speaking(conn.session, conn.speaking.load());
-                    s2s_session_push(conn.session, resampled.data(), resampled.size());
+                    {
+                        std::lock_guard<std::mutex> lock(conn.session_mutex);
+                        s2s_session_set_speaking(conn.session, conn.speaking.load());
+                        s2s_session_push(conn.session, resampled.data(), resampled.size());
+                    }
                     break;
 
                 case RT_CLIENT_AUDIO_COMMIT:
                     s2s_log(S2S_LOG_INFO, "[Realtime] Audio buffer commit");
-                    s2s_session_commit_now(conn.session);
+                    {
+                        std::lock_guard<std::mutex> lock(conn.session_mutex);
+                        s2s_session_commit_now(conn.session);
+                    }
                     break;
 
                 case RT_CLIENT_RESPONSE_CANCEL:

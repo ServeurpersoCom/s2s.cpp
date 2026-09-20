@@ -69,23 +69,31 @@ USER_SPEAKING --silence >= min_silence_ms-->             PENDING_END
 PENDING_END   --turn complete-->                         committed, IDLE
 PENDING_END   --incomplete, then turn_max_wait_ms-->     committed, IDLE
 PENDING_END   --speech >= min_speech_continuation_ms-->  USER_SPEAKING
-grace         --speech >= min_speech_continuation_ms-->  USER_SPEAKING, same turn
+committed     --speech >= min_speech_continuation_ms-->  USER_SPEAKING, same turn
+committed     --grace over and released-->               final
 ```
 
 The session is told when the assistant holds the floor. Speech of
 `min_speech_ms` during that time raises a barge-in.
 
-A commit the classifier judged complete keeps its answer silent for
-`reopen_grace_ms`, counted on the audio: recognition and the endpoint
-request start at once, but the first unit waits until the session
-reports the turn final. A breath inside a sentence never lets the
-assistant cut in: the turn stays open during the grace, its audio still
-accumulating, and a speaker who goes on resumes it. The answer to the
-previous revision is dropped before anyone hears it, and the next commit
-hands the whole utterance to the recognizer again, under the same turn and
-a new revision. A revision that a later one overtook before its
-recognition is not recognized at all. A commit forced by
-`turn_max_wait_ms` has waited already and is final at once.
+Recognition and the endpoint request start at the commit, but the first
+unit waits until the session reports the turn final, which takes two
+things. The grace: a commit the classifier judged complete keeps its
+answer silent for `reopen_grace_ms`, counted on the audio, so a breath
+inside a sentence never lets the assistant cut in; a commit forced by
+`turn_max_wait_ms` has waited already and has none. The release: the
+responder tells the session, under the session lock it shares with the
+reader, when its first unit reaches the gate or when the turn ends with
+nothing to say. A client that stops streaming after its commit still
+hears its answer.
+
+Until the turn is final it stays open, its audio still accumulating, and a
+speaker who goes on resumes it: a user who has heard nothing of the answer
+is still in the same turn, however long the endpoint takes. The answer to
+the previous revision is dropped before anyone hears it, and the next
+commit hands the whole utterance to the recognizer again, under the same
+turn and a new revision. A revision that a later one overtook before its
+recognition is not recognized at all.
 
 A patch applies its thresholds to the running session: the turn in
 flight, the model states and the turn numbering are kept.
@@ -102,7 +110,7 @@ Defaults, published on `/props` and patchable per session:
 | `speech_pad_ms` | 500 | audio kept before the speech onset |
 | `turn_threshold` | 0.5 | Smart Turn completion probability |
 | `turn_max_wait_ms` | 2000 | commit an incomplete turn anyway |
-| `reopen_grace_ms` | 800 | silence kept on the answer to a complete commit |
+| `reopen_grace_ms` | 800 | least silence kept on the answer to a complete commit |
 
 Smart Turn reads a sliding window of the last 8 seconds of the stream,
 fed on every VAD window and independent of the turn, so a short turn is

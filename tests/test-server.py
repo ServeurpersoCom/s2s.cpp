@@ -213,7 +213,8 @@ def spoken_back(out):
 
 
 # From the server log: a turn committed as complete turns final no sooner
-# than the grace, a forced commit turns final at once.
+# than the grace, a forced commit has no grace and turns final as soon as the
+# responder releases it, its answer ready.
 def check_grace(path):
     commits, graced, forced, ok = {}, 0, 0, True
     for line in open(path, errors="replace"):
@@ -228,11 +229,11 @@ def check_grace(path):
             gap = float(m.group(1)) - at
             if score == 0.0:
                 forced += 1
-                ok = ok and gap == 0.0
+                ok = ok and gap < GRACE_S
             else:
                 graced += 1
                 ok = ok and gap >= GRACE_S - 0.001
-    return check("grace", ok and graced > 0, "%d answers held for the grace, %d forced commits final at once" % (graced, forced))
+    return check("grace", ok and graced > 0, "%d answers held for the grace, %d forced commits final on release" % (graced, forced))
 
 
 # Each response.created is closed by exactly one response.done or

@@ -10,19 +10,24 @@
 //   PENDING_END   --turn complete-->                      committed, IDLE
 //   PENDING_END   --incomplete, then turn_max_wait_ms-->  committed, IDLE
 //   PENDING_END   --speech >= min_speech_continuation_ms--> USER_SPEAKING
-//   grace         --speech >= min_speech_continuation_ms--> USER_SPEAKING, same turn
+//   committed     --speech >= min_speech_continuation_ms--> USER_SPEAKING, same turn
+//   committed     --grace over and released-->           final
 //
 // A turn keeps its identity across a reopening: the revision counter grows
 // and the audio keeps accumulating, so the recognizer sees the whole
 // utterance as one piece.
 //
-// A commit the classifier judged complete keeps its answer silent for
-// reopen_grace_ms, counted on the audio, then the session reports the turn
-// final: a breath inside a sentence never lets the assistant cut in. The
-// turn stays open during the grace, its audio still accumulating silence
-// included: a speaker who goes on resumes it, and the next commit hands the
-// whole utterance over again under a new revision. A commit forced by
-// turn_max_wait_ms or by the caller has waited already and is final at once.
+// A committed turn turns final once two things hold: its grace has run out,
+// and the caller released it, which it does when the answer is ready to be
+// heard or over. Until then the turn stays open, its audio still
+// accumulating silence included: a speaker who goes on resumes it, and the
+// next commit hands the whole utterance over again under a new revision. A
+// user who has heard nothing of the answer is still in the same turn.
+//
+// The grace keeps the answer of a commit the classifier judged complete
+// silent for reopen_grace_ms, counted on the audio: a breath inside a
+// sentence never lets the assistant cut in. A commit forced by
+// turn_max_wait_ms or by the caller has waited already and has no grace.
 //
 // The session never transcribes and never speaks. It hands the committed
 // audio to the caller, which owns the recognizer worker, and it is told when
@@ -48,7 +53,7 @@ enum s2s_session_event {
     S2S_EVENT_TURN_REOPENED,       // the classifier said the turn was not over
     S2S_EVENT_TURN_COMMITTED,      // the audio is ready for the recognizer
     S2S_EVENT_TURN_FINAL,          // the committed turn stands, its answer may be heard
-    S2S_EVENT_TURN_RESUMED,        // the speaker went on during the grace: same turn, next revision
+    S2S_EVENT_TURN_RESUMED,        // the speaker went on before the turn was final: same turn, next revision
     S2S_EVENT_BARGE_IN,            // the user spoke while the assistant held the floor
 };
 
@@ -98,9 +103,15 @@ void s2s_session_set_params(s2s_session * s, const s2s_session_params & params);
 void s2s_session_push(s2s_session * s, const float * pcm, size_t n_samples);
 
 // Tells the session whether the assistant holds the floor, which is what
-// turns a speech start into a barge-in. Like every other call, it belongs to
-// the thread that pushes the audio.
+// turns a speech start into a barge-in. The session holds no lock: a caller
+// that shares it between threads serializes every call, this one included.
 void s2s_session_set_speaking(s2s_session * s, bool speaking);
+
+// Releases the committed turn: its answer is ready to be heard, or over. The
+// turn is final at once if its grace has run out, at the end of the grace
+// otherwise. A release that names another turn or an older revision does
+// nothing, so the caller may repeat it freely.
+void s2s_session_release(s2s_session * s, int turn_id, int revision);
 
 // Commits the turn in flight right now, whatever the classifier thinks. This
 // is what a push to talk button and the end of a stream need. No turn open

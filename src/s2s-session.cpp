@@ -20,7 +20,7 @@
 #include <cstring>
 
 // Defined below, next to the state machine it belongs to.
-static void s2s_session_commit(s2s_session * s, float score, bool final);
+static void s2s_session_commit(s2s_session * s, float score, bool forced);
 
 // The most recent samples of the stream, up to a fixed capacity: a push
 // overwrites the oldest ones, and a read copies what is held out, oldest
@@ -96,7 +96,9 @@ struct s2s_session {
     int silence_run = 0;
     int pending_run = 0;          // windows spent in PENDING_END
 
-    int  grace_left = 0;          // windows before the last complete commit is final, the turn resumable until then
+    int  grace_left = 0;          // windows of grace left to the committed turn
+    bool committed  = false;      // a committed turn not final yet, resumable until it is
+    bool released   = false;      // its answer is ready to be heard, or over
     int  turn_id    = 0;
     int  revision   = 0;
     bool speaking   = false;
@@ -208,6 +210,8 @@ void s2s_session_reset(s2s_session * s) {
     s->pending_run = 0;
     s->revision    = 0;
     s->grace_left  = 0;
+    s->committed   = false;
+    s->released    = false;
     s->speaking    = false;
     s->in_speech   = false;
 }
@@ -229,30 +233,45 @@ static void s2s_session_emit(s2s_session * s, s2s_session_event event, float sco
     s->cb(&report, s->user);
 }
 
+// The committed turn stands once its grace ran out and its answer is ready:
+// the answer may be heard and the audio goes.
+static void s2s_session_try_final(s2s_session * s) {
+    if (s->committed && s->released && s->grace_left == 0) {
+        s->committed = false;
+        s->turn_pcm.clear();
+        s2s_session_emit(s, S2S_EVENT_TURN_FINAL, 0.0f);
+    }
+}
+
+void s2s_session_release(s2s_session * s, int turn_id, int revision) {
+    if (!s || !s->committed || turn_id != s->turn_id || revision != s->revision) {
+        return;
+    }
+    s->released = true;
+    s2s_session_try_final(s);
+}
+
 // Opens a turn on the window that crossed the threshold, and prepends the
 // lookback so the first consonant is not clipped.
 static void s2s_session_open_turn(s2s_session * s) {
     s->turn_id++;
     s->revision   = 0;
     s->grace_left = 0;
+    s->committed  = false;
     s->lookback.read(s->turn_pcm);
     s->phase = S2S_SESSION_USER_SPEAKING;
     s2s_session_emit(s, S2S_EVENT_SPEECH_STARTED, 0.0f);
 }
 
-// Hands the turn over. A final commit lets its answer be heard at once and
-// lets the audio go; the others start the grace and keep the audio, which a
-// resumption continues.
-static void s2s_session_commit(s2s_session * s, float score, bool final) {
-    s2s_session_emit(s, S2S_EVENT_TURN_COMMITTED, score);
+// Hands the turn over and keeps its audio, which a resumption continues,
+// until the turn is final. A forced commit waited already and has no grace.
+static void s2s_session_commit(s2s_session * s, float score, bool forced) {
     s->phase       = S2S_SESSION_IDLE;
     s->pending_run = 0;
-    if (final || s->grace_windows == 0) {
-        s->turn_pcm.clear();
-        s2s_session_emit(s, S2S_EVENT_TURN_FINAL, score);
-    } else {
-        s->grace_left = s->grace_windows;
-    }
+    s->committed   = true;
+    s->released    = false;
+    s->grace_left  = forced ? 0 : s->grace_windows;
+    s2s_session_emit(s, S2S_EVENT_TURN_COMMITTED, score);
 }
 
 // One 512 sample window: the grace, the probability, then the state machine.
@@ -260,8 +279,7 @@ static void s2s_session_commit(s2s_session * s, float score, bool final) {
 // exactly reopen_grace_ms.
 static void s2s_session_window(s2s_session * s, const float * window) {
     if (s->grace_left > 0 && --s->grace_left == 0) {
-        s->turn_pcm.clear();
-        s2s_session_emit(s, S2S_EVENT_TURN_FINAL, 0.0f);
+        s2s_session_try_final(s);
     }
 
     // Two thresholds, the Silero hysteresis: speech starts at vad_threshold
@@ -281,17 +299,18 @@ static void s2s_session_window(s2s_session * s, const float * window) {
     s->lookback.push(window, (size_t) s->window);
     s->stream.push(window, (size_t) s->window);
 
-    if (s->phase != S2S_SESSION_IDLE || s->grace_left > 0) {
+    if (s->phase != S2S_SESSION_IDLE || s->committed) {
         s->turn_pcm.insert(s->turn_pcm.end(), window, window + s->window);
     }
 
     switch (s->phase) {
         case S2S_SESSION_IDLE:
             {
-                // The speaker goes on before the grace ran out: the same turn,
-                // one revision further, its audio continuous.
-                if (s->grace_left > 0 && s->speech_run >= s->reopen_windows) {
+                // The speaker goes on before the turn is final: the same
+                // turn, one revision further, its audio continuous.
+                if (s->committed && s->speech_run >= s->reopen_windows) {
                     s->grace_left = 0;
+                    s->committed  = false;
                     s->revision++;
                     s->phase = S2S_SESSION_USER_SPEAKING;
                     s2s_session_emit(s, S2S_EVENT_TURN_RESUMED, 0.0f);

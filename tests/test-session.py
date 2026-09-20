@@ -96,8 +96,9 @@ def main():
     ok = check("revisions", revisions, "%d reopenings each followed by a revision" % len(reopened)) and ok
 
     # A commit the classifier judged complete stays silent for the grace, then
-    # turns final, unless the speaker resumes it first; a forced commit is
-    # final at once.
+    # turns final, unless the speaker resumes it first; a forced commit has no
+    # grace. The harness releases every turn with the chunk that committed
+    # it, so a forced commit is final one window later, times printed at 10 ms.
     def after(c, name):
         return next((e for e in events if e["event"] == name and e["turn"] == c["turn"] and e["time"] >= c["time"]),
                     None)
@@ -108,7 +109,7 @@ def main():
         resumed = after(c, "turn_resumed")
         if c["score"] == 0.0:
             n_forced += 1
-            grace_ok = grace_ok and final is not None and final["time"] == c["time"]
+            grace_ok = grace_ok and final is not None and final["time"] - c["time"] <= WINDOW_S + 0.01
         elif resumed is not None and (final is None or resumed["time"] < final["time"]):
             n_resumed += 1
             grace_ok = grace_ok and resumed["time"] - c["time"] <= GRACE_S + WINDOW_S
@@ -117,7 +118,7 @@ def main():
             grace_ok = grace_ok and final["time"] - c["time"] >= GRACE_S - WINDOW_S
         else:
             grace_ok = grace_ok and c is commits[-1]
-    ok = check("grace", grace_ok, "%d commits final after the grace, %d resumed within it, %d forced final at once" %
+    ok = check("grace", grace_ok, "%d commits final after the grace, %d resumed within it, %d forced final on release" %
                (n_graced, n_resumed, n_forced)) and ok
 
     # A resumed turn keeps its id, raises its revision, and its next commit
