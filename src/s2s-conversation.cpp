@@ -26,6 +26,7 @@
 
 #include "s2s-conversation.h"
 
+#include "llm-agent.h"
 #include "s2s-error.h"
 #include "s2s-session.h"
 #include "sentence-split.h"
@@ -565,27 +566,29 @@ static void conn_answer(Connection * conn, const AnswerJob & job) {
             stream_tap.conn = conn;
             stream_tap.tts  = &client.tts;
 
-            Timer      t_llm;
-            const bool streamed = llm_client_stream(
-                llm, messages,
-                [](const char * delta, void * user) {
-                    StreamTap * self = (StreamTap *) user;
+            // What the model writes, as it writes it. The transcript event
+            // that follows says what is really spoken, one unit later.
+            llm_delta_cb on_delta = [](const char * delta, void * user) {
+                StreamTap * self = (StreamTap *) user;
 
-                    // What the model writes, as it writes it. The transcript event
-                    // that follows says what is really spoken, one unit later.
-                    conn_send(self->conn, rt_event_text("response.output_text.delta", "delta", delta));
+                conn_send(self->conn, rt_event_text("response.output_text.delta", "delta", delta));
 
-                    for (const SentenceUnit & unit : sentence_split_push(&self->splitter, delta)) {
-                        if (self->first_unit_ms < 0.0) {
-                            self->first_unit_ms = self->timer.ms();
-                        }
-                        if (!conn_speak(self->conn, unit, *self->tts)) {
-                            return false;
-                        }
+                for (const SentenceUnit & unit : sentence_split_push(&self->splitter, delta)) {
+                    if (self->first_unit_ms < 0.0) {
+                        self->first_unit_ms = self->timer.ms();
                     }
-                    return !self->conn->cancel.load();
-                },
-                &stream_tap, &conn->cancel, answer);
+                    if (!conn_speak(self->conn, unit, *self->tts)) {
+                        return false;
+                    }
+                }
+                return !self->conn->cancel.load();
+            };
+
+            Timer      t_llm;
+            const bool streamed = client.mode == "agentic" ?
+                                      llm_agent_run(llm, client.llm, client.tools, messages, on_delta, &stream_tap,
+                                                    &conn->cancel, answer) :
+                                      llm_client_stream(llm, messages, on_delta, &stream_tap, &conn->cancel, answer);
 
             // The tail is a unit like the others: a one sentence answer has
             // no other, and its time is the time to the first unit.
@@ -765,6 +768,7 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     if (!patch.mode.empty()) {
         conn->client.mode = patch.mode;
     }
+    conn->client.tools = patch.tools;
     if (!patch.echo.empty() && patch.echo != conn->echo) {
         // A fresh canceller learns the echo path of the new setup from
         // nothing; the previous one would start from a stale path.

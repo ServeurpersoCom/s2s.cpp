@@ -13,6 +13,7 @@
 
 #include "httplib.h"
 #include "index.html.gz.hpp"
+#include "llm-agent.h"
 #include "llm-client.h"
 #include "localvqe.h"
 #include "log-capture.h"
@@ -453,6 +454,58 @@ int main(int argc, char ** argv) {
         std::string body = "{\"data\":[";
         for (size_t i = 0; i < models.size(); i++) {
             body += std::string(i ? "," : "") + "{\"id\":\"" + rt_escape(models[i]) + "\"}";
+        }
+        body += "]}";
+        res.set_content(body, "application/json");
+    });
+
+    // Tool list proxy: the same path as the model list, for the tools a
+    // llama.cpp endpoint runs. An endpoint without that route answers with
+    // its error, which is how the page says that this mode needs llama.cpp.
+    server.Post("/v1/tools", [&](const httplib::Request & req, httplib::Response & res) {
+        if (!origin_allowed(origins, req)) {
+            res.status = 403;
+            return;
+        }
+
+        llm_client_params params = llm_defaults;
+
+        yyjson_doc * doc = yyjson_read(req.body.c_str(), req.body.size(), 0);
+        if (doc) {
+            yyjson_val *      root = yyjson_doc_get_root(doc);
+            const std::string url  = rt_json_str(root, "url");
+            const std::string key  = rt_json_str(root, "key");
+            if (!setup.llm_fixed && !url.empty()) {
+                params.base_url = url;
+            }
+            if (!setup.llm_fixed && !key.empty()) {
+                params.api_key = key;
+            }
+            yyjson_doc_free(doc);
+        }
+
+        if (!host_allowed(llm_hosts, params.base_url)) {
+            s2s_log(S2S_LOG_WARN, "[HTTP] Endpoint host %s is not allowed", url_host(params.base_url).c_str());
+            res.status = 403;
+            res.set_content("{\"error\":\"endpoint host not allowed\"}", "application/json");
+            return;
+        }
+
+        s2s_log(S2S_LOG_INFO, "[HTTP] Tool list");
+
+        std::vector<std::string> tools;
+        if (!llm_agent_tools(params, tools)) {
+            s2s_log(S2S_LOG_WARN, "[Agent] Tool list failed: %s", llm_client_last_error());
+            res.status = 502;
+            res.set_content(std::string("{\"error\":\"") + rt_escape(llm_client_last_error()) + "\"}",
+                            "application/json");
+            return;
+        }
+        s2s_log(S2S_LOG_INFO, "[Agent] %zu tools", tools.size());
+
+        std::string body = "{\"data\":[";
+        for (size_t i = 0; i < tools.size(); i++) {
+            body += std::string(i ? "," : "") + "\"" + rt_escape(tools[i]) + "\"";
         }
         body += "]}";
         res.set_content(body, "application/json");

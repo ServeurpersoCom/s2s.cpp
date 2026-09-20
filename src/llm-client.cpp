@@ -1,14 +1,16 @@
 // llm-client.cpp: chat completions over server sent events
 //
-// The endpoint answers a stream of lines. Only two shapes matter:
+// The endpoint answers a stream of lines. Only three shapes matter:
 //
 //   data: {"choices":[{"delta":{"content":"..."}}]}
+//   data: {"choices":[{"delta":{"tool_calls":[{"index":0,...}]}}]}
 //   data: [DONE]
 //
 // Everything else, comments, keep alives, usage frames, is skipped. Chunks
 // arrive split anywhere, including in the middle of a line and in the middle
 // of a UTF-8 sequence, so the parser accumulates and only consumes complete
-// lines.
+// lines. A tool call is split the same way, one index per call, and is joined
+// before the answer ends.
 
 #include "llm-client.h"
 
@@ -23,6 +25,7 @@
 
 #define LLM_REASON_MAX     200  // characters of an endpoint's error reason kept in the message
 #define LLM_CANCEL_POLL_MS 10   // how often a request that receives nothing looks at the cancel flag
+#define LLM_TOOL_CALLS_MAX 64   // calls one answer may ask for, what an index out of range is read against
 
 struct llm_client {
     llm_client_params params;
@@ -30,6 +33,8 @@ struct llm_client {
     std::string                      host;  // scheme, host and port, what httplib::Client takes
     std::string                      path;  // prefix of the endpoint, /v1 by default
     std::unique_ptr<httplib::Client> http;  // kept alive across requests to the same host
+
+    std::string tool_calls;                 // the calls the last stream ended on, empty when it ended on words
 };
 
 // Splits "http://host:port/v1" into the part httplib connects to and the
@@ -70,6 +75,39 @@ static std::unique_ptr<httplib::Client> llm_client_http(const std::string & host
     }
     return http;
 }
+
+// Closes the socket under a request the caller cancels. The receiver of a
+// stream only runs when bytes arrive, so while the endpoint is silent, during
+// a prefill or before its headers, this is what sees the flag. It keeps
+// closing until the request returns, so a socket opened after the flag rose
+// is closed too.
+struct LlmCancelWatch {
+    httplib::Client &         client;
+    const std::atomic<bool> * cancel;
+    std::atomic<bool>         finished{ false };
+    std::thread               thread;
+
+    LlmCancelWatch(httplib::Client & http, const std::atomic<bool> * flag) : client(http), cancel(flag) {
+        if (!cancel) {
+            return;
+        }
+        thread = std::thread([this]() {
+            while (!finished.load()) {
+                if (this->cancel->load()) {
+                    this->client.stop();
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(LLM_CANCEL_POLL_MS));
+            }
+        });
+    }
+
+    ~LlmCancelWatch() {
+        finished.store(true);
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+};
 
 llm_client * llm_client_new(const llm_client_params & params) {
     llm_client * c = new llm_client();
@@ -145,12 +183,22 @@ static std::string llm_client_body(const llm_client * c, const std::vector<llm_m
         yyjson_mut_obj_add_str(doc, root, "reasoning_effort", s.reasoning_effort.c_str());
     }
 
+    if (!c->params.tools.empty()) {
+        yyjson_mut_obj_add_val(doc, root, "tools", yyjson_mut_rawcpy(doc, c->params.tools.c_str()));
+    }
+
     yyjson_mut_val * array = yyjson_mut_arr(doc);
     yyjson_mut_obj_add_val(doc, root, "messages", array);
     for (const llm_message & message : messages) {
         yyjson_mut_val * item = yyjson_mut_obj(doc);
         yyjson_mut_obj_add_strcpy(doc, item, "role", message.role.c_str());
         yyjson_mut_obj_add_strcpy(doc, item, "content", message.content.c_str());
+        if (!message.tool_calls.empty()) {
+            yyjson_mut_obj_add_val(doc, item, "tool_calls", yyjson_mut_rawcpy(doc, message.tool_calls.c_str()));
+        }
+        if (!message.tool_call_id.empty()) {
+            yyjson_mut_obj_add_strcpy(doc, item, "tool_call_id", message.tool_call_id.c_str());
+        }
         yyjson_mut_arr_add_val(array, item);
     }
 
@@ -183,15 +231,27 @@ static std::string llm_client_reason(const std::string & body) {
     return reason;
 }
 
+// A piece of one tool call: the endpoint sends the name once and the
+// arguments in as many fragments as it likes, all tagged with the index of
+// the call they belong to.
+struct LlmToolFragment {
+    int         index = 0;
+    std::string id;
+    std::string name;
+    std::string arguments;
+};
+
 // What one data frame says: its content delta, the length of its reasoning
-// trace, which is never spoken, whether it reports a failure, an endpoint
-// can do so inside a stream it opened with a 200, and the finish_reason that
-// ends the generation. Role only frames and usage frames say none of it.
+// trace, which is never spoken, the tool call fragments it carries, whether
+// it reports a failure, an endpoint can do so inside a stream it opened with
+// a 200, and the finish_reason that ends the generation. Role only frames and
+// usage frames say none of it.
 struct LlmFrame {
-    std::string delta;
-    size_t      reasoning = 0;
-    std::string finish;
-    bool        failed = false;
+    std::string                  delta;
+    size_t                       reasoning = 0;
+    std::vector<LlmToolFragment> tools;
+    std::string                  finish;
+    bool                         failed = false;
 };
 
 static LlmFrame llm_client_frame(const char * json, size_t size) {
@@ -224,8 +284,72 @@ static LlmFrame llm_client_frame(const char * json, size_t size) {
         }
     }
 
+    yyjson_val * calls = message ? yyjson_obj_get(message, "tool_calls") : nullptr;
+    if (calls && yyjson_is_arr(calls)) {
+        size_t       index = 0;
+        size_t       max   = 0;
+        yyjson_val * call  = nullptr;
+        yyjson_arr_foreach(calls, index, max, call) {
+            LlmToolFragment fragment;
+            fragment.index = (int) index;
+
+            yyjson_val * at = yyjson_obj_get(call, "index");
+            if (at && yyjson_is_int(at)) {
+                fragment.index = (int) yyjson_get_sint(at);
+            }
+
+            const auto text = [](yyjson_val * value) {
+                return value && yyjson_is_str(value) ? std::string(yyjson_get_str(value), yyjson_get_len(value)) :
+                                                       std::string();
+            };
+
+            yyjson_val * function = yyjson_obj_get(call, "function");
+            fragment.id           = text(yyjson_obj_get(call, "id"));
+            fragment.name         = function ? text(yyjson_obj_get(function, "name")) : "";
+            fragment.arguments    = function ? text(yyjson_obj_get(function, "arguments")) : "";
+            frame.tools.push_back(fragment);
+        }
+    }
+
     yyjson_doc_free(doc);
     return frame;
+}
+
+// One call, its fragments joined.
+struct LlmToolCall {
+    std::string id;
+    std::string name;
+    std::string arguments;
+};
+
+// The calls in the shape an assistant message carries them back.
+static std::string llm_client_calls_json(const std::vector<LlmToolCall> & calls) {
+    yyjson_mut_doc * doc  = yyjson_mut_doc_new(nullptr);
+    yyjson_mut_val * root = yyjson_mut_arr(doc);
+    yyjson_mut_doc_set_root(doc, root);
+
+    for (const LlmToolCall & call : calls) {
+        if (call.name.empty()) {
+            continue;
+        }
+        yyjson_mut_val * item = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_strcpy(doc, item, "id", call.id.c_str());
+        yyjson_mut_obj_add_str(doc, item, "type", "function");
+
+        yyjson_mut_val * function = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_strcpy(doc, function, "name", call.name.c_str());
+        yyjson_mut_obj_add_strcpy(doc, function, "arguments", call.arguments.c_str());
+        yyjson_mut_obj_add_val(doc, item, "function", function);
+
+        yyjson_mut_arr_add_val(root, item);
+    }
+
+    const bool        empty = yyjson_mut_arr_size(root) == 0;
+    char *            json  = empty ? nullptr : yyjson_mut_write(doc, 0, nullptr);
+    const std::string text  = json ? json : "";
+    free(json);
+    yyjson_mut_doc_free(doc);
+    return text;
 }
 
 bool llm_client_stream(llm_client *                     c,
@@ -257,14 +381,17 @@ bool llm_client_stream(llm_client *                     c,
     const std::string url     = c->path + "/chat/completions";
 
     text.clear();
+    c->tool_calls.clear();
 
     std::string body;     // everything received, the reason of an error status
     std::string pending;
     std::string failure;  // the reason of an error frame inside the stream
     bool        cancelled = false;
     bool        done      = false;
-    std::string finish;         // the finish_reason of the generation, empty until a frame gives it
-    size_t      reasoning = 0;  // bytes of reasoning trace received and dropped
+    std::string finish;              // the finish_reason of the generation, empty until a frame gives it
+    size_t      reasoning = 0;       // bytes of reasoning trace received and dropped
+
+    std::vector<LlmToolCall> calls;  // the calls of this answer, filled fragment by fragment
 
     // [DONE] ends the answer, not the request: what follows it is left for
     // httplib to read to the end of the body, so the connection stays open
@@ -316,6 +443,18 @@ bool llm_client_stream(llm_client *                     c,
                 finish = frame.finish;
             }
             reasoning += frame.reasoning;
+            for (const LlmToolFragment & fragment : frame.tools) {
+                if (fragment.index < 0 || fragment.index >= LLM_TOOL_CALLS_MAX) {
+                    continue;
+                }
+                if ((size_t) fragment.index >= calls.size()) {
+                    calls.resize((size_t) fragment.index + 1);
+                }
+                LlmToolCall & call = calls[(size_t) fragment.index];
+                call.id += fragment.id;
+                call.name += fragment.name;
+                call.arguments += fragment.arguments;
+            }
             if (frame.delta.empty()) {
                 continue;
             }
@@ -329,29 +468,10 @@ bool llm_client_stream(llm_client *                     c,
         return true;
     };
 
-    // The receiver only runs when bytes arrive: while the endpoint is silent,
-    // during a prefill or before its headers, the watcher is what sees the
-    // cancel flag, and it closes the socket under the request. It keeps
-    // closing until the request returns, so a socket opened after the flag
-    // rose is closed too.
-    std::atomic<bool> finished(false);
-    std::thread       watcher;
-    if (cancel) {
-        watcher = std::thread([&]() {
-            while (!finished.load()) {
-                if (cancel->load()) {
-                    client.stop();
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(LLM_CANCEL_POLL_MS));
-            }
-        });
-    }
-
-    httplib::Result result = client.Post(url.c_str(), headers, request, "application/json", receiver);
-
-    finished.store(true);
-    if (watcher.joinable()) {
-        watcher.join();
+    httplib::Result result;
+    {
+        LlmCancelWatch watch(client, cancel);
+        result = client.Post(url.c_str(), headers, request, "application/json", receiver);
     }
 
     if (!failure.empty()) {
@@ -365,6 +485,7 @@ bool llm_client_stream(llm_client *                     c,
     // Every answer that ends says what came back, an empty one included, so
     // the log explains a silence the voice alone cannot.
     auto answered = [&]() {
+        c->tool_calls = llm_client_calls_json(calls);
         s2s_log(S2S_LOG_INFO, "[LLM] Answer of %zu bytes, %zu bytes of reasoning dropped, %s%s", text.size(), reasoning,
                 finish.empty() ? "no finish_reason" : "finish_reason ", finish.c_str());
         return true;
@@ -443,6 +564,149 @@ bool llm_client_models(const llm_client_params & params, std::vector<std::string
     }
 
     yyjson_doc_free(doc);
+    return true;
+}
+
+// The tool routes hang off the root of the server, where the chat dialect
+// hangs off its /v1: a server behind a path keeps that path, and only the
+// prefix of the dialect goes.
+static std::string llm_client_root(const std::string & path) {
+    const std::string dialect = "/v1";
+    if (path.size() >= dialect.size() && path.compare(path.size() - dialect.size(), dialect.size(), dialect) == 0) {
+        return path.substr(0, path.size() - dialect.size());
+    }
+    return path;
+}
+
+const char * llm_client_tool_calls(const llm_client * c) {
+    return c ? c->tool_calls.c_str() : "";
+}
+
+bool llm_client_tools(const llm_client_params & params, std::vector<llm_tool> & tools) {
+    std::string host;
+    std::string path;
+    if (!llm_client_split_url(params.base_url, host, path)) {
+        s2s_set_error("[LLM] The endpoint URL has no scheme");
+        return false;
+    }
+
+    std::unique_ptr<httplib::Client> http = llm_client_http(host);
+    if (!http) {
+        return false;
+    }
+    httplib::Client & client = *http;
+    client.set_connection_timeout(params.timeout_sec, 0);
+    client.set_read_timeout(params.timeout_sec, 0);
+
+    httplib::Headers headers;
+    if (!params.api_key.empty()) {
+        headers.emplace("Authorization", "Bearer " + params.api_key);
+    }
+
+    httplib::Result result = client.Get((llm_client_root(path) + "/tools").c_str(), headers);
+    if (!result) {
+        s2s_set_error("[LLM] %s", httplib::to_string(result.error()).c_str());
+        return false;
+    }
+    if (result->status < 200 || result->status >= 300) {
+        s2s_set_error("[LLM] HTTP %d, %s", result->status, llm_client_reason(result->body).c_str());
+        return false;
+    }
+
+    yyjson_doc * doc = yyjson_read(result->body.c_str(), result->body.size(), 0);
+    if (!doc) {
+        s2s_set_error("[LLM] Tool list is not JSON");
+        return false;
+    }
+
+    tools.clear();
+
+    yyjson_val * root = yyjson_doc_get_root(doc);
+    if (yyjson_is_arr(root)) {
+        size_t       index = 0;
+        size_t       max   = 0;
+        yyjson_val * item  = nullptr;
+        yyjson_arr_foreach(root, index, max, item) {
+            yyjson_val * name       = yyjson_obj_get(item, "tool");
+            yyjson_val * definition = yyjson_obj_get(item, "definition");
+            if (!name || !yyjson_is_str(name) || !definition) {
+                continue;
+            }
+            char * json = yyjson_val_write(definition, 0, nullptr);
+            if (!json) {
+                continue;
+            }
+            tools.push_back({ std::string(yyjson_get_str(name), yyjson_get_len(name)), json });
+            free(json);
+        }
+    }
+
+    yyjson_doc_free(doc);
+    return true;
+}
+
+bool llm_client_tool_call(llm_client *              c,
+                          const std::string &       name,
+                          const std::string &       arguments,
+                          const std::atomic<bool> * cancel,
+                          std::string &             result) {
+    if (!c) {
+        s2s_set_error("[LLM] Client is NULL");
+        return false;
+    }
+
+    yyjson_mut_doc * doc  = yyjson_mut_doc_new(nullptr);
+    yyjson_mut_val * root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_strcpy(doc, root, "tool", name.c_str());
+    yyjson_mut_obj_add_val(doc, root, "params",
+                           arguments.empty() ? yyjson_mut_obj(doc) : yyjson_mut_rawcpy(doc, arguments.c_str()));
+    char *            json    = yyjson_mut_write(doc, 0, nullptr);
+    const std::string request = json ? json : "";
+    free(json);
+    yyjson_mut_doc_free(doc);
+
+    httplib::Client & client = *c->http;
+    client.set_connection_timeout(c->params.timeout_sec, 0);
+    client.set_read_timeout(c->params.timeout_sec, 0);
+    client.set_write_timeout(c->params.timeout_sec, 0);
+
+    httplib::Headers headers;
+    if (!c->params.api_key.empty()) {
+        headers.emplace("Authorization", "Bearer " + c->params.api_key);
+    }
+
+    httplib::Result response;
+    {
+        LlmCancelWatch watch(client, cancel);
+        response = client.Post((llm_client_root(c->path) + "/tools").c_str(), headers, request, "application/json");
+    }
+
+    if (cancel && cancel->load()) {
+        s2s_set_error("[LLM] Cancelled");
+        return false;
+    }
+    if (!response) {
+        s2s_set_error("[LLM] %s", httplib::to_string(response.error()).c_str());
+        return false;
+    }
+    if (response->status < 200 || response->status >= 300) {
+        s2s_set_error("[LLM] HTTP %d, %s", response->status, llm_client_reason(response->body).c_str());
+        return false;
+    }
+
+    // A text answer travels in plain_text_response and goes into the message
+    // as is; anything else is the message, JSON and all.
+    result = response->body;
+
+    yyjson_doc * body = yyjson_read(response->body.c_str(), response->body.size(), 0);
+    if (body) {
+        yyjson_val * plain = yyjson_obj_get(yyjson_doc_get_root(body), "plain_text_response");
+        if (plain && yyjson_is_str(plain)) {
+            result.assign(yyjson_get_str(plain), yyjson_get_len(plain));
+        }
+        yyjson_doc_free(body);
+    }
     return true;
 }
 

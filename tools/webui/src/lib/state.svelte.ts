@@ -13,6 +13,7 @@ export interface Settings {
 	llmUrl: string;
 	llmModel: string;
 	llmKey: string;
+	tools: string[];
 	systemPrompt: string;
 	voice: string;
 	language: string;
@@ -62,6 +63,7 @@ function defaults(): Settings {
 		llmUrl: '',
 		llmModel: '',
 		llmKey: '',
+		tools: [],
 		systemPrompt: '',
 		voice: '',
 		language: '',
@@ -147,6 +149,7 @@ $effect.root(() => {
 			llmUrl: settings.llmUrl,
 			llmModel: settings.llmModel,
 			llmKey: settings.llmKey,
+			tools: settings.tools,
 			systemPrompt: settings.systemPrompt,
 			voice: settings.voice,
 			language: settings.language,

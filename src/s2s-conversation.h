@@ -39,6 +39,9 @@ struct ClientSettings {
     llm_client_params       llm;
     std::string             system_prompt;
     std::vector<rt_message> history;
+
+    // Tools the model is offered in the agentic mode, by name.
+    std::vector<std::string> tools;
 };
 
 // What every conversation of the process shares, set once at startup.

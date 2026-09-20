@@ -31,6 +31,23 @@ export async function fetchModels(llmUrl: string, apiKey: string): Promise<strin
 	return list.map((item: { id?: string }) => item.id).filter((id: unknown): id is string => !!id);
 }
 
+// POST /v1/tools: the tools a llama.cpp endpoint runs, proxied the same way.
+// An endpoint that does not run any answers with an error, which is what the
+// agentic mode has to say for itself.
+export async function fetchTools(llmUrl: string, apiKey: string): Promise<string[]> {
+	const res = await fetch('v1/tools', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ url: llmUrl, key: apiKey }),
+		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+	});
+	const body = await res.json().catch(() => ({}));
+	if (!res.ok) throw new Error(body?.error || `${res.status} ${res.statusText}`);
+
+	const list = Array.isArray(body?.data) ? body.data : [];
+	return list.filter((name: unknown): name is string => typeof name === 'string');
+}
+
 // POST /log: browser side events, so they land in the same stream as the
 // server stages. One request in flight at a time keeps the lines in order,
 // and the timeout keeps a stalled request from holding the ones behind it.

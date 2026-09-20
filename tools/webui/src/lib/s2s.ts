@@ -136,11 +136,14 @@ export interface S2SOptions {
 	// is the page itself, which works behind any reverse proxy prefix. The
 	// socket is v1/realtime under it, with ws or wss to match http or https.
 	url?: string;
-	mode?: 'conversation' | 'loopback';
+	mode?: 'conversation' | 'loopback' | 'agentic';
 	instructions?: string;
 	llmUrl?: string;
 	llmModel?: string;
 	llmKey?: string;
+	// names of the tools the model may use in the agentic mode, as the
+	// endpoint lists them on its own tool route
+	tools?: string[];
 	sampling?: S2SSampling;
 	tts?: S2STts;
 	llmTimeoutSec?: number;
@@ -551,6 +554,7 @@ export class S2S {
 				llm_model: this.options.llmModel,
 				llm_key: this.options.llmKey,
 				llm_timeout_sec: this.options.llmTimeoutSec,
+				tools: this.options.tools,
 				sampling: {
 					temperature: this.options.sampling?.temperature,
 					top_p: this.options.sampling?.topP,

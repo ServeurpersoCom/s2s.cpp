@@ -67,46 +67,50 @@ struct rt_message {
 // session.update describes the whole session. A number out of its range is
 // refused, read as absent and named in invalid.
 struct rt_session_patch {
-    std::string mode;  // conversation or loopback
+    std::string mode;  // conversation, loopback or agentic
     std::string echo;  // native, server or off
     std::string llm_url;
     std::string llm_model;
     std::string llm_key;
     std::string system_prompt;
-    float       temperature       = -1.0f;
-    float       top_p             = -1.0f;
-    int         top_k             = -1;
-    float       min_p             = -1.0f;
-    int         max_tokens        = -1;
-    float       presence_penalty  = -100.0f;
-    float       frequency_penalty = -100.0f;
-    int64_t     seed              = -1;
-    std::string reasoning_effort;
-    std::string tts_voice;
-    std::string tts_language;
-    float       tts_temperature            = -1.0f;
-    int         tts_top_k                  = -1;
-    float       tts_top_p                  = -1.0f;
-    float       tts_repetition_penalty     = -1.0f;
-    float       tts_subtalker_temperature  = -1.0f;
-    int         tts_subtalker_top_k        = -1;
-    float       tts_subtalker_top_p        = -1.0f;
-    int         tts_max_new_tokens         = -1;
-    int64_t     tts_seed                   = -1;
-    int         tts_min_chars              = -1;
-    float       tts_chars_per_second       = -1.0f;
-    float       tts_margin_seconds         = -1.0f;
-    int         llm_timeout_sec            = -1;
-    float       vad_neg_threshold          = -1.0f;
-    float       vad_threshold              = -1.0f;
-    int         min_speech_ms              = -1;
-    int         barge_in_ms                = -1;
-    int         min_silence_ms             = -1;
-    int         min_speech_continuation_ms = -1;
-    int         speech_pad_ms              = -1;
-    float       turn_threshold             = -1.0f;
-    int         turn_max_wait_ms           = -1;
-    int         reopen_grace_ms            = -1;
+
+    // Tools the session lets the model use, by name, in the agentic mode.
+    // Absent and empty read the same: the model is offered none.
+    std::vector<std::string> tools;
+    float                    temperature       = -1.0f;
+    float                    top_p             = -1.0f;
+    int                      top_k             = -1;
+    float                    min_p             = -1.0f;
+    int                      max_tokens        = -1;
+    float                    presence_penalty  = -100.0f;
+    float                    frequency_penalty = -100.0f;
+    int64_t                  seed              = -1;
+    std::string              reasoning_effort;
+    std::string              tts_voice;
+    std::string              tts_language;
+    float                    tts_temperature            = -1.0f;
+    int                      tts_top_k                  = -1;
+    float                    tts_top_p                  = -1.0f;
+    float                    tts_repetition_penalty     = -1.0f;
+    float                    tts_subtalker_temperature  = -1.0f;
+    int                      tts_subtalker_top_k        = -1;
+    float                    tts_subtalker_top_p        = -1.0f;
+    int                      tts_max_new_tokens         = -1;
+    int64_t                  tts_seed                   = -1;
+    int                      tts_min_chars              = -1;
+    float                    tts_chars_per_second       = -1.0f;
+    float                    tts_margin_seconds         = -1.0f;
+    int                      llm_timeout_sec            = -1;
+    float                    vad_neg_threshold          = -1.0f;
+    float                    vad_threshold              = -1.0f;
+    int                      min_speech_ms              = -1;
+    int                      barge_in_ms                = -1;
+    int                      min_silence_ms             = -1;
+    int                      min_speech_continuation_ms = -1;
+    int                      speech_pad_ms              = -1;
+    float                    turn_threshold             = -1.0f;
+    int                      turn_max_wait_ms           = -1;
+    int                      reopen_grace_ms            = -1;
 
     std::string invalid;  // the first field refused, empty when every one was usable
 };
@@ -279,6 +283,18 @@ static rt_client_message rt_parse(const std::string & frame) {
         message.patch.llm_key         = rt_json_str(fields, "llm_key");
         message.patch.system_prompt   = rt_json_str(fields, "instructions");
         message.patch.llm_timeout_sec = rt_json_count(fields, "llm_timeout_sec", message.patch.invalid);
+
+        yyjson_val * tools = yyjson_obj_get(fields, "tools");
+        if (tools && yyjson_is_arr(tools)) {
+            size_t       index = 0;
+            size_t       max   = 0;
+            yyjson_val * item  = nullptr;
+            yyjson_arr_foreach(tools, index, max, item) {
+                if (yyjson_is_str(item)) {
+                    message.patch.tools.emplace_back(yyjson_get_str(item), yyjson_get_len(item));
+                }
+            }
+        }
 
         yyjson_val * llm = yyjson_obj_get(fields, "sampling");
         if (llm) {

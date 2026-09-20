@@ -186,6 +186,7 @@ add_executable(s2s-server tools/s2s-server.cpp
     src/silero.cpp
     src/smart-turn.cpp
     src/llm-client.cpp
+    src/llm-agent.cpp
     src/tts-bridge.cpp
     src/localvqe.cpp
     ${WEBUI_OUTPUT}

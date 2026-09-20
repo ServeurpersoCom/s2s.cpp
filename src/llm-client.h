@@ -8,6 +8,9 @@
 // that works everywhere: POST /chat/completions with stream true, then the
 // content deltas of choices[0].
 //
+// The tool verbs are the exception: they speak the llama.cpp routes, and a
+// conversation only reaches them in the agentic mode.
+//
 // Fields other engines add are ignored on purpose, reasoning traces first:
 // a reasoning model must not have its thinking read out loud.
 //
@@ -23,8 +26,20 @@
 struct llm_client;
 
 struct llm_message {
-    std::string role;  // system, user, assistant
+    std::string role;  // system, user, assistant, tool
     std::string content;
+
+    // The calls an assistant message asks for, as the JSON array the endpoint
+    // sent, and the call a tool message answers. Both empty on a plain turn.
+    std::string tool_calls   = {};
+    std::string tool_call_id = {};
+};
+
+// One tool the endpoint offers: the name a call names, and its OpenAI
+// compatible definition, kept as the JSON object the endpoint published.
+struct llm_tool {
+    std::string name;
+    std::string definition;
 };
 
 // Sampling knobs the OpenAI dialect carries, plus the ones llama.cpp adds.
@@ -56,6 +71,10 @@ struct llm_client_params {
     std::string  api_key;
     llm_sampling sampling;
     int          timeout_sec = 120;
+
+    // The tools every request offers the model, as a JSON array of OpenAI
+    // compatible definitions. Empty leaves the request to the plain dialect.
+    std::string tools;
 };
 
 // Receives text deltas as they arrive. Returning false cancels the request.
@@ -89,5 +108,24 @@ bool llm_client_stream(llm_client *                     c,
 // s2s-server, so an endpoint on a loopback address or without CORS headers
 // still fills the selector, and the API key never leaves the machine.
 bool llm_client_models(const llm_client_params & params, std::vector<std::string> & models);
+
+// The calls the last stream ended on, as the JSON array a request takes back
+// in an assistant message, empty when the model answered with words alone.
+const char * llm_client_tool_calls(const llm_client * c);
+
+// Lists the tools the endpoint runs, through GET {host}/tools, the llama.cpp
+// route that serves its built-in tools and those of its MCP servers alike.
+// An endpoint without that route fails here, which is what tells the user
+// that the tools of this mode need a llama.cpp server.
+bool llm_client_tools(const llm_client_params & params, std::vector<llm_tool> & tools);
+
+// Runs one tool, through POST {host}/tools, and returns what goes into the
+// content of the tool message: the plain text of a text answer, the JSON
+// object itself otherwise. arguments is the JSON object the model wrote.
+bool llm_client_tool_call(llm_client *              c,
+                          const std::string &       name,
+                          const std::string &       arguments,
+                          const std::atomic<bool> * cancel,
+                          std::string &             result);
 
 const char * llm_client_last_error(void);

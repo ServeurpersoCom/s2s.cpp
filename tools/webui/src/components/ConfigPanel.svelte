@@ -2,7 +2,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { RefreshCw, X } from '@lucide/svelte';
 	import { app, settings, toast } from '../lib/state.svelte.js';
-	import { fetchModels, props } from '../lib/api.js';
+	import { fetchModels, fetchTools, props } from '../lib/api.js';
 	import { snippet } from '../lib/snippet.js';
 	import { ph } from '../lib/fields.js';
 	import { ENDPOINT_EXAMPLE, MODES, type Mode } from '../lib/config.js';
@@ -10,6 +10,7 @@
 	import { clearContext, getClient, voice } from '../lib/voice.svelte.js';
 
 	let models = $state<string[]>([]);
+	let tools = $state<string[]>([]);
 
 	let d = $derived(app.props?.defaults);
 
@@ -19,7 +20,8 @@
 	// modes are lowercase on the wire, spelled out on screen
 	const MODE_LABELS: Record<string, string> = {
 		loopback: 'Loopback, to test the system',
-		conversation: 'Conversation, to plug your llama.cpp'
+		conversation: 'Conversation, to plug your LLM',
+		agentic: 'Agentic, llama.cpp built-in tools'
 	};
 
 	function label(mode: string): string {
@@ -81,6 +83,34 @@
 			}
 		} catch {
 			models = [];
+		}
+	}
+
+	// the tools the endpoint runs, which only a llama.cpp server has: an
+	// endpoint without them answers with an error and the list stays empty.
+	async function loadTools() {
+		try {
+			tools = await fetchTools(settings.llmUrl, settings.llmKey);
+		} catch {
+			tools = [];
+		}
+	}
+
+	// a tool the endpoint no longer runs stays checked in the settings until
+	// the user says otherwise: the list is the session's, not the endpoint's.
+	function onTool(name: string, e: Event) {
+		const checked = (e.target as HTMLInputElement).checked;
+		settings.tools = checked
+			? [...settings.tools, name]
+			: settings.tools.filter((tool) => tool !== name);
+	}
+
+	// One gesture fills both lists: in the agentic mode the tools come from
+	// the endpoint the models come from.
+	function reload() {
+		loadModels();
+		if (mode === 'agentic') {
+			loadTools();
 		}
 	}
 
@@ -161,11 +191,21 @@
 	// session, and only in conversation. The effect follows this boolean alone:
 	// /props landing or a field being typed does not change it, so neither
 	// sends a request.
-	let listsModels = $derived(!!d && mode === 'conversation' && !d.llm_fixed);
+	let listsModels = $derived(!!d && mode !== 'loopback' && !d.llm_fixed);
 
 	$effect(() => {
 		if (listsModels) {
 			untrack(loadModels);
+		}
+	});
+
+	// The tool list follows the mode the same way, and needs no endpoint of
+	// its own: a server that owns its endpoint asks it for the page.
+	let listsTools = $derived(!!d && mode === 'agentic');
+
+	$effect(() => {
+		if (listsTools) {
+			untrack(loadTools);
 		}
 	});
 </script>
@@ -332,7 +372,7 @@
 		</div>
 	</details>
 
-	{#if mode === 'conversation'}
+	{#if mode !== 'loopback'}
 		<details class="has-clear">
 			<summary>LLM, OpenAI compatible endpoint</summary>
 			<button
@@ -371,8 +411,8 @@
 						<button
 							type="button"
 							class="clear-btn"
-							onclick={loadModels}
-							aria-label="Reload the model list"
+							onclick={reload}
+							aria-label="Reload what the endpoint offers"
 						>
 							<RefreshCw size={16} />
 						</button>
@@ -415,6 +455,25 @@
 				</div>
 			</div>
 		</details>
+
+		{#if mode === 'agentic'}
+			<details>
+				<summary>Tools, run by the llama.cpp endpoint</summary>
+				<div class="details-body">
+					{#each tools as tool (tool)}
+						<label class="tool"
+							><input
+								type="checkbox"
+								checked={settings.tools.includes(tool)}
+								onchange={(e) => onTool(tool, e)}
+							/>{tool}</label
+						>
+					{:else}
+						<span class="tool">The endpoint lists no tool</span>
+					{/each}
+				</div>
+			</details>
+		{/if}
 	{/if}
 
 	<details class="has-clear">
@@ -640,6 +699,13 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
 		gap: 0.5rem;
+	}
+	.tool {
+		flex-direction: row;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.85rem;
+		color: var(--fg-dim);
 	}
 	.model-row {
 		display: flex;

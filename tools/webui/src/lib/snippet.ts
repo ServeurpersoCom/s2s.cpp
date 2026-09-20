@@ -24,16 +24,23 @@ function literal(value: unknown, indent: string): string {
 	if (typeof value === 'number' || typeof value === 'boolean') {
 		return String(value);
 	}
+	if (Array.isArray(value)) {
+		return `[${value.map((item) => literal(item, indent)).join(', ')}]`;
+	}
 	return object(value as Record<string, unknown>, indent);
 }
 
-// Drops empty strings, undefined values and objects left empty after that.
+// Drops empty strings, undefined values, empty arrays and objects left empty
+// after that.
 function prune(value: unknown): unknown {
 	if (value === undefined || value === '' || value === null) {
 		return undefined;
 	}
 	if (typeof value !== 'object') {
 		return value;
+	}
+	if (Array.isArray(value)) {
+		return value.length > 0 ? value : undefined;
 	}
 
 	const out: Record<string, unknown> = {};
