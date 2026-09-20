@@ -162,11 +162,16 @@ parameters.
 
 Every unit is a clone of one reference voice, read once at startup from
 `--voices`: a `<name>.spk` speaker embedding, and when the voice has them
-a `<name>.rvq` and `<name>.txt` pair that turns on ICL. The prompt carries
-no language id, so the talker reads the text in its own language and the
-reference sets the accent. `/props` lists the voices by name in
-`tts_voices`, the first one being the default, and a session picks one
-with `tts.voice`.
+a `<name>.rvq` and `<name>.txt` pair, reference speech the talker
+continues. The prompt carries no language id, so the talker reads the
+text in its own language and the reference sets the accent. `/props`
+lists in `tts_voices` every way to speak with the voices, a voice with
+reference speech twice, `freeman.{spk,rvq,txt} reference speech` then
+`freeman.spk speaker embedding only`; the first label is the default, and
+a session picks one with `tts.voice`. The files come from `qwen-codec
+--talker` of the qwentts.cpp submodule, and the embedding has the hidden
+size of the talker that extracted it: a voice made with the 1.7B talker
+only speaks through the 1.7B talker.
 
 ## Echo cancellation
 
