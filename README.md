@@ -5,6 +5,29 @@ voice activity detection, end of turn detection, speech recognition and
 speech synthesis in one binary, driving any OpenAI compatible chat
 completions endpoint. Runs on CUDA, Vulkan, SYCL, Metal and CPU.
 
+## Why
+
+Speech to speech models are still few, hard to predict on tasks a text
+model already does well, and far from any common standard. Above all
+they are not smart enough yet: you cannot philosophize with them, talk
+through a technical problem, turn on reasoning at the one moment it is
+worth the wait, or send them into an agentic loop that reads source code
+and comes back with the answer while your hands stay free.
+
+s2s.cpp takes the other road: keep the model and the setup that already
+work, and add the voice. Listening, turn taking, echo cancellation and
+speech live here; intelligence stays with your llama.cpp server at home,
+or any other OpenAI compatible endpoint, local or in the cloud. Each side
+does what it does best, and each can be swapped without touching the
+other.
+
+The voice reaches your users on your own web page: `s2s.js` drops onto
+any page, with the settings you tuned in the playground. Everything runs
+on one machine, and for the best latency the two sides can also run on
+separate ones: the whole voice fits on a small dedicated GPU, about 5 GB
+of VRAM at Q8_0 and less with smaller quants, while llama.cpp keeps its
+big one for the model.
+
 ## Features
 
 - Full duplex: talk over it at any time, it stops at once and remembers
@@ -24,7 +47,7 @@ completions endpoint. Runs on CUDA, Vulkan, SYCL, Metal and CPU.
 ## Architecture
 
 1. Microphone and played reference, PCM16 at 24 kHz over the Realtime WebSocket
-2. Resampling to 16 kHz
+2. Resampling to 16 kHz for the models, microphone and reference aligned
 3. LocalVQE v1.3: echo, noise and reverberation removed
 4. Silero VAD: speech detected window by window
 5. Smart Turn v3.2: end of turn decided
