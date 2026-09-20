@@ -181,6 +181,7 @@ set_source_files_properties(${WEBUI_LIB_OUTPUT} PROPERTIES GENERATED TRUE)
 
 # s2s-server: the product, WebSocket voice loop plus the embedded webui
 add_executable(s2s-server tools/s2s-server.cpp
+    src/s2s-conversation.cpp
     src/s2s-session.cpp
     src/silero.cpp
     src/smart-turn.cpp

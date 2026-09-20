@@ -308,8 +308,11 @@ session names its own. `/props` never publishes the endpoint: its
 | `src/sentence-split.h`, `src/emoji.h` | streaming text to synthesis units |
 | `src/tts-bridge.h` | qwentts.cpp calls, per request voice, sampling and guards |
 | `src/realtime-proto.h` | Realtime event encode and decode |
+| `src/s2s-conversation.h` | one conversation: its threads, turns, answers, from Realtime frames in to frames out |
+| `src/log-capture.h` | stderr captured into the ring streamed on `/logs`, crash handlers |
+| `src/model-find.h` | the GGUF files found by name, largest model and best quant first |
 | `src/s2s-error.h`, `src/timer.h`, `src/utf8.h`, `src/wav.h` | log, timing, UTF-8 argv, wav io |
-| `tools/s2s-server.cpp` | the product binary |
+| `tools/s2s-server.cpp` | the product binary: command line, models, HTTP routes, the WebSocket of each conversation |
 | `tools/parakeet-transcribe.cpp` | the recognizer alone, on a wav file |
 | `tools/quantize.cpp` | GGUF quantizer |
 | `tools/webui` | Svelte demo and the `s2s.js` client lib |
