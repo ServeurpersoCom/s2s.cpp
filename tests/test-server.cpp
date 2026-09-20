@@ -26,6 +26,8 @@
 //
 // With --llm the client runs a mock chat completions endpoint in process and
 // names it in its session, so the latency of the model is part of the script.
+// With --llm-url the session names an endpoint of its own instead, a real
+// one or an address nothing answers, and --llm-timeout bounds the wait on it.
 // Its route picks its behavior: v1 answers, broken fails with an HTTP 500,
 // midstream reports a failure inside the stream, empty thinks and then ends
 // the generation without a word.
@@ -78,6 +80,8 @@ static void print_usage(const char * prog) {
             "  --llm <route>          runs the mock endpoint and names it: v1, broken, midstream, empty\n"
             "  --llm-first-ms <N>     mock delay before the first word (default: 100)\n"
             "  --llm-token-ms <N>     mock delay between words (default: 20)\n"
+            "  --llm-url <url>        names this endpoint instead of the mock\n"
+            "  --llm-timeout <s>      the session timeout of the endpoint\n"
             "  --other-endpoint       names an endpoint and a key of its own\n",
             prog);
 }
@@ -142,6 +146,8 @@ int main(int argc, char ** argv) {
     std::string       mode = "loopback";
     std::string       echo = "off";
     std::string       route;
+    std::string       named;
+    int               timeout  = -1;
     bool              room     = false;
     bool              other    = false;
     int               first_ms = 100;
@@ -165,6 +171,10 @@ int main(int argc, char ** argv) {
             first_ms = atoi(argv[++i]);
         } else if (arg == "--llm-token-ms" && has_value) {
             token_ms = atoi(argv[++i]);
+        } else if (arg == "--llm-url" && has_value) {
+            named = argv[++i];
+        } else if (arg == "--llm-timeout" && has_value) {
+            timeout = atoi(argv[++i]);
         } else if (arg == "--other-endpoint") {
             other = true;
         } else if (args.size() < 2) {
@@ -402,8 +412,14 @@ int main(int argc, char ** argv) {
 
     std::string session =
         "{\"type\":\"session.update\",\"session\":{\"mode\":\"" + mode + "\",\"echo\":\"" + echo + "\"";
+    if (!named.empty()) {
+        llm_url = named;
+    }
     if (!llm_url.empty()) {
         session += ",\"llm_url\":\"" + llm_url + "\",\"llm_model\":\"mock\"";
+    }
+    if (timeout > 0) {
+        session += ",\"llm_timeout_sec\":" + std::to_string(timeout);
     }
     if (other) {
         session += ",\"llm_url\":\"http://127.0.0.1:9/v1\",\"llm_key\":\"stolen\"";

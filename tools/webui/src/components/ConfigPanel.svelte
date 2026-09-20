@@ -389,7 +389,7 @@
 
 				<div class="meta-grid">
 					<label
-						title="Longest the endpoint may stay silent, in seconds, before the answer is dropped with an error. It bounds the wait between two pieces of the stream, not the whole answer: a long prompt to read or a slow first word count, a long answer does not."
+						title="Longest the endpoint may stay silent, in seconds, before the answer is dropped with an error. It bounds the wait between two pieces of the stream, not the whole answer: reaching the endpoint, a long prompt to read or a slow first word count, a long answer does not."
 						>Timeout <input
 							type="text"
 							placeholder={ph(d?.llm_timeout_sec)}

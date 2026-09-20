@@ -14,8 +14,8 @@
 #     answer heard   after the answer started playing: a new turn, a barge-in
 #
 # Around it: a push to talk, a broken endpoint, an endpoint that answers
-# nothing, a room whose echo the server cancels, and a server that owns its
-# endpoint.
+# nothing, an endpoint nothing answers at all, a room whose echo the server
+# cancels, and a server that owns its endpoint.
 #
 # The passages of examples/freeman.wav, cut on their speech:
 #     A  0.0 to 5.9 s    "If you go into different cultures, ... concepts of creation."
@@ -55,6 +55,7 @@ MAX_BATCH = "8"
 TMP = "tmp"
 
 A, B, C = "0-5.9", "6-11.5", "11.9-16"
+UNREACHABLE = "http://10.255.255.1:9/v1"  # a private address with nothing behind it: the connection hangs
 GRACE_S = 0.8     # reopen_grace_ms at its default
 REACTION_S = 1.5  # longest a talk over may take to stop the playback and the response
 ECHO_WORDS = ("different", "cultures", "creation", "afterlife")
@@ -196,6 +197,21 @@ def check_empty(label, run):
                  "the log says the answer was empty after its reasoning") and ok
 
 
+# The endpoint is an address nothing answers: the request stays stuck in its
+# connection, which no cancel can reach. The words of the user are recognized
+# all the same, as fast as ever, and the answer fails within the timeout.
+def check_unreachable(label, run):
+    items = run.items()
+    ended = run.said_end(B)
+    after = [t for t, _, _ in items if ended is not None and t >= ended - 0.5]
+    ok = check("%s live" % label, bool(after) and after[0] - ended <= 1.0,
+               "revision %.2fs after B ended, the endpoint stuck" % ((after[0] - ended) if after else -1.0))
+    whole = items[-1][2].lower() if items else ""
+    ok = check("%s whole" % label, "creation" in whole and "afterlife" in whole, "last transcript: %s" % whole) and ok
+    errors = run.errors()
+    return check("%s error" % label, bool(errors), "the answer failed: %s" % (errors[0] if errors else "no error")) and ok
+
+
 def check_broken(label, run):
     errors = run.errors()
     return check("%s error" % label, bool(errors) and all("model not loaded" in e for e in errors),
@@ -221,6 +237,8 @@ CASES = [
     ("push to talk", FAST + ["say:0-3", "commit", "mute:3"], check_push_to_talk),
     ("broken endpoint", ["--mode", "conversation", "--llm", "broken", "say:" + A, "pause:3"], check_broken),
     ("empty answer", ["--mode", "conversation", "--llm", "empty", "say:" + A, "pause:3"], check_empty),
+    ("unreachable endpoint", ["--mode", "conversation", "--llm-url", UNREACHABLE, "--llm-timeout", "3", "say:" + A,
+                              "pause:1.5", "say:" + B, "pause:3"], check_unreachable),
     ("room", ["--mode", "loopback", "--echo", "server", "--room", "say:" + A, "heard:1000", "say:" + C, "pause:3"],
      check_room),
 ]

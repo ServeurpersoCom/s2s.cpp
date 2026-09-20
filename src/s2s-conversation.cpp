@@ -6,14 +6,17 @@
 // the voice serialize internally, so a second client queues rather than
 // doubling the VRAM.
 //
-// Each connection runs three threads. The reader owns the incoming frames
-// and the listening half: it decodes them, feeds the session, and answers
-// the events the state machine raises. The responder owns the talking half:
-// it recognizes a committed turn, asks the endpoint, and speaks the answer
-// unit by unit. Splitting them is what makes the barge-in work, since the
-// reader keeps consuming audio while the responder is busy. The writer sends
-// every outgoing frame, so a client that reads slowly never holds the
-// synthesis worker the connections share.
+// Each connection runs four threads. The reader owns the incoming frames and
+// the listening half: it decodes them, feeds the session, and answers the
+// events the state machine raises. The recognizer transcribes every
+// committed turn and revision as soon as it is committed, and hands it to
+// the responder, which asks the endpoint and speaks the answer unit by unit.
+// Splitting them is what makes the barge-in work, since the reader keeps
+// consuming audio while an answer runs, and what keeps the words of the user
+// live whatever the endpoint does: a request stuck on the network holds the
+// answer, never the next transcript. The writer sends every outgoing frame,
+// so a client that reads slowly never holds the synthesis worker the
+// connections share.
 //
 // Modes:
 //   conversation  recognize, ask the LLM, speak the answer
@@ -64,6 +67,13 @@ struct TurnAudio {
     int                revision = 0;
 };
 
+// A recognized turn, waiting for its answer.
+struct AnswerJob {
+    std::string transcript;
+    int         turn_id  = 0;
+    int         revision = 0;
+};
+
 struct Connection {
     // What every conversation of the process shares, and how a frame reaches
     // the client: the transport belongs to whoever opened the conversation.
@@ -106,12 +116,17 @@ struct Connection {
     // the endpoint host changes.
     llm_client * llm = nullptr;
 
-    // Committed turns waiting for the responder.
+    // Committed turns waiting for the recognizer, and recognized ones waiting
+    // for the responder.
     std::mutex              queue_mutex;
     std::condition_variable queue_cv;
     std::queue<TurnAudio>   queue;
+    std::condition_variable answers_cv;
+    std::queue<AnswerJob>   answers;
     std::atomic<bool>       stop{ false };
 
+    // Raised against the answer in flight; the responder lowers it as it
+    // starts the next one.
     std::atomic<bool> cancel{ false };
 
     // The first sample of an answer waits for its turn to be final. The
@@ -165,6 +180,7 @@ struct Connection {
     // The threads of the talking half, and what the reader keeps between two
     // frames: whether the microphone was announced, and its buffers.
     std::thread        writer;
+    std::thread        recognizer;
     std::thread        responder;
     bool               receiving = false;
     std::vector<float> resampled;
@@ -272,6 +288,7 @@ static void conn_stop(Connection * conn) {
         std::lock_guard<std::mutex> lock(conn->queue_mutex);
         conn->stop = true;
         conn->queue_cv.notify_one();
+        conn->answers_cv.notify_one();
     }
     conn_turn_notify(conn);
 }
@@ -410,29 +427,18 @@ static void llm_push(std::vector<llm_message> & messages, const llm_message & me
     }
 }
 
-// Turn audio in, answer spoken out.
-static void conn_respond(Connection * conn, const TurnAudio & turn) {
+// Turn audio in, transcript out, and on to the responder. A turn this ends
+// without a transcript is released here, like one whose answer is over.
+static void conn_recognize(Connection * conn, const TurnAudio & turn) {
     const std::vector<float> & pcm = turn.pcm;
-
-    // Whatever way the turn ends here, the responder is done with it: a turn
-    // with nothing to answer is released like one whose answer is ready.
-    struct TurnRelease {
-        Connection * conn;
-        int          turn_id;
-        int          revision;
-
-        ~TurnRelease() { conn_release(conn, turn_id, revision); }
-    } release = { conn, turn.turn_id, turn.revision };
 
     // A later revision of the same turn carries this audio and more: only the
     // last one is worth recognizing.
     if (conn_revised(conn, turn.turn_id, turn.revision)) {
         s2s_log(S2S_LOG_INFO, "[Turn] Turn %d rev %d resumed before its recognition", turn.turn_id, turn.revision);
+        conn_release(conn, turn.turn_id, turn.revision);
         return;
     }
-
-    // A cancel raised from here on belongs to this turn.
-    conn->cancel.store(false);
 
     Timer t_asr;
 
@@ -442,6 +448,7 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
         pk_transcribe(conn->setup->models.asr, pcm.data(), pcm.size(), S2S_MODEL_RATE, &asr_params, &text);
     if (status != PK_STATUS_OK) {
         conn_error(conn, pk_last_error());
+        conn_release(conn, turn.turn_id, turn.revision);
         return;
     }
 
@@ -453,17 +460,44 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
 
     if (transcript.empty()) {
         s2s_log(S2S_LOG_INFO, "[Turn] Empty transcript, nothing to answer");
+        conn_release(conn, turn.turn_id, turn.revision);
         return;
     }
 
     s2s_log(S2S_LOG_INFO, "[Turn] Heard %zu characters in %.2fs of audio (turn %d rev %d)", transcript.size(),
             (double) pcm.size() / S2S_MODEL_RATE, turn.turn_id, turn.revision);
-    const std::string item = "turn_" + std::to_string(turn.turn_id);
-    conn_send(conn, rt_event_transcript(item, transcript));
+    conn_send(conn, rt_event_transcript("turn_" + std::to_string(turn.turn_id), transcript));
+
+    AnswerJob job;
+    job.transcript = transcript;
+    job.turn_id    = turn.turn_id;
+    job.revision   = turn.revision;
+
+    std::lock_guard<std::mutex> lock(conn->queue_mutex);
+    conn->answers.push(std::move(job));
+    conn->answers_cv.notify_one();
+}
+
+// Transcript in, answer spoken out.
+static void conn_answer(Connection * conn, const AnswerJob & job) {
+    const std::string & transcript = job.transcript;
+    const std::string   item       = "turn_" + std::to_string(job.turn_id);
+
+    // Whatever way the answer ends here, the responder is done with it.
+    struct TurnRelease {
+        Connection * conn;
+        int          turn_id;
+        int          revision;
+
+        ~TurnRelease() { conn_release(conn, turn_id, revision); }
+    } release = { conn, job.turn_id, job.revision };
 
     if (conn->stop) {
         return;
     }
+
+    // A cancel raised from here on belongs to this answer.
+    conn->cancel.store(false);
 
     // The settings and the list as they stand now: a change that arrives
     // later belongs to the next turn, not to this one.
@@ -480,11 +514,11 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
     // its conversation all the same.
     {
         std::lock_guard<std::mutex> lock(conn->turn_mutex);
-        conn->answer_turn     = turn.turn_id;
-        conn->answer_revision = turn.revision;
+        conn->answer_turn     = job.turn_id;
+        conn->answer_revision = job.revision;
         conn->answer_released = false;
         conn->speaking.store(true);
-        if (conn_outdated(conn, turn.turn_id, turn.revision)) {
+        if (conn_outdated(conn, job.turn_id, job.revision)) {
             conn->cancel.store(true);
         }
     }
@@ -493,7 +527,7 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
     std::string answer;
 
     if (conn->cancel.load()) {
-        s2s_log(S2S_LOG_INFO, "[Turn] Turn %d superseded or cancelled before its answer", turn.turn_id);
+        s2s_log(S2S_LOG_INFO, "[Turn] Turn %d superseded or cancelled before its answer", job.turn_id);
     } else if (client.mode == "loopback") {
         // No endpoint in the path: the recognized text is the answer.
         answer = transcript;
@@ -583,8 +617,8 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
     conn_send(conn, rt_event(conn->cancel.load() ? "response.cancelled" : "response.done"));
 }
 
-static void conn_responder(Connection * conn) {
-    s2s_log_thread(("Responder-" + std::to_string(conn->id)).c_str());
+static void conn_recognizer(Connection * conn) {
+    s2s_log_thread(("Recognizer-" + std::to_string(conn->id)).c_str());
     for (;;) {
         TurnAudio turn;
         {
@@ -596,7 +630,24 @@ static void conn_responder(Connection * conn) {
             turn = std::move(conn->queue.front());
             conn->queue.pop();
         }
-        conn_respond(conn, turn);
+        conn_recognize(conn, turn);
+    }
+}
+
+static void conn_responder(Connection * conn) {
+    s2s_log_thread(("Responder-" + std::to_string(conn->id)).c_str());
+    for (;;) {
+        AnswerJob job;
+        {
+            std::unique_lock<std::mutex> lock(conn->queue_mutex);
+            conn->answers_cv.wait(lock, [conn]() { return conn->stop || !conn->answers.empty(); });
+            if (conn->stop) {
+                return;
+            }
+            job = std::move(conn->answers.front());
+            conn->answers.pop();
+        }
+        conn_answer(conn, job);
     }
 }
 
@@ -898,8 +949,9 @@ Connection * conn_open(const ConversationSetup * setup, int id, conn_send_fn sen
         return nullptr;
     }
 
-    conn->writer    = std::thread(conn_writer, conn);
-    conn->responder = std::thread(conn_responder, conn);
+    conn->writer     = std::thread(conn_writer, conn);
+    conn->recognizer = std::thread(conn_recognizer, conn);
+    conn->responder  = std::thread(conn_responder, conn);
     conn_send(conn, rt_event("session.created"));
     return conn;
 }
@@ -982,6 +1034,7 @@ bool conn_stopped(const Connection * conn) {
 
 void conn_close(Connection * conn) {
     conn_stop(conn);
+    conn->recognizer.join();
     conn->responder.join();
     llm_client_free(conn->llm);
     {

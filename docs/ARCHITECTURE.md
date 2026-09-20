@@ -34,7 +34,8 @@ loaded are logged at startup and published on `/props`.
 | main | `Main` | loading, then the listening socket |
 | HTTP pool | `HTTP` | the page, `/props`, `/v1/models`, `/log` |
 | reader, one per connection | `Reader-N` | the socket, frame decode, 24 to 16 kHz resampling, the echo canceller, the turn session, incoming events |
-| responder, one per connection | `Responder-N` | recognition, the LLM stream, the sentence splitter, synthesis |
+| recognizer, one per connection | `Recognizer-N` | recognition of every committed turn and revision, as soon as it is committed |
+| responder, one per connection | `Responder-N` | the LLM stream, the sentence splitter, synthesis |
 | writer, one per connection | `Writer-N` | every outgoing frame, in order: a slow client stalls its own writer, never the TTS worker |
 | TTS worker, inside qwentts.cpp | `TTS` | the Qwen3-TTS backend and its queue, up to `--max-batch` syntheses per step |
 | echo canceller worker | `AEC` | every hop waiting from every connection, in one pass |
@@ -47,13 +48,20 @@ connections from the start and is never given twice, so one grep follows
 one client, reconnections apart. Component names hold no hyphen: the
 component is what follows the last one.
 
-The reader keeps consuming audio while the responder talks, which is what
-makes the barge-in possible. The responder takes committed turns from a
-queue, so a turn spoken during an answer waits for the next one. It copies
-the session settings and the conversation when it answers a turn: a
-`session.update` lands on the next answer, never under a running one. A
-turn that a later one superseded during its recognition gets no answer, and
-a closed connection drops the turns still queued.
+Recognition and answer run apart on purpose: a request stuck on the
+network, an endpoint loading a model or a host nothing answers, holds the
+answer and never the next transcript, so the words of the user are
+recognized and revised live whatever the endpoint does. The connection to
+the endpoint is bounded by the timeout of the session, like its silences.
+
+The reader keeps consuming audio while the responder talks, which is
+what makes the barge-in possible. The recognizer takes committed turns
+from a queue and the responder recognized ones from another, so a turn
+spoken during an answer is transcribed at once and waits for the answer.
+The responder copies the session settings and the conversation when it
+answers a turn: a `session.update` lands on the next answer, never under
+a running one. A turn that a later one superseded during its recognition
+gets no answer, and a closed connection drops the turns still queued.
 
 Every model keeps one context for the whole process. Silero and Parakeet
 serialize their compute behind a mutex, Smart Turn on its own worker
@@ -358,6 +366,7 @@ one of three brackets:
 | push to talk | a commit mid sentence and a microphone cut still get an answer, with no grace |
 | broken endpoint | the error reaches the client, the response still closes |
 | empty answer | a model that thinks and writes nothing: the answer closes as done, silent, and the log says why |
+| unreachable endpoint | a connection nothing answers, which no cancel reaches: the revisions are recognized as fast as ever, the answer fails within the timeout |
 | room | the echo canceller keeps the assistant out of what is heard, the playback flushed |
 | owned endpoint | nothing of the endpoint published or logged, another endpoint refused |
 

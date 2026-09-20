@@ -240,6 +240,9 @@ bool llm_client_stream(llm_client *                     c,
     }
 
     httplib::Client & client = *c->http;
+    // Reaching the endpoint is waiting on it too: an unreachable host fails
+    // within the timeout of the session, not the minutes of the library.
+    client.set_connection_timeout(c->params.timeout_sec, 0);
     client.set_read_timeout(c->params.timeout_sec, 0);
     client.set_write_timeout(c->params.timeout_sec, 0);
 
@@ -400,6 +403,7 @@ bool llm_client_models(const llm_client_params & params, std::vector<std::string
         return false;
     }
     httplib::Client & client = *http;
+    client.set_connection_timeout(params.timeout_sec, 0);
     client.set_read_timeout(params.timeout_sec, 0);
 
     httplib::Headers headers;
