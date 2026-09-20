@@ -37,6 +37,9 @@ big one for the model.
 - A pause to think does not hand it the floor, and going on before its
   answer starts keeps your sentence whole
 - Speaks as soon as the model has written its first sentence
+- Hands free agentic loop on a llama.cpp endpoint: the model calls the
+  tools you checked, the endpoint runs them, the voice tells you what
+  came back
 - Clones one reference voice for every sentence, so the voice stays the
   same from the first word to the last
 - OpenAI Realtime protocol over WebSocket, the conversation owned by the
@@ -120,6 +123,13 @@ mode, prompt, voice, sampling and turn detection travel in
 The endpoint is any OpenAI compatible server: llama-server, Ollama,
 LM Studio, a cloud API. The voice reads the text in the language it is
 written in, so the system prompt decides the language of the answers.
+
+The agentic mode is the one exception: it runs the tools of a llama.cpp
+server, which no other endpoint offers. Start llama-server with
+`--tools`, or `--tools all`, and the playground lists what it runs, the
+tools of its MCP servers included. Check the ones this session may use,
+set how many rounds of calls one answer may take, and talk: nothing of
+this travels to another endpoint.
 
 A page shown to other people must not hold the endpoint key, so the
 server can own the endpoint. The playground then hides its endpoint

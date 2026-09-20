@@ -12,8 +12,6 @@
 
 #include <algorithm>
 
-#define LLM_AGENT_MAX_ROUNDS 8  // rounds one turn may take before the loop gives up
-
 // The definitions of the checked tools, as the JSON array a request carries.
 static std::string llm_agent_definitions(const std::vector<llm_tool> &    tools,
                                          const std::vector<std::string> & enabled,
@@ -85,6 +83,7 @@ bool llm_agent_tools(const llm_client_params & params, std::vector<std::string> 
 bool llm_agent_run(llm_client *                     c,
                    const llm_client_params &        params,
                    const std::vector<std::string> & enabled,
+                   int                              max_rounds,
                    std::vector<llm_message> &       messages,
                    llm_delta_cb                     cb,
                    void *                           user,
@@ -109,7 +108,7 @@ bool llm_agent_run(llm_client *                     c,
 
     text.clear();
 
-    for (int round = 0; round < LLM_AGENT_MAX_ROUNDS; round++) {
+    for (int round = 0; round < max_rounds; round++) {
         std::string answer;
         if (!llm_client_stream(c, messages, cb, user, cancel, answer)) {
             return false;
@@ -134,6 +133,6 @@ bool llm_agent_run(llm_client *                     c,
         }
     }
 
-    s2s_set_error("[Agent] The tools still had work to do after %d rounds", LLM_AGENT_MAX_ROUNDS);
+    s2s_set_error("[Agent] The tools still had work to do after %d rounds", max_rounds);
     return false;
 }

@@ -586,8 +586,8 @@ static void conn_answer(Connection * conn, const AnswerJob & job) {
 
             Timer      t_llm;
             const bool streamed = client.mode == "agentic" ?
-                                      llm_agent_run(llm, client.llm, client.tools, messages, on_delta, &stream_tap,
-                                                    &conn->cancel, answer) :
+                                      llm_agent_run(llm, client.llm, client.tools, client.max_rounds, messages,
+                                                    on_delta, &stream_tap, &conn->cancel, answer) :
                                       llm_client_stream(llm, messages, on_delta, &stream_tap, &conn->cancel, answer);
 
             // The tail is a unit like the others: a one sentence answer has
@@ -769,6 +769,9 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
         conn->client.mode = patch.mode;
     }
     conn->client.tools = patch.tools;
+    if (patch.max_rounds > 0) {
+        conn->client.max_rounds = patch.max_rounds;
+    }
     if (!patch.echo.empty() && patch.echo != conn->echo) {
         // A fresh canceller learns the echo path of the new setup from
         // nothing; the previous one would start from a stale path.

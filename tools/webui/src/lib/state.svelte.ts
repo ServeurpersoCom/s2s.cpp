@@ -14,6 +14,7 @@ export interface Settings {
 	llmModel: string;
 	llmKey: string;
 	tools: string[];
+	maxRounds: string;
 	systemPrompt: string;
 	voice: string;
 	language: string;
@@ -64,6 +65,7 @@ function defaults(): Settings {
 		llmModel: '',
 		llmKey: '',
 		tools: [],
+		maxRounds: '',
 		systemPrompt: '',
 		voice: '',
 		language: '',
@@ -150,6 +152,7 @@ $effect.root(() => {
 			llmModel: settings.llmModel,
 			llmKey: settings.llmKey,
 			tools: settings.tools,
+			maxRounds: settings.maxRounds,
 			systemPrompt: settings.systemPrompt,
 			voice: settings.voice,
 			language: settings.language,

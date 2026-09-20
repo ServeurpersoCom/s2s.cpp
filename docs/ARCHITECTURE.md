@@ -32,10 +32,10 @@ loaded are logged at startup and published on `/props`.
 | Thread | Log name | Owns |
 | --- | --- | --- |
 | main | `Main` | loading, then the listening socket |
-| HTTP pool | `HTTP` | the page, `/props`, `/v1/models`, `/log` |
+| HTTP pool | `HTTP` | the page, `/props`, `/v1/models`, `/v1/tools`, `/log` |
 | reader, one per connection | `Reader-N` | the socket, frame decode, 24 to 16 kHz resampling, the echo canceller, the turn session, incoming events |
 | recognizer, one per connection | `Recognizer-N` | recognition of every committed turn and revision, as soon as it is committed |
-| responder, one per connection | `Responder-N` | the LLM stream, the sentence splitter, synthesis |
+| responder, one per connection | `Responder-N` | the LLM stream, its tool rounds, the sentence splitter, synthesis |
 | writer, one per connection | `Writer-N` | every outgoing frame, in order: a slow client stalls its own writer, never the TTS worker |
 | TTS worker, inside qwentts.cpp | `TTS` | the Qwen3-TTS backend and its queue, up to `--max-batch` syntheses per step |
 | echo canceller worker | `AEC` | every hop waiting from every connection, in one pass |
@@ -161,6 +161,30 @@ heard is not filed, and the turn it answered reaches the next request
 joined to the following one. Every answer that ends logs what came back:
 its length, the length of the reasoning dropped, and its `finish_reason`.
 
+## Agentic rounds
+
+The `agentic` mode answers a turn with as many rounds as the model asks
+for. A round is one stream plus the calls it ends on: the request
+carries the definitions of the checked tools, the model writes words,
+calls, or both, and every call is run by the endpoint through its own
+route. The results come back as `tool` messages, one per call, and the
+next round starts.
+
+The loop lives in the client because llama.cpp runs the tools but drives
+nothing: `GET /tools` lists them, `POST /tools` runs one, and the chat
+endpoint keeps no state between rounds, so the whole conversation, the
+calls and their results included, travels again each time.
+
+The voice hears every round, since the deltas of each stream go through
+the same splitter: a model that speaks before it calls is spoken as it
+writes. A barge-in cuts a round the way it cuts a plain answer, a tool
+in flight included, and the cap on the rounds ends a model that calls
+forever, the turn failing with the reason.
+
+Only this mode leaves the OpenAI dialect. The tool routes belong to
+llama.cpp, and the tools of the MCP servers it spawns come out of the
+same list as its own.
+
 ## Sentence splitting
 
 The LLM is queried with `stream: true` and read as SSE, and the voice
@@ -272,10 +296,18 @@ changes when one is named. A number has to be finite and in its range, a
 turn duration up to 60 s: the server refuses any other with an `error`
 naming the field, which keeps its default.
 
+`session.update` carries `tools`, the names of the tools an agentic
+session lets the model use, and `max_rounds`, its cap on the rounds of
+calls. An absent list and an empty one read the same: the model is
+offered none.
+
 HTTP routes: `/` the page, `/s2s.js` the component, `/props` the session
 defaults and the loaded models, `/health`, `/logs` the server log as SSE,
-`/log` where the page posts its own lines, and `POST /v1/models` which
-lists the models of the endpoint a client names.
+`/log` where the page posts its own lines, `POST /v1/models` which lists
+the models of the endpoint a client names, and `POST /v1/tools` which
+lists the tools it runs. Both are proxies: the browser only ever talks to
+s2s-server, so an endpoint on a loopback address or without CORS headers
+still fills the page, and the API key stays on this machine.
 
 ## Security
 
@@ -312,7 +344,8 @@ session names its own. `/props` never publishes the endpoint: its
 | `src/parakeet.h` | ASR lib, C ABI |
 | `src/pipeline-asr.h`, `src/fastconformer-forward.h`, `src/tdt-decoder.h`, `src/sp-detok.h` | Parakeet internals |
 | `src/s2s-session.h` | turn state machine |
-| `src/llm-client.h` | chat completions SSE client |
+| `src/llm-client.h` | chat completions SSE client, the model list and the two tool routes |
+| `src/llm-agent.h` | the rounds of tool calls of one agentic turn |
 | `src/sentence-split.h`, `src/emoji.h` | streaming text to synthesis units |
 | `src/tts-bridge.h` | qwentts.cpp calls, per request voice, sampling and guards |
 | `src/realtime-proto.h` | Realtime event encode and decode |

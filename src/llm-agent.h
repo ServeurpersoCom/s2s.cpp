@@ -13,6 +13,8 @@
 
 #include "llm-client.h"
 
+#define LLM_AGENT_MAX_ROUNDS 10  // rounds a turn takes when the session names none
+
 // Names of the tools the endpoint runs, built-in and MCP alike, in the order
 // it lists them: what the page turns into checkboxes.
 bool llm_agent_tools(const llm_client_params & params, std::vector<std::string> & names);
@@ -24,6 +26,7 @@ bool llm_agent_tools(const llm_client_params & params, std::vector<std::string> 
 bool llm_agent_run(llm_client *                     c,
                    const llm_client_params &        params,
                    const std::vector<std::string> & enabled,
+                   int                              max_rounds,
                    std::vector<llm_message> &       messages,
                    llm_delta_cb                     cb,
                    void *                           user,

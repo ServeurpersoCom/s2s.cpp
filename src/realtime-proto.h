@@ -77,6 +77,7 @@ struct rt_session_patch {
     // Tools the session lets the model use, by name, in the agentic mode.
     // Absent and empty read the same: the model is offered none.
     std::vector<std::string> tools;
+    int                      max_rounds        = -1;
     float                    temperature       = -1.0f;
     float                    top_p             = -1.0f;
     int                      top_k             = -1;
@@ -283,6 +284,8 @@ static rt_client_message rt_parse(const std::string & frame) {
         message.patch.llm_key         = rt_json_str(fields, "llm_key");
         message.patch.system_prompt   = rt_json_str(fields, "instructions");
         message.patch.llm_timeout_sec = rt_json_count(fields, "llm_timeout_sec", message.patch.invalid);
+
+        message.patch.max_rounds = rt_json_count(fields, "max_rounds", message.patch.invalid);
 
         yyjson_val * tools = yyjson_obj_get(fields, "tools");
         if (tools && yyjson_is_arr(tools)) {

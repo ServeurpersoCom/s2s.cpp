@@ -460,6 +460,15 @@
 			<details>
 				<summary>Tools, run by the llama.cpp endpoint</summary>
 				<div class="details-body">
+					<label
+						title="Rounds of tool calls one answer may take: the model calls, the endpoint runs, the model reads the results and may call again. Reaching the cap fails the answer."
+						>Agentic rounds <input
+							type="text"
+							placeholder={ph(d?.max_rounds)}
+							bind:value={settings.maxRounds}
+						/></label
+					>
+
 					{#each tools as tool (tool)}
 						<label class="tool"
 							><input
