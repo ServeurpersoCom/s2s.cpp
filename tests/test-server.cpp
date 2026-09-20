@@ -27,7 +27,8 @@
 // With --llm the client runs a mock chat completions endpoint in process and
 // names it in its session, so the latency of the model is part of the script.
 // Its route picks its behavior: v1 answers, broken fails with an HTTP 500,
-// midstream reports a failure inside the stream.
+// midstream reports a failure inside the stream, empty thinks and then ends
+// the generation without a word.
 
 #include "audio-resample.h"
 #include "httplib.h"
@@ -74,7 +75,7 @@ static void print_usage(const char * prog) {
             "  --mode <mode>          loopback or conversation (default: loopback)\n"
             "  --echo <method>        server, native or off (default: off)\n"
             "  --room                 the playback reaches the microphone through a room\n"
-            "  --llm <route>          runs the mock endpoint and names it: v1, broken, midstream\n"
+            "  --llm <route>          runs the mock endpoint and names it: v1, broken, midstream, empty\n"
             "  --llm-first-ms <N>     mock delay before the first word (default: 100)\n"
             "  --llm-token-ms <N>     mock delay between words (default: 20)\n"
             "  --other-endpoint       names an endpoint and a key of its own\n",
@@ -299,6 +300,13 @@ int main(int argc, char ** argv) {
             res.set_content(mock_frame("Once upon a time. ") + mock_frame("There was ") +
                                 "data: {\"error\":{\"message\":\"context size exceeded\"}}\n\n",
                             "text/event-stream");
+        });
+        mock.Post("/empty/chat/completions", [](const httplib::Request &, httplib::Response & res) {
+            res.set_content(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"Nothing to add.\"}}]}\n\n"
+                "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
+                "data: [DONE]\n\n",
+                "text/event-stream");
         });
         const int port = mock.bind_to_any_port("127.0.0.1");
         if (port < 0) {

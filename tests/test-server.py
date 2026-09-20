@@ -13,8 +13,9 @@
 #     before answer  after the grace, before any answer: still the same turn
 #     answer heard   after the answer started playing: a new turn, a barge-in
 #
-# Around it: a push to talk, a broken endpoint, a room whose echo the server
-# cancels, and a server that owns its endpoint.
+# Around it: a push to talk, a broken endpoint, an endpoint that answers
+# nothing, a room whose echo the server cancels, and a server that owns its
+# endpoint.
 #
 # The passages of examples/freeman.wav, cut on their speech:
 #     A  0.0 to 5.9 s    "If you go into different cultures, ... concepts of creation."
@@ -182,6 +183,19 @@ def check_push_to_talk(label, run):
                  "first audio %.2fs after the commit, no grace" % ((audio or 0.0) - (committed or 0.0)))
 
 
+# The model thinks and ends without a word: the answer closes as done, with
+# no sound and no error, and the log says what came back.
+def check_empty(label, run):
+    done = run.at("Event", "response.done")
+    ok = check("%s done" % label, bool(done) and not run.at("Event", "response.cancelled") and not run.errors(),
+               "%d answers closed as done, none cancelled, no error" % len(done))
+    ok = check("%s silent" % label, run.first("Event", "response.output_audio.delta") is None, "no audio") and ok
+    with open(TMP + "/server.log", errors="replace") as f:
+        logged = re.findall(r"-LLM\] Answer of 0 bytes, (\d+) bytes of reasoning dropped, finish_reason stop", f.read())
+    return check("%s log" % label, any(int(n) > 0 for n in logged),
+                 "the log says the answer was empty after its reasoning") and ok
+
+
 def check_broken(label, run):
     errors = run.errors()
     return check("%s error" % label, bool(errors) and all("model not loaded" in e for e in errors),
@@ -206,6 +220,7 @@ CASES = [
     ("heard 2000", SLOW + ["say:" + A, "heard:2000", "say:" + B, "pause:3"], check_barge_in),
     ("push to talk", FAST + ["say:0-3", "commit", "mute:3"], check_push_to_talk),
     ("broken endpoint", ["--mode", "conversation", "--llm", "broken", "say:" + A, "pause:3"], check_broken),
+    ("empty answer", ["--mode", "conversation", "--llm", "empty", "say:" + A, "pause:3"], check_empty),
     ("room", ["--mode", "loopback", "--echo", "server", "--room", "say:" + A, "heard:1000", "say:" + C, "pause:3"],
      check_room),
 ]

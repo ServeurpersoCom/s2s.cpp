@@ -163,6 +163,11 @@ export async function createVoice(): Promise<S2S> {
 	s2s.on('assistant_delta', (text) => {
 		openAssistant().draft += text;
 	});
+	// a finished answer shows its line, an empty one too
+	s2s.on('assistant_done', () => {
+		openAssistant();
+		closeAssistant();
+	});
 	s2s.on('assistant_text', (text, textEnd) => {
 		const turn = openAssistant();
 		// loopback has no model writing ahead: what is spoken is the whole turn

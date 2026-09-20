@@ -856,8 +856,13 @@ static void conn_respond(Connection * conn, const TurnAudio & turn) {
                 },
                 &stream_tap, &conn->cancel, answer);
 
+            // The tail is a unit like the others: a one sentence answer has
+            // no other, and its time is the time to the first unit.
             const SentenceUnit tail = sentence_split_flush(&stream_tap.splitter);
             if (streamed && !tail.text.empty()) {
+                if (stream_tap.first_unit_ms < 0.0) {
+                    stream_tap.first_unit_ms = stream_tap.timer.ms();
+                }
                 conn_speak(conn, tail, client.tts);
             }
 

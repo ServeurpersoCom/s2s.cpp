@@ -183,14 +183,15 @@ static std::string llm_client_reason(const std::string & body) {
     return reason;
 }
 
-// What one data frame says: its content delta, whether it reports a
-// failure, an endpoint can do so inside a stream it opened with a 200, and
-// whether it ends the generation with a finish_reason. Role only frames,
-// usage frames and reasoning traces say none of it.
+// What one data frame says: its content delta, the length of its reasoning
+// trace, which is never spoken, whether it reports a failure, an endpoint
+// can do so inside a stream it opened with a 200, and the finish_reason that
+// ends the generation. Role only frames and usage frames say none of it.
 struct LlmFrame {
     std::string delta;
-    bool        failed   = false;
-    bool        finished = false;
+    size_t      reasoning = 0;
+    std::string finish;
+    bool        failed = false;
 };
 
 static LlmFrame llm_client_frame(const char * json, size_t size) {
@@ -207,10 +208,20 @@ static LlmFrame llm_client_frame(const char * json, size_t size) {
     yyjson_val * message = choice ? yyjson_obj_get(choice, "delta") : nullptr;
     yyjson_val * content = message ? yyjson_obj_get(message, "content") : nullptr;
 
-    frame.failed   = yyjson_obj_get(root, "error") != nullptr;
-    frame.finished = reason && yyjson_is_str(reason);
+    frame.failed = yyjson_obj_get(root, "error") != nullptr;
+    if (reason && yyjson_is_str(reason)) {
+        frame.finish.assign(yyjson_get_str(reason), yyjson_get_len(reason));
+    }
     if (content && yyjson_is_str(content)) {
         frame.delta.assign(yyjson_get_str(content), yyjson_get_len(content));
+    }
+    // llama.cpp and most engines name the trace reasoning_content, some
+    // reasoning.
+    for (const char * key : { "reasoning_content", "reasoning" }) {
+        yyjson_val * trace = message ? yyjson_obj_get(message, key) : nullptr;
+        if (trace && yyjson_is_str(trace)) {
+            frame.reasoning += yyjson_get_len(trace);
+        }
     }
 
     yyjson_doc_free(doc);
@@ -249,7 +260,8 @@ bool llm_client_stream(llm_client *                     c,
     std::string failure;  // the reason of an error frame inside the stream
     bool        cancelled = false;
     bool        done      = false;
-    bool        ended     = false;  // a frame gave the finish_reason of the generation
+    std::string finish;         // the finish_reason of the generation, empty until a frame gives it
+    size_t      reasoning = 0;  // bytes of reasoning trace received and dropped
 
     // [DONE] ends the answer, not the request: what follows it is left for
     // httplib to read to the end of the body, so the connection stays open
@@ -297,7 +309,10 @@ bool llm_client_stream(llm_client *                     c,
                 failure = llm_client_reason(line.substr(start));
                 return false;
             }
-            ended = ended || frame.finished;
+            if (!frame.finish.empty()) {
+                finish = frame.finish;
+            }
+            reasoning += frame.reasoning;
             if (frame.delta.empty()) {
                 continue;
             }
@@ -344,8 +359,15 @@ bool llm_client_stream(llm_client *                     c,
         s2s_set_error("[LLM] Cancelled");
         return false;
     }
-    if (done) {
+    // Every answer that ends says what came back, an empty one included, so
+    // the log explains a silence the voice alone cannot.
+    auto answered = [&]() {
+        s2s_log(S2S_LOG_INFO, "[LLM] Answer of %zu bytes, %zu bytes of reasoning dropped, %s%s", text.size(), reasoning,
+                finish.empty() ? "no finish_reason" : "finish_reason ", finish.c_str());
         return true;
+    };
+    if (done) {
+        return answered();
     }
     if (!result) {
         s2s_set_error("[LLM] %s", httplib::to_string(result.error()).c_str());
@@ -358,11 +380,11 @@ bool llm_client_stream(llm_client *                     c,
     }
     // A stream that closes without [DONE] or a finish_reason was cut short:
     // what came is not the whole answer.
-    if (!ended) {
+    if (finish.empty()) {
         s2s_set_error("[LLM] The stream ended before the answer did");
         return false;
     }
-    return true;
+    return answered();
 }
 
 bool llm_client_models(const llm_client_params & params, std::vector<std::string> & models) {
