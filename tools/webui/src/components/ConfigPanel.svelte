@@ -446,7 +446,7 @@
 
 			<div
 				class="model-row"
-				title="The language the talker speaks. With speaker embedding only, set it to the language of the answers: it fixes the pronunciation. With reference speech, the reference sets the language and accent: leave it on auto, or set the language of the reference."
+				title="The language the talker is given for every sentence. With speaker embedding only, auto guesses it from the text, which fails on a lone word: Merci comes out as the English mercy. Set it to the language of the answers, so every sentence, down to one word, is spoken in it."
 			>
 				<span class="model-label">Language</span>
 				<select
