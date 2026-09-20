@@ -62,12 +62,8 @@
 		settings.llmModel = (e.target as HTMLSelectElement).value;
 	}
 
-	function onSpeaker(e: Event) {
+	function onVoice(e: Event) {
 		settings.voice = (e.target as HTMLSelectElement).value;
-	}
-
-	function onLanguage(e: Event) {
-		settings.language = (e.target as HTMLSelectElement).value;
 	}
 
 	// an endpoint that answers fills the selector, one that does not leaves the
@@ -119,7 +115,6 @@
 
 	function clearTts() {
 		settings.voice = '';
-		settings.language = '';
 		settings.ttsTemperature = '';
 		settings.ttsTopK = '';
 		settings.ttsTopP = '';
@@ -412,24 +407,13 @@
 		</button>
 		<div class="details-body">
 			<div class="model-row">
-				<span class="model-label">Speaker</span>
-				<select class="model-select" value={settings.voice || d?.voice || ''} onchange={onSpeaker}>
-					{#each d?.tts_speakers ?? [] as speaker (speaker)}
-						<option value={speaker}>{speaker}</option>
-					{/each}
-				</select>
-			</div>
-
-			<div class="model-row">
-				<span class="model-label">Language</span>
-				<select
-					class="model-select"
-					value={settings.language || d?.language || 'auto'}
-					onchange={onLanguage}
-				>
-					<option value="auto">auto</option>
-					{#each d?.tts_languages ?? [] as language (language)}
-						<option value={language}>{language}</option>
+				<span class="model-label">Voice</span>
+				<select class="model-select" value={settings.voice || d?.voice || ''} onchange={onVoice}>
+					{#if settings.voice && !d?.tts_voices.includes(settings.voice)}
+						<option value={settings.voice}>{settings.voice}</option>
+					{/if}
+					{#each d?.tts_voices ?? [] as name (name)}
+						<option value={name}>{name}</option>
 					{/each}
 				</select>
 			</div>

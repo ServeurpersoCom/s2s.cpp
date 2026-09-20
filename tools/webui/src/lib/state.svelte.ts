@@ -15,7 +15,6 @@ export interface Settings {
 	llmKey: string;
 	systemPrompt: string;
 	voice: string;
-	language: string;
 	ttsTemperature: string;
 	ttsTopK: string;
 	ttsTopP: string;
@@ -63,7 +62,6 @@ function defaults(): Settings {
 		llmKey: '',
 		systemPrompt: '',
 		voice: '',
-		language: '',
 		ttsTemperature: '',
 		ttsTopK: '',
 		ttsTopP: '',
@@ -150,7 +148,6 @@ $effect.root(() => {
 			llmKey: settings.llmKey,
 			systemPrompt: settings.systemPrompt,
 			voice: settings.voice,
-			language: settings.language,
 			ttsTemperature: settings.ttsTemperature,
 			ttsTopK: settings.ttsTopK,
 			ttsTopP: settings.ttsTopP,

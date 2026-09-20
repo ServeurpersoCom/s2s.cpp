@@ -14,6 +14,7 @@ s2s-server.exe ^
     --host 0.0.0.0 ^
     --port 8088 ^
     --models .\models ^
+    --voices .\voices ^
     --origin http://localhost:8088 ^
     --origin http://127.0.0.1:8088
 

@@ -1076,11 +1076,8 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     if (!patch.reasoning_effort.empty()) {
         conn->client.llm.sampling.reasoning_effort = patch.reasoning_effort;
     }
-    if (!patch.tts_speaker.empty()) {
-        conn->client.tts.speaker = patch.tts_speaker;
-    }
-    if (!patch.tts_language.empty()) {
-        conn->client.tts.language = patch.tts_language;
+    if (!patch.tts_voice.empty()) {
+        conn->client.tts.voice = patch.tts_voice;
     }
     if (patch.tts_min_chars >= 0) {
         conn->client.tts.guards.min_chars = patch.tts_min_chars;
@@ -1166,6 +1163,8 @@ static void print_usage(const char * prog) {
             "\n"
             "Models:\n"
             "  --models <dir>         Directory holding the GGUF files (default: ./models)\n"
+            "  --voices <dir>         Directory holding the voices, <name>.spk with an optional\n"
+            "                         <name>.rvq and <name>.txt pair for ICL (default: ./voices)\n"
             "\n"
             "Server:\n"
             "  --host <addr>          Bind address (default: 127.0.0.1)\n"
@@ -1268,6 +1267,7 @@ int main(int argc, char ** argv) {
     s2s_log_thread_default("TTS");
 
     std::string models_dir = "models";
+    std::string voices_dir = "voices";
     std::string host       = "127.0.0.1";
     int         port       = 8088;
 
@@ -1281,9 +1281,7 @@ int main(int argc, char ** argv) {
     // one, never published, never overridden.
     llm_client_params llm_defaults;
     const std::string system_prompt = "You are a voice assistant. Answer in one or two short spoken sentences.";
-    const std::string voice;
-    const std::string language = "auto";
-    const std::string mode     = "loopback";
+    const std::string mode          = "loopback";
 
     if (argc < 2) {
         print_usage(argv[0]);
@@ -1296,6 +1294,8 @@ int main(int argc, char ** argv) {
 
         if (arg == "--models" && has_value) {
             models_dir = argv[++i];
+        } else if (arg == "--voices" && has_value) {
+            voices_dir = argv[++i];
         } else if (arg == "--host" && has_value) {
             host = argv[++i];
         } else if (arg == "--port" && has_value) {
@@ -1334,7 +1334,7 @@ int main(int argc, char ** argv) {
     const std::string vad_path    = find_model(models_dir, "silero-vad", "");
     const std::string turn_path   = find_model(models_dir, "smart-turn", "");
     const std::string asr_path    = find_model(models_dir, "parakeet", "");
-    const std::string talker_path = find_model(models_dir, "qwen-talker", "-customvoice-");
+    const std::string talker_path = find_model(models_dir, "qwen-talker", "-base-");
     const std::string codec_path  = find_model(models_dir, "qwen-tokenizer", "");
     const std::string aec_path    = find_model(models_dir, "localvqe", "");
 
@@ -1347,7 +1347,8 @@ int main(int argc, char ** argv) {
     s2s_log(S2S_LOG_INFO, "[Load] VAD %s", vad_path.c_str());
     s2s_log(S2S_LOG_INFO, "[Load] Turn %s", turn_path.c_str());
     s2s_log(S2S_LOG_INFO, "[Load] ASR %s", asr_path.c_str());
-    s2s_log(S2S_LOG_INFO, "[Load] TTS %s + %s", talker_path.c_str(), codec_path.c_str());
+    s2s_log(S2S_LOG_INFO, "[Load] TTS %s + %s, voices from %s", talker_path.c_str(), codec_path.c_str(),
+            voices_dir.c_str());
     s2s_log(S2S_LOG_INFO, "[Load] AEC %s", aec_path.c_str());
 
     g_models.vad = sv_init(vad_path.c_str(), 1);
@@ -1374,8 +1375,7 @@ int main(int argc, char ** argv) {
     tts_bridge_params tts_init;
     tts_init.talker_path             = talker_path;
     tts_init.codec_path              = codec_path;
-    tts_init.speaker                 = voice;
-    tts_init.language                = language;
+    tts_init.voices_dir              = voices_dir;
     tts_init.sampling.max_new_tokens = S2S_TTS_MAX_NEW_TOKENS;
     tts_init.engine                  = engine;
 
@@ -1475,21 +1475,13 @@ int main(int argc, char ** argv) {
         body += "\"mode\":\"" + rt_escape(mode) + "\",";
         body += std::string("\"llm_fixed\":") + (g_llm_fixed ? "true" : "false") + ",";
         body += "\"instructions\":\"" + rt_escape(system_prompt) + "\",";
-        body += "\"voice\":\"" + rt_escape(tts_bridge_speaker(g_models.tts)) + "\",";
-        body += "\"language\":\"" + rt_escape(language) + "\",";
+        body += "\"voice\":\"" + rt_escape(tts_bridge_defaults_request(g_models.tts).voice) + "\",";
         const tts_sampling & tts = tts_bridge_defaults(g_models.tts);
 
-        body += "\"tts_speakers\":[";
-        const std::vector<std::string> & speakers = tts_bridge_speakers(g_models.tts);
-        for (size_t i = 0; i < speakers.size(); i++) {
-            body += std::string(i ? "," : "") + "\"" + rt_escape(speakers[i]) + "\"";
-        }
-        body += "],";
-
-        body += "\"tts_languages\":[";
-        const std::vector<std::string> & languages = tts_bridge_languages(g_models.tts);
-        for (size_t i = 0; i < languages.size(); i++) {
-            body += std::string(i ? "," : "") + "\"" + rt_escape(languages[i]) + "\"";
+        body += "\"tts_voices\":[";
+        const std::vector<std::string> & voices = tts_bridge_voices(g_models.tts);
+        for (size_t i = 0; i < voices.size(); i++) {
+            body += std::string(i ? "," : "") + "\"" + rt_escape(voices[i]) + "\"";
         }
         body += "],";
 
@@ -1688,11 +1680,10 @@ int main(int argc, char ** argv) {
                     }
                     // The log is streamed to every page on /logs: it says
                     // whether an endpoint is set, never which one.
-                    s2s_log(
-                        S2S_LOG_INFO, "[Realtime] Session update: mode %s, echo %s, endpoint %s, voice %s, language %s",
-                        conn.client.mode.c_str(), conn.echo.c_str(), conn.client.llm.base_url.empty() ? "none" : "set",
-                        conn.client.tts.speaker.empty() ? "default" : conn.client.tts.speaker.c_str(),
-                        conn.client.tts.language.empty() ? "default" : conn.client.tts.language.c_str());
+                    s2s_log(S2S_LOG_INFO, "[Realtime] Session update: mode %s, echo %s, endpoint %s, voice %s",
+                            conn.client.mode.c_str(), conn.echo.c_str(),
+                            conn.client.llm.base_url.empty() ? "none" : "set",
+                            conn.client.tts.voice.empty() ? "default" : conn.client.tts.voice.c_str());
                     conn_send(&conn, rt_event("session.updated"));
                     break;
 

@@ -40,6 +40,7 @@ import urllib.request
 SERVER = "../build/s2s-server"
 CLIENT = "../build/test-server"
 MODELS = "../models"
+VOICES = "../voices"
 WAV = "../examples/freeman.wav"
 PORT = 18088
 SECONDS = "7"
@@ -82,7 +83,7 @@ def main():
 
     log = open(TMP + "/server.log", "w")
     server = subprocess.Popen(
-        [SERVER, "--models", MODELS, "--host", "127.0.0.1", "--port", str(PORT)],
+        [SERVER, "--models", MODELS, "--voices", VOICES, "--host", "127.0.0.1", "--port", str(PORT)],
         stdout=log,
         stderr=subprocess.STDOUT,
     )
@@ -156,7 +157,7 @@ def check_owned_endpoint():
 
     log = open(TMP + "/server-owned.log", "w")
     server = subprocess.Popen(
-        [SERVER, "--models", MODELS, "--host", "127.0.0.1", "--port", str(OWNED_PORT),
+        [SERVER, "--models", MODELS, "--voices", VOICES, "--host", "127.0.0.1", "--port", str(OWNED_PORT),
          "--llm-url", OWNED_URL, "--llm-model", OWNED_MODEL, "--llm-key-file", key_file],
         stdout=log,
         stderr=subprocess.STDOUT,

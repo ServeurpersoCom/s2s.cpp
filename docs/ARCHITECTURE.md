@@ -13,7 +13,7 @@ while staying ready to be interrupted at any instant.
 | Voice activity | Silero VAD v5 | onnx-community/silero-vad | CPU, 1 thread |
 | End of turn | Smart Turn v3.2 | pipecat-ai/smart-turn-v3 | CPU |
 | Recognition | Parakeet TDT 0.6B v3 | nvidia/parakeet-tdt-0.6b-v3 | best GPU |
-| Synthesis | Qwen3-TTS CustomVoice 0.6B or 1.7B | qwentts.cpp submodule | best GPU |
+| Synthesis | Qwen3-TTS 1.7B Base | qwentts.cpp submodule | best GPU |
 | Reasoning | any OpenAI chat completions endpoint | external | external |
 
 The VAD runs on every 32 ms window, so it stays on the CPU with a single
@@ -24,7 +24,7 @@ well. LocalVQE, Parakeet and Qwen3-TTS take the best device
 
 The models are found in `--models` by file name. For each one the server
 takes the largest model present, then the best quant up to Q8_0, F32 and
-BF16 last; the talker must be a `customvoice` one. The six files really
+BF16 last; the talker must be a `base` one. The six files really
 loaded are logged at startup and published on `/props`.
 
 ## Threading
@@ -148,6 +148,14 @@ The TTS bridge then skips a unit shorter than `tts_min_chars` characters,
 and bounds each synthesis to a frame budget derived from the text length,
 `tts_chars_per_second` plus `tts_margin_seconds`. All three are session
 parameters.
+
+Every unit is a clone of one reference voice, read once at startup from
+`--voices`: a `<name>.spk` speaker embedding, and when the voice has them
+a `<name>.rvq` and `<name>.txt` pair that turns on ICL. The prompt carries
+no language id, so the talker reads the text in its own language and the
+reference sets the accent. `/props` lists the voices by name in
+`tts_voices`, the first one being the default, and a session picks one
+with `tts.voice`.
 
 ## Echo cancellation
 

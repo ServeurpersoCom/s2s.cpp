@@ -19,9 +19,9 @@ import sys
 import wave
 
 BIN = "../build/test-tts-bridge"
-TALKER = "../models/qwen-talker-1.7b-customvoice-Q8_0.gguf"
+TALKER = "../models/qwen-talker-1.7b-base-Q8_0.gguf"
 CODEC = "../models/qwen-tokenizer-12hz-Q8_0.gguf"
-SPEAKER = "ryan"
+VOICES = "../voices"
 TMP = "tmp"
 
 MAX_TTFA_MS = 1500.0
@@ -42,7 +42,7 @@ def main():
     os.makedirs(TMP, exist_ok=True)
 
     run = subprocess.run(
-        [BIN, TALKER, CODEC, TMP + "/tts", SPEAKER],
+        [BIN, TALKER, CODEC, VOICES, TMP + "/tts"],
         check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,

@@ -19,9 +19,10 @@
 static void print_usage(const char * prog) {
     fprintf(stderr, "s2s.cpp %s\n\n", S2S_VERSION);
     fprintf(stderr,
-            "Usage: %s <talker-gguf> <codec-gguf> <out-prefix> [speaker]\n"
+            "Usage: %s <talker-gguf> <codec-gguf> <voices-dir> <out-prefix>\n"
             "\n"
-            "Writes <out-prefix>-speech.wav and prints the streaming timings.\n",
+            "Speaks with the first voice of <voices-dir>, writes <out-prefix>-speech.wav\n"
+            "and prints the streaming timings.\n",
             prog);
 }
 
@@ -50,7 +51,7 @@ static bool on_chunk(const float * pcm, size_t n_samples, void * user) {
 }
 
 int main(int argc, char ** argv) {
-    if (argc < 4 || argc > 5) {
+    if (argc != 5) {
         print_usage(argv[0]);
         return 1;
     }
@@ -59,14 +60,13 @@ int main(int argc, char ** argv) {
     tts_bridge_params params;
     params.talker_path    = argv[1];
     params.codec_path     = argv[2];
-    params.speaker        = argc == 5 ? argv[4] : "";
-    params.language       = "english";
+    params.voices_dir     = argv[3];
     // Fixed seed: a harness that samples a different voice path on every run
     // cannot tell a regression from a draw.
     params.sampling.seed  = 42;
     request.sampling.seed = 42;
 
-    const std::string prefix = argv[3];
+    const std::string prefix = argv[4];
 
     tts_bridge * bridge = tts_bridge_load(params);
     if (!bridge) {

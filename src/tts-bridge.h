@@ -10,6 +10,11 @@
 // atomic flag the caller raises, and qwentts checks it at the top of every
 // decode step, so the floor is released within about one frame.
 //
+// The voice is a reference loaded once at startup from the voices directory.
+// The talker is a Base one, and every unit is conditioned on the same speaker
+// embedding, plus the same reference codes and transcript when the voice
+// carries them, so every sentence continues the same recording.
+//
 // Sampling is a passthrough: the defaults come from the submodule through
 // qt_tts_default_params, never from a copy kept here, so a bump of qwentts
 // moves them without touching this project.
@@ -60,8 +65,7 @@ struct tts_engine {
 struct tts_bridge_params {
     std::string  talker_path;
     std::string  codec_path;
-    std::string  speaker;            // named speaker of a custom_voice model
-    std::string  language = "auto";  // auto lets the model infer from the text
+    std::string  voices_dir;  // one voice per <name>.spk, with <name>.rvq and <name>.txt for ICL
     tts_sampling sampling;
     tts_guards   guards;
     tts_engine   engine;
@@ -71,8 +75,7 @@ struct tts_bridge_params {
 // handle is shared: two sessions speak with two voices at the same time, and
 // a setting posted by one must never reach the other.
 struct tts_request {
-    std::string  speaker;   // empty keeps the speaker the model was loaded with
-    std::string  language;  // empty keeps the language the server was started with
+    std::string  voice;  // name of the voice, empty keeps the default voice
     tts_sampling sampling;
     tts_guards   guards;
 };
@@ -86,15 +89,9 @@ void         tts_bridge_free(tts_bridge * b);
 
 int tts_bridge_sample_rate(const tts_bridge * b);
 
-// What the loaded model offers, read from the model itself: the named
-// speakers and the languages of its codec table. "auto" is not in the
-// language list, it is the absence of a language id.
-const std::vector<std::string> & tts_bridge_speakers(const tts_bridge * b);
-
-// The speaker in force. A custom voice model needs one, so the first of its
-// table is taken when the caller names none.
-const std::string &              tts_bridge_speaker(const tts_bridge * b);
-const std::vector<std::string> & tts_bridge_languages(const tts_bridge * b);
+// The voices loaded from the voices directory, by name, sorted. The
+// first one is the default voice.
+const std::vector<std::string> & tts_bridge_voices(const tts_bridge * b);
 
 // The submodule defaults, so a caller can publish them instead of guessing.
 const tts_sampling & tts_bridge_defaults(const tts_bridge * b);

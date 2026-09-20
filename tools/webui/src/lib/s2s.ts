@@ -110,8 +110,8 @@ export interface S2STtsSampling {
 }
 
 export interface S2STts {
-	speaker?: string;
-	language?: string;
+	// name of a voice the server loaded, one of tts_voices on /props
+	voice?: string;
 	sampling?: S2STtsSampling;
 	// guards: a unit shorter than minChars is not spoken, and the frame budget
 	// of a synthesis is derived from the text length
@@ -549,8 +549,7 @@ export class S2S {
 					reasoning_effort: this.options.sampling?.reasoningEffort
 				},
 				tts: {
-					speaker: this.options.tts?.speaker,
-					language: this.options.tts?.language,
+					voice: this.options.tts?.voice,
 					min_chars: this.options.tts?.minChars,
 					chars_per_second: this.options.tts?.charsPerSecond,
 					margin_seconds: this.options.tts?.marginSeconds,

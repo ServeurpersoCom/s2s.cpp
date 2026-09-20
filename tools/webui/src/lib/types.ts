@@ -4,9 +4,7 @@ export interface S2SDefaults {
 	llm_fixed: boolean; // the server owns the endpoint, the page names none
 	instructions: string;
 	voice: string;
-	language: string;
-	tts_speakers: string[];
-	tts_languages: string[];
+	tts_voices: string[];
 	tts_temperature: number;
 	tts_top_k: number;
 	tts_top_p: number;

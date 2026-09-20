@@ -4,6 +4,11 @@
 // this file is only the translation between the two vocabularies: a unit of
 // text in, PCM chunks out, one atomic flag for the barge-in.
 //
+// The voices are latent references read once from the voices directory: a
+// <name>.spk speaker embedding alone conditions the timbre, and a <name>.rvq
+// with its <name>.txt transcript next to it turns on ICL, where the talker
+// continues the reference recording on every unit.
+//
 // Two guards live here, both learned from a talker that ran to its frame cap
 // on a degenerate input: a text shorter than the floor is not spoken at all,
 // and the frame budget of a synthesis is derived from the length of the text
@@ -13,16 +18,33 @@
 #include "tts-bridge.h"
 
 #include "qwen.h"
+#include "rvq-file.h"
 #include "s2s-error.h"
 
-#include <mutex>
+#include <algorithm>
+#include <cstring>
+#include <filesystem>
 #include <string>
+
+// Bits per packed code in a .rvq file: the 2048 entry codebooks of the 12 Hz
+// codec.
+#define TTS_RVQ_CODE_BITS 11
+
+// One reference voice. codes and text are empty for a voice that only carries
+// its speaker embedding.
+struct TtsVoice {
+    std::string          name;
+    std::vector<float>   spk;
+    std::vector<int32_t> codes;
+    int                  n_frames = 0;
+    std::string          text;
+};
 
 struct tts_bridge {
     qt_context * ctx = nullptr;
 
-    std::vector<std::string> speakers;
-    std::vector<std::string> languages;
+    std::vector<TtsVoice>    voices;
+    std::vector<std::string> voice_names;
 
     // What a request falls back on, and what the caller publishes: the model
     // table, the submodule sampling and the guards of this build.
@@ -68,6 +90,106 @@ static void tts_bridge_log(enum qt_log_level level, const char * msg, void * use
             "%s", msg);
 }
 
+// Whole file into bytes, false when it cannot be read or is empty.
+static bool tts_bridge_read(const std::filesystem::path & path, std::string & out) {
+    FILE * f = utf8_fopen(path.string().c_str(), "rb");
+    if (!f) {
+        return false;
+    }
+    out.clear();
+    char   buf[4096];
+    size_t n = 0;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+        out.append(buf, n);
+    }
+    fclose(f);
+    return !out.empty();
+}
+
+static bool tts_bridge_load_voice(const tts_bridge * b, const std::filesystem::path & spk_path, TtsVoice & voice) {
+    voice.name = spk_path.stem().string();
+
+    std::string bytes;
+    if (!tts_bridge_read(spk_path, bytes) || bytes.size() % sizeof(float) != 0) {
+        s2s_set_error("[TTS] Voice %s is not a float embedding", voice.name.c_str());
+        return false;
+    }
+    voice.spk.resize(bytes.size() / sizeof(float));
+    memcpy(voice.spk.data(), bytes.data(), bytes.size());
+
+    std::filesystem::path rvq_path = spk_path;
+    std::filesystem::path txt_path = spk_path;
+    rvq_path.replace_extension(".rvq");
+    txt_path.replace_extension(".txt");
+
+    const bool has_rvq = std::filesystem::exists(rvq_path);
+    const bool has_txt = std::filesystem::exists(txt_path);
+    if (has_rvq != has_txt) {
+        s2s_set_error("[TTS] Voice %s needs both its .rvq and its .txt, or neither", voice.name.c_str());
+        return false;
+    }
+    if (!has_rvq) {
+        return true;
+    }
+
+    if (!rvq_read_file(rvq_path.string().c_str(), qt_num_codebooks(b->ctx), TTS_RVQ_CODE_BITS, voice.codes,
+                       &voice.n_frames)) {
+        s2s_set_error("[TTS] Voice %s has an unreadable .rvq", voice.name.c_str());
+        return false;
+    }
+    if (!tts_bridge_read(txt_path, voice.text)) {
+        s2s_set_error("[TTS] Voice %s has an empty .txt", voice.name.c_str());
+        return false;
+    }
+    while (!voice.text.empty() && (unsigned char) voice.text.back() <= ' ') {
+        voice.text.pop_back();
+    }
+    return true;
+}
+
+// Every <name>.spk of the directory, sorted by name so the default voice is
+// stable.
+static bool tts_bridge_load_voices(tts_bridge * b, const std::string & dir) {
+    std::vector<std::filesystem::path> paths;
+    std::error_code                    error;
+    for (const auto & entry : std::filesystem::directory_iterator(dir, error)) {
+        if (entry.path().extension() == ".spk") {
+            paths.push_back(entry.path());
+        }
+    }
+    if (paths.empty()) {
+        s2s_set_error("[TTS] No .spk voice in %s", dir.c_str());
+        return false;
+    }
+    std::sort(paths.begin(), paths.end());
+
+    for (const std::filesystem::path & path : paths) {
+        TtsVoice voice;
+        if (!tts_bridge_load_voice(b, path, voice)) {
+            return false;
+        }
+        if (voice.codes.empty()) {
+            s2s_log(S2S_LOG_INFO, "[TTS] Voice %s, speaker embedding of %zu values", voice.name.c_str(),
+                    voice.spk.size());
+        } else {
+            s2s_log(S2S_LOG_INFO, "[TTS] Voice %s, speaker embedding of %zu values, ICL on %d reference frames",
+                    voice.name.c_str(), voice.spk.size(), voice.n_frames);
+        }
+        b->voice_names.push_back(voice.name);
+        b->voices.push_back(std::move(voice));
+    }
+    return true;
+}
+
+static const TtsVoice * tts_bridge_find_voice(const tts_bridge * b, const std::string & name) {
+    for (const TtsVoice & voice : b->voices) {
+        if (voice.name == name) {
+            return &voice;
+        }
+    }
+    return nullptr;
+}
+
 tts_bridge * tts_bridge_load(const tts_bridge_params & params) {
     if (params.talker_path.empty() || params.codec_path.empty()) {
         s2s_set_error("[TTS] Talker or codec path is empty");
@@ -93,10 +215,15 @@ tts_bridge * tts_bridge_load(const tts_bridge_params & params) {
         return nullptr;
     }
 
+    // Voices are references, and only a Base talker takes a reference.
+    if (strcmp(qt_model_type(ctx), "base") != 0) {
+        s2s_set_error("[TTS] The talker is %s, the voices need a base one", qt_model_type(ctx));
+        qt_free(ctx);
+        return nullptr;
+    }
+
     tts_bridge * b            = new tts_bridge();
     b->ctx                    = ctx;
-    b->defaults.speaker       = params.speaker;
-    b->defaults.language      = params.language;
     b->defaults.sampling      = params.sampling;
     b->defaults.guards        = params.guards;
     b->engine                 = params.engine;
@@ -104,12 +231,11 @@ tts_bridge * tts_bridge_load(const tts_bridge_params & params) {
     b->engine.codec_chunk_sec = init.codec_chunk_sec;
     b->sample_rate            = 24000;
 
-    for (int i = 0; i < qt_n_speakers(ctx); i++) {
-        b->speakers.emplace_back(qt_speaker_name(ctx, i));
+    if (!tts_bridge_load_voices(b, params.voices_dir)) {
+        tts_bridge_free(b);
+        return nullptr;
     }
-    for (int i = 0; i < qt_n_languages(ctx); i++) {
-        b->languages.emplace_back(qt_language_name(ctx, i));
-    }
+    b->defaults.voice = b->voice_names.front();
 
     // The defaults belong to the submodule: read them once, publish them,
     // never copy them into this project.
@@ -125,16 +251,8 @@ tts_bridge * tts_bridge_load(const tts_bridge_params & params) {
     b->sampling_defaults.max_new_tokens        = reference.max_new_tokens;
     b->sampling_defaults.seed                  = reference.seed;
 
-    // A custom voice model refuses to speak without a speaker, so the table it
-    // carries decides rather than a name written here.
-    if (b->defaults.speaker.empty() && !b->speakers.empty()) {
-        b->defaults.speaker = b->speakers.front();
-    }
-
-    s2s_log(S2S_LOG_INFO, "[TTS] %s, %zu speakers, %zu languages, %d Hz", qt_version(), b->speakers.size(),
-            b->languages.size(), b->sample_rate);
-    s2s_log(S2S_LOG_INFO, "[TTS] Speaker %s, language %s",
-            b->defaults.speaker.empty() ? "none" : b->defaults.speaker.c_str(), b->defaults.language.c_str());
+    s2s_log(S2S_LOG_INFO, "[TTS] %s, %zu voices, default %s, %d Hz", qt_version(), b->voices.size(),
+            b->defaults.voice.c_str(), b->sample_rate);
     s2s_log(S2S_LOG_INFO, "[TTS] Engine: batch %d, flash attention %s, clamp fp16 %s, codec chunk %.1f s",
             b->engine.max_batch, b->engine.use_fa ? "on" : "off", b->engine.clamp_fp16 ? "on" : "off",
             (double) b->engine.codec_chunk_sec);
@@ -153,19 +271,9 @@ int tts_bridge_sample_rate(const tts_bridge * b) {
     return b ? b->sample_rate : 0;
 }
 
-const std::vector<std::string> & tts_bridge_speakers(const tts_bridge * b) {
+const std::vector<std::string> & tts_bridge_voices(const tts_bridge * b) {
     static const std::vector<std::string> empty;
-    return b ? b->speakers : empty;
-}
-
-const std::vector<std::string> & tts_bridge_languages(const tts_bridge * b) {
-    static const std::vector<std::string> empty;
-    return b ? b->languages : empty;
-}
-
-const std::string & tts_bridge_speaker(const tts_bridge * b) {
-    static const std::string empty;
-    return b ? b->defaults.speaker : empty;
+    return b ? b->voice_names : empty;
 }
 
 const tts_sampling & tts_bridge_defaults(const tts_bridge * b) {
@@ -213,6 +321,13 @@ bool tts_bridge_speak(tts_bridge *              b,
         return false;
     }
 
+    const std::string & name  = request.voice.empty() ? b->defaults.voice : request.voice;
+    const TtsVoice *    voice = tts_bridge_find_voice(b, name);
+    if (!voice) {
+        s2s_set_error("[TTS] Unknown voice %s", name.c_str());
+        return false;
+    }
+
     TtsCall call;
     call.cb     = cb;
     call.user   = user;
@@ -222,12 +337,16 @@ bool tts_bridge_speak(tts_bridge *              b,
     qt_tts_default_params(&params);
 
     {
-        const std::string & speaker  = request.speaker.empty() ? b->defaults.speaker : request.speaker;
-        const std::string & language = request.language.empty() ? b->defaults.language : request.language;
-
-        params.text    = text.c_str();
-        params.lang    = language.empty() ? nullptr : language.c_str();
-        params.speaker = speaker.empty() ? nullptr : speaker.c_str();
+        // No language id: the model reads the text in the language it is
+        // written in, and the reference carries the accent.
+        params.text        = text.c_str();
+        params.ref_spk_emb = voice->spk.data();
+        params.ref_spk_dim = (int) voice->spk.size();
+        if (!voice->codes.empty()) {
+            params.ref_codes = voice->codes.data();
+            params.ref_T     = voice->n_frames;
+            params.ref_text  = voice->text.c_str();
+        }
 
         if (request.sampling.temperature >= 0.0f) {
             params.temperature = request.sampling.temperature;

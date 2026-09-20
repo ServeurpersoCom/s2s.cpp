@@ -30,8 +30,7 @@ export function toOptions(): S2SOptions {
 		},
 		llmTimeoutSec: num(settings.llmTimeoutSec),
 		tts: {
-			speaker: settings.voice,
-			language: settings.language,
+			voice: settings.voice,
 			minChars: num(settings.ttsMinChars),
 			charsPerSecond: num(settings.ttsCharsPerSecond),
 			marginSeconds: num(settings.ttsMarginSeconds),

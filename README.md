@@ -29,9 +29,10 @@ completions endpoint. Runs on CUDA, Vulkan, SYCL, Metal and CPU.
   resumes the same turn, recognized again as one utterance
 - Parakeet TDT 0.6B v3 recognition, 25 European languages with
   punctuation and casing, non autoregressive duration prediction
-- Qwen3-TTS CustomVoice synthesis through the qwentts.cpp C ABI, in
-  process, streamed sentence by sentence, 9 preset voices and optional
-  batching of concurrent sessions on the GPU
+- Qwen3-TTS 1.7B Base synthesis through the qwentts.cpp C ABI, in
+  process, streamed sentence by sentence, every sentence cloned from the
+  same reference voice, and optional batching of concurrent sessions on
+  the GPU
 - Barge-in: the synthesis stops, the LLM request is aborted, and the
   conversation keeps only the sentences the user really heard
 - OpenAI Realtime protocol over WebSocket, with the conversation owned by
@@ -78,8 +79,7 @@ machine has several.
 ## Models
 
 ```
-./models.sh                      # prebuilt GGUF -> models/, 1.7b talker, Q8_0
-./models.sh --talker 0.6b        # smaller talker, for a small card next to a LLM
+./models.sh                      # prebuilt GGUF -> models/, Q8_0
 ./checkpoints.sh                 # upstream checkpoints -> checkpoints/
 ./convert.py                     # checkpoints -> GGUF
 ./quantize.sh                    # Q4_K_M to Q8_0 derived from the F32 base
@@ -89,6 +89,17 @@ machine has several.
 each model, the largest one present in `models/`, at the best quant up to
 Q8_0. The TTS checkpoints belong to the qwentts.cpp submodule.
 
+## Voices
+
+`voices/` holds the reference voices, loaded once at startup and listed
+in the web UI. A voice is a `<name>.spk` speaker embedding, plus an
+optional `<name>.rvq` and `<name>.txt` pair, the reference codes and
+their transcript, that turns on ICL: the talker then continues the
+reference recording on every sentence, timbre, pace and accent included.
+The files come from `qwen-codec --talker` of the qwentts.cpp submodule
+run on a clean recording, and are tied to the hidden size of the 1.7B
+talker. The voice `freeman` ships as the default.
+
 ## Run
 
 ```
@@ -96,7 +107,7 @@ Q8_0. The TTS checkpoints belong to the qwentts.cpp submodule.
 ```
 
 The command line only holds what belongs to the host: `--models`,
-`--host`, `--port`, the security allowlists `--origin` and `--llm-host`,
+`--voices`, `--host`, `--port`, the security allowlists `--origin` and `--llm-host`,
 the endpoint when the server owns it, and the TTS engine options
 (`--max-batch`, `--no-fa`, `--clamp-fp16`, `--codec-chunk-dur`).
 Everything else belongs to the client: mode, prompt, voice, sampling,
