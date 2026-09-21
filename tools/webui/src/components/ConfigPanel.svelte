@@ -81,18 +81,21 @@
 			if (models.length > 0 && !models.includes(settings.llmModel)) {
 				settings.llmModel = models[0];
 			}
-		} catch {
+		} catch (e: unknown) {
 			models = [];
+			toast(e instanceof Error ? e.message : String(e));
 		}
 	}
 
 	// the tools the endpoint runs, which only a llama.cpp server has: an
-	// endpoint without them answers with an error and the list stays empty.
+	// endpoint without them answers with an error, the list stays empty and
+	// the toast says why.
 	async function loadTools() {
 		try {
 			tools = await fetchTools(settings.llmUrl, settings.llmKey);
-		} catch {
+		} catch (e: unknown) {
 			tools = [];
+			toast(e instanceof Error ? e.message : String(e));
 		}
 	}
 
@@ -117,7 +120,10 @@
 	function loadProps() {
 		props()
 			.then((p) => (app.props = p))
-			.catch(() => (app.props = null));
+			.catch((e: unknown) => {
+				app.props = null;
+				toast(e instanceof Error ? e.message : String(e));
+			});
 	}
 
 	// an empty sampling field leaves the endpoint to its own default, so

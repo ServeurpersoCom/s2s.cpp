@@ -10,10 +10,6 @@
 		document.documentElement.classList.toggle('dark', settings.dark);
 		document.documentElement.classList.toggle('light', !settings.dark);
 	});
-
-	// The microphone needs a secure context: https, or localhost during
-	// development. Saying so up front beats a getUserMedia that fails later.
-	const secure = window.isSecureContext;
 </script>
 
 <div class="s2s-app">
@@ -21,9 +17,6 @@
 		<span class="header-label">s2s.cpp</span>
 		<span class="header-version">{__S2S_VERSION__}</span>
 		<div class="spacer"></div>
-		{#if !secure}
-			<span class="header-warning">HTTPS required for the microphone</span>
-		{/if}
 		<label class="dark-toggle">
 			<input type="checkbox" bind:checked={settings.dark} /> Dark
 		</label>
@@ -111,10 +104,6 @@
 		font-size: 0.7rem;
 		color: var(--fg-dim);
 		align-self: flex-end;
-	}
-	.header-warning {
-		font-size: 0.75rem;
-		color: var(--error);
 	}
 	.spacer {
 		flex: 1;

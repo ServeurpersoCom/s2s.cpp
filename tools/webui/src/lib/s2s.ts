@@ -374,6 +374,15 @@ export class S2S {
 	private async open(run: number) {
 		this.log('Start requested');
 
+		// The microphone and the audio worklet exist only in a secure context:
+		// https, or localhost during development. Anywhere else both are
+		// undefined, and the error is said here rather than as a TypeError.
+		if (!window.isSecureContext) {
+			const error = new Error('HTTPS required for the microphone');
+			error.name = 'SecurityError';
+			throw error;
+		}
+
 		const context = new AudioContext({ sampleRate: SAMPLE_RATE });
 		this.context = context;
 		await context.audioWorklet.addModule(workletUrl(DUPLEX_WORKLET));
@@ -665,6 +674,12 @@ export class S2S {
 					return;
 				}
 				this.log(`Connection closed, code ${event.code}`);
+				// A clean close follows the error event that explains it; one
+				// that is not, a server gone or a network cut, explains nothing
+				// on its own and is reported as such.
+				if (!event.wasClean) {
+					this.handlers.error?.(`Connection lost, code ${event.code}`);
+				}
 				this.teardown();
 			};
 			ws.onmessage = (event) => this.onServerEvent(event.data as string);

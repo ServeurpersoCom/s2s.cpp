@@ -82,7 +82,6 @@ export interface ChatTurn {
 // something from this state.
 export const voice = $state({
 	state: 'idle' as S2SState,
-	error: '',
 	chat: [] as ChatTurn[]
 });
 
@@ -141,7 +140,6 @@ export async function createVoice(): Promise<S2S> {
 	s2s.on('state', (state) => {
 		voice.state = state;
 		if (state === 'listening') {
-			voice.error = '';
 			closeAssistant();
 		}
 	});
@@ -185,7 +183,6 @@ export async function createVoice(): Promise<S2S> {
 		postLog(line);
 	});
 	s2s.on('error', (message) => {
-		voice.error = message;
 		postLog(`Error: ${message}`);
 		toast(message);
 	});
