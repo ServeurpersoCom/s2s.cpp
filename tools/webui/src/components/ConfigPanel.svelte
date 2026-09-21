@@ -466,22 +466,24 @@
 			<details>
 				<summary>Tools, run by the llama.cpp endpoint</summary>
 				<div class="details-body">
-					<label
-						title="Rounds of tool calls one answer may take: the model calls, the endpoint runs, the model reads the results and may call again. Reaching the cap fails the answer."
-						>Agentic rounds <input
-							type="text"
-							placeholder={ph(d?.max_rounds)}
-							bind:value={settings.maxRounds}
-						/></label
-					>
-					<label
-						title="Longest a tool may work, in seconds, before its call fails: the endpoint runs it, a search or a fetch, and answers once it is done. Longer than the model timeout, a tool goes out to the network."
-						>Timeout <input
-							type="text"
-							placeholder={ph(d?.tool_timeout_sec)}
-							bind:value={settings.toolTimeoutSec}
-						/></label
-					>
+					<div class="meta-grid">
+						<label
+							title="Rounds of tool calls one answer may take: the model calls, the endpoint runs, the model reads the results and may call again. Reaching the cap fails the answer."
+							>Agentic rounds <input
+								type="text"
+								placeholder={ph(d?.max_rounds)}
+								bind:value={settings.maxRounds}
+							/></label
+						>
+						<label
+							title="Longest a tool may work, in seconds, before its call fails: the endpoint runs it, a search or a fetch, and answers once it is done. Longer than the model timeout, a tool goes out to the network."
+							>Timeout <input
+								type="text"
+								placeholder={ph(d?.tool_timeout_sec)}
+								bind:value={settings.toolTimeoutSec}
+							/></label
+						>
+					</div>
 
 					{#each tools as tool (tool)}
 						<label class="tool"
