@@ -325,6 +325,22 @@ static int tts_bridge_budget(const tts_bridge * b, const tts_request & request, 
     return frames < maximum ? frames : maximum;
 }
 
+// The language a request is spoken in: the one it sets, unless auto, then
+// the first language of the browser the talker speaks, auto when it speaks
+// none of them.
+static const std::string & tts_bridge_language(const tts_bridge * b, const tts_request & request) {
+    const std::string & language = request.language.empty() ? b->defaults.language : request.language;
+    if (language != "auto") {
+        return language;
+    }
+    for (const std::string & name : request.browser_languages) {
+        if (std::find(b->languages.begin(), b->languages.end(), name) != b->languages.end()) {
+            return name;
+        }
+    }
+    return language;
+}
+
 bool tts_bridge_speak(tts_bridge *              b,
                       const std::string &       text,
                       const tts_request &       request,
@@ -360,11 +376,12 @@ bool tts_bridge_speak(tts_bridge *              b,
     qt_tts_default_params(&params);
 
     {
-        // The language id comes first in the prompt, whatever the voice: auto
-        // leaves it out and the model reads the text as it is written. With
-        // the embedding only it sets the pronunciation; reference speech
-        // carries its own, which another language pulls against.
-        const std::string & language = request.language.empty() ? b->defaults.language : request.language;
+        // The language id comes first in the prompt, whatever the voice, and
+        // auto leaves it out. It only weighs where the text cannot tell its
+        // own pronunciation: a few words are read in the language they are
+        // written in whatever the id, a lone word in the language of the id,
+        // English under auto.
+        const std::string & language = tts_bridge_language(b, request);
         params.text                  = text.c_str();
         params.lang                  = language == "auto" ? nullptr : language.c_str();
         const TtsVoice & voice       = b->voices[entry->voice];
@@ -416,8 +433,8 @@ bool tts_bridge_speak(tts_bridge *              b,
     params.on_chunk           = tts_bridge_chunk;
     params.on_chunk_user_data = &call;
 
-    s2s_log(S2S_LOG_INFO, "[TTS] Speaking %d characters, budget %d frames, seed %lld", n_chars, params.max_new_tokens,
-            (long long) params.seed);
+    s2s_log(S2S_LOG_INFO, "[TTS] Speaking %d characters in %s, budget %d frames, seed %lld", n_chars,
+            params.lang ? params.lang : "auto", params.max_new_tokens, (long long) params.seed);
 
     qt_audio        audio  = {};
     const qt_status status = qt_synthesize(b->ctx, &params, &audio);

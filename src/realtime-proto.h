@@ -90,6 +90,7 @@ struct rt_session_patch {
     std::string              reasoning_effort;
     std::string              tts_voice;
     std::string              tts_language;
+    std::vector<std::string> tts_browser_languages;
     float                    tts_temperature            = -1.0f;
     int                      tts_top_k                  = -1;
     float                    tts_top_p                  = -1.0f;
@@ -213,6 +214,23 @@ static std::string rt_json_str(yyjson_val * object, const char * key) {
     return value && yyjson_is_str(value) ? std::string(yyjson_get_str(value), yyjson_get_len(value)) : std::string();
 }
 
+// the strings of an array, whatever else it holds left out
+static std::vector<std::string> rt_json_strs(yyjson_val * object, const char * key) {
+    std::vector<std::string> strings;
+    yyjson_val *             array = yyjson_obj_get(object, key);
+    if (array && yyjson_is_arr(array)) {
+        size_t       index = 0;
+        size_t       max   = 0;
+        yyjson_val * item  = nullptr;
+        yyjson_arr_foreach(array, index, max, item) {
+            if (yyjson_is_str(item)) {
+                strings.emplace_back(yyjson_get_str(item), yyjson_get_len(item));
+            }
+        }
+    }
+    return strings;
+}
+
 // The ranges a number of a session.update has to fall in. A duration is a
 // threshold of the turn detection, a pause or a pad, never a length of
 // speech; a count is tokens, frames, characters or seconds of timeout.
@@ -289,17 +307,7 @@ static rt_client_message rt_parse(const std::string & frame) {
         message.patch.max_rounds       = rt_json_count(fields, "max_rounds", message.patch.invalid);
         message.patch.tool_timeout_sec = rt_json_count(fields, "tool_timeout_sec", message.patch.invalid);
 
-        yyjson_val * tools = yyjson_obj_get(fields, "tools");
-        if (tools && yyjson_is_arr(tools)) {
-            size_t       index = 0;
-            size_t       max   = 0;
-            yyjson_val * item  = nullptr;
-            yyjson_arr_foreach(tools, index, max, item) {
-                if (yyjson_is_str(item)) {
-                    message.patch.tools.emplace_back(yyjson_get_str(item), yyjson_get_len(item));
-                }
-            }
-        }
+        message.patch.tools = rt_json_strs(fields, "tools");
 
         yyjson_val * llm = yyjson_obj_get(fields, "sampling");
         if (llm) {
@@ -316,9 +324,10 @@ static rt_client_message rt_parse(const std::string & frame) {
 
         yyjson_val * tts = yyjson_obj_get(fields, "tts");
         if (tts) {
-            message.patch.tts_voice     = rt_json_str(tts, "voice");
-            message.patch.tts_language  = rt_json_str(tts, "language");
-            message.patch.tts_min_chars = rt_json_count(tts, "min_chars", message.patch.invalid);
+            message.patch.tts_voice             = rt_json_str(tts, "voice");
+            message.patch.tts_language          = rt_json_str(tts, "language");
+            message.patch.tts_browser_languages = rt_json_strs(tts, "browser_languages");
+            message.patch.tts_min_chars         = rt_json_count(tts, "min_chars", message.patch.invalid);
             message.patch.tts_chars_per_second =
                 (float) rt_json_value(tts, "chars_per_second", -1.0, 1.0, 1000.0, message.patch.invalid);
             message.patch.tts_margin_seconds =

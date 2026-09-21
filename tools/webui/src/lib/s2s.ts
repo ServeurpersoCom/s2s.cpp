@@ -119,9 +119,11 @@ export interface S2STtsSampling {
 export interface S2STts {
 	// name of a voice the server loaded, one of tts_voices on /props
 	voice?: string;
-	// auto, the default, or one of tts_languages on /props: the language the
-	// talker speaks, which sets the pronunciation of the embedding only
-	// voices; reference speech carries its own
+	// auto, the default, or one of tts_languages on /props: the language id
+	// of the talker, which only weighs on a lone word, read in the language
+	// of the id, a few words being read in their own language whatever it
+	// is. auto is the language of the browser when the talker speaks it,
+	// English otherwise
 	language?: string;
 	sampling?: S2STtsSampling;
 	// guards: in loopback a transcript shorter than minChars is not spoken
@@ -246,6 +248,16 @@ class DuplexProcessor extends AudioWorkletProcessor {
 }
 registerProcessor('s2s-duplex', DuplexProcessor);
 `;
+
+// The languages of the browser as the talker names them, in English and
+// lowercase, by preference: fr-FR is french, pt-BR portuguese, the region
+// left out. The server speaks the first one its talker knows when the
+// language is auto.
+function browserLanguages(): string[] {
+	const names = new Intl.DisplayNames(['en'], { type: 'language' });
+	const languages = navigator.languages.map((tag) => names.of(tag.split('-')[0])?.toLowerCase());
+	return [...new Set(languages.filter((name): name is string => !!name))];
+}
 
 // v1/realtime under the server, the page itself by default, with ws or wss
 // to match http or https, so an https page keeps its secure context.
@@ -595,6 +607,7 @@ export class S2S {
 				tts: {
 					voice: this.options.tts?.voice,
 					language: this.options.tts?.language,
+					browser_languages: browserLanguages(),
 					min_chars: this.options.tts?.minChars,
 					chars_per_second: this.options.tts?.charsPerSecond,
 					margin_seconds: this.options.tts?.marginSeconds,

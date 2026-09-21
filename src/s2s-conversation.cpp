@@ -873,6 +873,9 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     if (!patch.tts_language.empty()) {
         conn->client.tts.language = patch.tts_language;
     }
+    if (!patch.tts_browser_languages.empty()) {
+        conn->client.tts.browser_languages = patch.tts_browser_languages;
+    }
     if (patch.tts_min_chars >= 0) {
         conn->client.tts.guards.min_chars = patch.tts_min_chars;
     }

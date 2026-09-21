@@ -532,7 +532,7 @@
 
 			<div
 				class="model-row"
-				title="The language the talker is given for every sentence. With speaker embedding only, auto guesses it from the text, which fails on a lone word: Merci comes out as the English mercy. Set it to the language of the answers, so every sentence, down to one word, is spoken in it."
+				title="The language id the talker is given for every sentence. It only weighs on a lone word, which is read in the language of the id: a few words are read in the language they are written in, whatever the id. auto takes the language of the browser when the talker speaks it, English otherwise, where Merci comes out as the English mercy."
 			>
 				<span class="model-label">Language</span>
 				<select

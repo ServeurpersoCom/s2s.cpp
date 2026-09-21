@@ -223,13 +223,17 @@ Every unit is a clone of one reference voice, read once at startup from
 `--voices`: a `<name>.spk` speaker embedding, and when the voice has them
 a `<name>.rvq` and `<name>.txt` pair, reference speech the talker
 continues. The language id leads the prompt, whatever the voice, and
-`auto`, the default, leaves it out: the talker then reads the text in the
-language it is written in. With the embedding only, the language of the
-answers fixes the pronunciation; reference speech carries its own
-language and accent, which another id pulls against. `/props` lists the
-languages of the talker in `tts_languages`, and a session picks one with
-`tts.language`. `/props`
-lists in `tts_voices` every way to speak with the voices, a voice with
+`auto`, the default, leaves it out. The id only weighs where the text
+cannot tell its own pronunciation: a sentence of a few words is read in
+the language it is written in, whatever the id, and a lone word is read
+in the language of the id, English under `auto`, so Merci comes out as
+the English mercy. `/props` lists the languages of the talker in
+`tts_languages`, and a session picks one with `tts.language`. The
+component also sends `tts.browser_languages`, the languages of the
+browser by preference, named as the talker names them: under `auto` the
+first one the talker speaks gives the id, so the lone words of a French
+visitor are French, and the talker keeps its English default only when
+it speaks none of them. `/props` lists in `tts_voices` every way to speak with the voices, a voice with
 reference speech twice, `freeman.{spk,rvq,txt} reference speech` then
 `freeman.spk speaker embedding only`; the first label is the default, and
 a session picks one with `tts.voice`. The files come from `qwen-codec

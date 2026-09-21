@@ -75,10 +75,13 @@ struct tts_bridge_params {
 // handle is shared: two sessions speak with two voices at the same time, and
 // a setting posted by one must never reach the other.
 struct tts_request {
-    std::string  voice;     // one of the labels tts_bridge_voices lists, empty keeps the default
-    std::string  language;  // auto or one of tts_bridge_languages, empty keeps the default
-    tts_sampling sampling;
-    tts_guards   guards;
+    std::string              voice;     // one of the labels tts_bridge_voices lists, empty keeps the default
+    std::string              language;  // auto or one of tts_bridge_languages, empty keeps the default
+    // the languages of the browser, by preference: under auto the first one
+    // the talker knows gives the id, English stays when it knows none
+    std::vector<std::string> browser_languages;
+    tts_sampling             sampling;
+    tts_guards               guards;
 };
 
 // Receives mono float PCM at the codec rate. Returning false cancels the
