@@ -69,7 +69,7 @@ int main(int argc, char ** argv) {
     }
     free(stereo);
 
-    st_context * turn = st_init(model_path, 0);
+    st_context * turn = st_init(model_path);
     if (!turn) {
         fprintf(stderr, "[Turn] FATAL: %s\n", st_last_error());
         return 1;

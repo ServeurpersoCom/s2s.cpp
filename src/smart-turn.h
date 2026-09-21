@@ -40,9 +40,9 @@ typedef void (*st_log_cb)(enum st_log_level level, const char * text, void * use
 // the messages go to stderr.
 void st_log_set(st_log_cb cb, void * user_data);
 
-// Loads the GGUF and builds the two compute graphs, mel then encoder.
-// n_threads <= 0 picks one thread per physical core.
-st_context * st_init(const char * gguf_path, int n_threads);
+// Loads the GGUF and builds the two compute graphs, mel then encoder, on
+// the CPU with one thread per physical core.
+st_context * st_init(const char * gguf_path);
 void         st_free(st_context * ctx);
 
 // Audio the model consumes: sample rate and the 8 second window in samples.

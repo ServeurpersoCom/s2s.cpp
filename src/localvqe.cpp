@@ -626,7 +626,7 @@ static void lv_worker(lv_context * ctx) {
     }
 }
 
-lv_context * lv_init(const char * gguf_path, int use_gpu, int n_threads) {
+lv_context * lv_init(const char * gguf_path) {
     if (!gguf_path) {
         s2s_set_error("[LocalVQE] Gguf path is NULL");
         return nullptr;
@@ -649,7 +649,7 @@ lv_context * lv_init(const char * gguf_path, int use_gpu, int n_threads) {
         ctx->power_law   = gf_get_f32(gf, "lv.power_law_c");
         ctx->eps         = gf_get_f32(gf, "lv.norm_eps");
 
-        ctx->bp = use_gpu ? backend_init("LocalVQE") : backend_init_cpu("LocalVQE", n_threads);
+        ctx->bp = backend_init("LocalVQE");
         if (!ctx->bp.backend) {
             s2s_set_error("[LocalVQE] Failed to init the backend");
             gf_close(&gf);

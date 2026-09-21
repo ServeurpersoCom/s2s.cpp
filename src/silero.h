@@ -44,9 +44,9 @@ typedef void (*sv_log_cb)(enum sv_log_level level, const char * text, void * use
 // the messages go to stderr.
 void sv_log_set(sv_log_cb cb, void * user_data);
 
-// Loads the GGUF and builds the compute graph. n_threads is the CPU
-// thread count, 1 being the sane value for real time windows.
-sv_context * sv_init(const char * gguf_path, int n_threads);
+// Loads the GGUF and builds the compute graph, on the CPU with one thread:
+// on a 32 ms window a GPU dispatch would cost more than the work.
+sv_context * sv_init(const char * gguf_path);
 void         sv_free(sv_context * ctx);
 
 // Window size in samples and sample rate the model expects.

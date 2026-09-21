@@ -27,8 +27,6 @@ static void print_usage(const char * prog) {
             "\n"
             "Optional:\n"
             "  --out <path>           Write the transcript to a file as well\n"
-            "  --threads <N>          CPU thread count (default: physical cores)\n"
-            "  --cpu                  Force the CPU backend\n"
             "  --stream               Print every piece as the transducer emits it\n"
             "\n"
             "Debug:\n"
@@ -48,8 +46,6 @@ int main(int argc, char ** argv) {
     const char * wav_path   = nullptr;
     const char * out_path   = nullptr;
     const char * dump_dir   = nullptr;
-    int          n_threads  = 0;
-    bool         use_gpu    = true;
     bool         stream     = false;
 
     for (int i = 1; i < argc; i++) {
@@ -61,10 +57,6 @@ int main(int argc, char ** argv) {
             out_path = argv[++i];
         } else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) {
             dump_dir = argv[++i];
-        } else if (strcmp(argv[i], "--threads") == 0 && i + 1 < argc) {
-            n_threads = atoi(argv[++i]);
-        } else if (strcmp(argv[i], "--cpu") == 0) {
-            use_gpu = false;
         } else if (strcmp(argv[i], "--stream") == 0) {
             stream = true;
         } else {
@@ -111,8 +103,6 @@ int main(int argc, char ** argv) {
     if (dump_dir) {
         pipeline_asr_params params;
         params.model_path = model_path;
-        params.n_threads  = n_threads;
-        params.use_gpu    = use_gpu;
         params.dump_dir   = dump_dir;
 
         pipeline_asr * pipeline = pipeline_asr_load(params);
@@ -133,8 +123,6 @@ int main(int argc, char ** argv) {
     } else {
         pk_init_params init = pk_init_default_params();
         init.model_path     = model_path;
-        init.n_threads      = n_threads;
-        init.use_gpu        = use_gpu;
 
         pk_context * ctx = pk_init(&init);
         if (!ctx) {

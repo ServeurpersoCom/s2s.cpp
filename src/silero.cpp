@@ -160,7 +160,7 @@ static void sv_build_graph(sv_context * ctx) {
     ggml_build_forward_expand(ctx->graph, ctx->out_c);
 }
 
-sv_context * sv_init(const char * gguf_path, int n_threads) {
+sv_context * sv_init(const char * gguf_path) {
     if (!gguf_path) {
         s2s_set_error("[Silero] Gguf_path is NULL");
         return nullptr;
@@ -185,7 +185,7 @@ sv_context * sv_init(const char * gguf_path, int n_threads) {
         ctx->hidden      = (int) gf_get_u32(gf, "vad.hidden");
         ctx->padded      = ctx->context + ctx->window + ctx->n_fft / 2;
 
-        ctx->backend = backend_init_cpu("Silero", n_threads > 0 ? n_threads : 1).backend;
+        ctx->backend = backend_init_cpu("Silero", 1).backend;
         if (!ctx->backend) {
             s2s_set_error("[Silero] Failed to init the CPU backend");
             gf_close(&gf);

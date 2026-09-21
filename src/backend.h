@@ -170,8 +170,8 @@ static void backend_release(ggml_backend_t backend, ggml_backend_t cpu_backend) 
     }
 }
 
-// CPU only pair, for the modules that never leave the host: the VAD window
-// loop, the turn classifier, and any context a caller pins to the CPU.
+// CPU only pair on n_threads threads, for the modules that never leave the
+// host: the VAD window loop and the turn classifier.
 static BackendPair backend_init_cpu(const char * label, int n_threads) {
     // In DL builds the CPU device only appears in the registry once the
     // backends are loaded, so a context that never asks for a GPU still has to
@@ -179,14 +179,13 @@ static BackendPair backend_init_cpu(const char * label, int n_threads) {
     ggml_backend_load_all();
 
     BackendPair bp = {};
-    bp.backend     = cpu_backend_new(n_threads > 0 ? n_threads : backend_cpu_n_threads());
+    bp.backend     = cpu_backend_new(n_threads);
     bp.cpu_backend = bp.backend;
     bp.has_gpu     = false;
     if (!bp.backend) {
         s2s_log(S2S_LOG_ERROR, "[Load] Failed to init the CPU backend");
         exit(1);
     }
-    s2s_log(S2S_LOG_INFO, "[Load] %s backend: CPU (threads: %d)", label,
-            n_threads > 0 ? n_threads : backend_cpu_n_threads());
+    s2s_log(S2S_LOG_INFO, "[Load] %s backend: CPU (threads: %d)", label, n_threads);
     return bp;
 }

@@ -68,7 +68,7 @@ int main(int argc, char ** argv) {
     }
     free(stereo);
 
-    sv_context * vad = sv_init(model_path, 1);
+    sv_context * vad = sv_init(model_path);
     if (!vad) {
         fprintf(stderr, "[Silero] FATAL: %s\n", sv_last_error());
         return 1;

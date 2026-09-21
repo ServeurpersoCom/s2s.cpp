@@ -74,13 +74,11 @@ PK_API void pk_log_set(pk_log_cb cb, void * user);
 typedef struct pk_context pk_context;
 
 // Init params. model_path points at the GGUF holding the encoder, the
-// transducer and the piece table; n_threads 0 lets the backend pick.
-// use_gpu selects the first available GPU backend, CPU otherwise.
+// transducer and the piece table. The model runs on the best device, or on
+// the one GGML_BACKEND names.
 struct pk_init_params {
     int          abi_version;
     const char * model_path;
-    int          n_threads;
-    bool         use_gpu;
 };
 
 PK_API struct pk_init_params pk_init_default_params(void);

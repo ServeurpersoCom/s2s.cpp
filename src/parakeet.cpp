@@ -43,8 +43,6 @@ struct pk_init_params pk_init_default_params(void) {
     struct pk_init_params params;
     params.abi_version = PK_ABI_VERSION;
     params.model_path  = nullptr;
-    params.n_threads   = 0;
-    params.use_gpu     = true;
     return params;
 }
 
@@ -68,8 +66,6 @@ pk_context * pk_init(const struct pk_init_params * params) {
 
     pipeline_asr_params pipeline_params;
     pipeline_params.model_path = params->model_path;
-    pipeline_params.n_threads  = params->n_threads;
-    pipeline_params.use_gpu    = params->use_gpu;
 
     pipeline_asr * pipeline = pipeline_asr_load(pipeline_params);
     if (!pipeline) {

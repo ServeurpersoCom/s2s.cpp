@@ -15,8 +15,6 @@ struct pipeline_asr;
 
 struct pipeline_asr_params {
     std::string model_path;
-    int         n_threads = 0;
-    bool        use_gpu   = true;
     std::string dump_dir;  // when set, write the stage tensors there as f32 dumps
 };
 

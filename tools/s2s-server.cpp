@@ -202,13 +202,13 @@ int main(int argc, char ** argv) {
             voices_dir.c_str());
     s2s_log(S2S_LOG_INFO, "[Load] AEC %s", aec_path.c_str());
 
-    setup.models.vad = sv_init(vad_path.c_str(), 1);
+    setup.models.vad = sv_init(vad_path.c_str());
     if (!setup.models.vad) {
         s2s_log(S2S_LOG_ERROR, "[Server] FATAL: %s", sv_last_error());
         return 1;
     }
 
-    setup.models.turn = st_init(turn_path.c_str(), 0);
+    setup.models.turn = st_init(turn_path.c_str());
     if (!setup.models.turn) {
         s2s_log(S2S_LOG_ERROR, "[Server] FATAL: %s", st_last_error());
         return 1;
@@ -236,7 +236,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    setup.models.aec = lv_init(aec_path.c_str(), 1, 0);
+    setup.models.aec = lv_init(aec_path.c_str());
     if (!setup.models.aec) {
         s2s_log(S2S_LOG_ERROR, "[Server] FATAL: %s", lv_last_error());
         return 1;

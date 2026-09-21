@@ -14,8 +14,8 @@ quantize() {
     fi
 }
 
-# Parakeet TDT 0.6B (native F32): encoder dominates the file, the LSTM
-# prediction net and the joint stay F32 inside the converter.
+# Parakeet TDT 0.6B (native F32): every 2D weight quantizes, the convolution
+# kernels, the sinusoid table and the relative attention biases stay F32.
 for type in Q4_K_M Q5_K_M Q6_K Q8_0; do
     quantize models/parakeet-tdt-0.6b-v3-F32.gguf "$type"
 done

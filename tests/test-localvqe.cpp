@@ -66,7 +66,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    lv_context * ctx = lv_init(argv[1], 1, 0);
+    lv_context * ctx = lv_init(argv[1]);
     if (!ctx) {
         fprintf(stderr, "[LocalVQE] FATAL: %s\n", lv_last_error());
         return 1;

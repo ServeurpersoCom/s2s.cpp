@@ -351,7 +351,7 @@ static void st_worker(st_context * ctx) {
     }
 }
 
-st_context * st_init(const char * gguf_path, int n_threads) {
+st_context * st_init(const char * gguf_path) {
     if (!gguf_path) {
         s2s_set_error("[SmartTurn] Gguf_path is NULL");
         return nullptr;
@@ -381,7 +381,7 @@ st_context * st_init(const char * gguf_path, int n_threads) {
         ctx->mel_cfg.fmin        = 0.0f;
         ctx->mel_cfg.fmax        = (float) ctx->sample_rate * 0.5f;
 
-        ctx->backend = backend_init_cpu("SmartTurn", n_threads).backend;
+        ctx->backend = backend_init_cpu("SmartTurn", backend_cpu_n_threads()).backend;
         if (!ctx->backend) {
             s2s_set_error("[SmartTurn] Failed to init the CPU backend");
             gf_close(&gf);
