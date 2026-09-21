@@ -98,12 +98,15 @@ export function snippet(): string {
 
 	${body}
 
-	s2s.on('state', (state) => console.log('state', state));
+	// one button starts the session and stops it, which releases the
+	// microphone; the label follows the state, a stop from the server too
+	const talk = document.querySelector('#talk');
+	s2s.on('state', (state) => (talk.textContent = state === 'idle' ? 'Talk' : 'Stop'));
 	s2s.on('user_text', (text) => console.log('user', text));
 	s2s.on('assistant_text', (text) => console.log('assistant', text));
 	s2s.on('error', (message) => console.error(message));
 
 	// start() needs a user gesture and a secure context
-	document.querySelector('#talk').onclick = () => s2s.start();
+	talk.onclick = () => (s2s.getState() === 'idle' ? s2s.start() : s2s.stop());
 </script>`;
 }

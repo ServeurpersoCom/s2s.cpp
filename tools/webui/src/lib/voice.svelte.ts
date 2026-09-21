@@ -1,4 +1,4 @@
-import type { S2S, S2SOptions, S2SState } from './s2s.js';
+import type { S2S, S2SMessage, S2SOptions, S2SState } from './s2s.js';
 import { postLog } from './api.js';
 import { num } from './fields.js';
 import { app, settings, toast } from './state.svelte.js';
@@ -78,12 +78,46 @@ export interface ChatTurn {
 	done: boolean;
 }
 
+// The conversation survives a reload: the page files every version the
+// component reports and seeds the next component with it. It holds what
+// the model knows, so a reloaded line is what was heard, never the text
+// written past it. Its own key: a reset of the settings leaves it alone.
+const HISTORY_KEY = 's2s.history';
+
+function loadHistory(): S2SMessage[] {
+	try {
+		const raw = localStorage.getItem(HISTORY_KEY);
+		if (raw) {
+			return JSON.parse(raw) as S2SMessage[];
+		}
+	} catch {
+		// corrupt or unavailable
+	}
+	return [];
+}
+
+// the turn identity dies with its connection, so only the words are kept
+function saveHistory(messages: S2SMessage[]) {
+	try {
+		const words = messages.map(({ role, content }) => ({ role, content }));
+		localStorage.setItem(HISTORY_KEY, JSON.stringify(words));
+	} catch {
+		// full or unavailable
+	}
+}
+
 // Live view of the component, for whatever the page decides to draw. Nothing
 // here touches the DOM: the component stays invisible until a host renders
-// something from this state.
+// something from this state. The conversation filed by the last visit shows
+// before any start.
 export const voice = $state({
 	state: 'idle' as S2SState,
-	chat: [] as ChatTurn[]
+	chat: loadHistory().map(({ role, content }): ChatTurn => ({
+		role,
+		draft: content,
+		spokenEnd: content.length,
+		done: true
+	}))
 });
 
 function lastAssistant(): ChatTurn | undefined {
@@ -137,6 +171,7 @@ function loadModule(): Promise<S2SModule> {
 export async function createVoice(): Promise<S2S> {
 	const { S2S } = await loadModule();
 	const s2s = new S2S(toOptions());
+	s2s.setHistory(loadHistory());
 
 	s2s.on('state', (state) => {
 		voice.state = state;
@@ -178,6 +213,7 @@ export async function createVoice(): Promise<S2S> {
 		}
 		turn.spokenEnd = textEnd;
 	});
+	s2s.on('history', saveHistory);
 	// everything the component reports goes to the server log, so the card on
 	// the right tells the whole story, and a failure also pops the toast
 	s2s.on('log', (line) => {
