@@ -3,38 +3,63 @@ import { postLog } from './api.js';
 import { num } from './fields.js';
 import { app, settings, toast } from './state.svelte.js';
 
+// A value the server does not serve is left out and its default applies: a
+// voice or a language kept from another server. Before /props answers there
+// is no list to judge by, and the value goes as it is.
+function served(value: string, list: string[] | undefined): string | undefined {
+	return value && (!list || list.includes(value)) ? value : undefined;
+}
+
+export function sessionVoice(): string | undefined {
+	return served(settings.voice, app.props?.defaults.tts_voices);
+}
+
+// auto is no language of the list, the talker guesses it from the text
+export function sessionLanguage(): string | undefined {
+	const list = app.props?.defaults.tts_languages;
+	return served(settings.language, list && [...list, 'auto']);
+}
+
 // The one place the settings panel and the component meet. The panel edits a
 // Settings object, this turns it into the options the component takes, and a
 // host embedding the component elsewhere fills the same fields by hand. The
 // page talks to the server that served it: no url here, the snippet adds its
-// own.
+// own. Only what the session applies goes out: the tools in the agentic
+// mode alone, the model settings in every mode but loopback, where no model
+// is in the path. The choices of the other modes stay in the settings.
 export function toOptions(): S2SOptions {
+	const d = app.props?.defaults;
 	// a server that owns its endpoint takes none of it from the page
-	const fixed = app.props?.defaults.llm_fixed ?? false;
+	const fixed = d?.llm_fixed ?? false;
+	const mode = settings.mode || d?.mode || '';
+	const agentic = mode === 'agentic';
+	const model = mode !== 'loopback';
 	return {
 		mode: settings.mode || undefined,
-		instructions: settings.systemPrompt,
+		instructions: model ? settings.systemPrompt : undefined,
 		llmUrl: fixed ? undefined : settings.llmUrl,
 		llmModel: fixed ? undefined : settings.llmModel,
 		llmKey: fixed ? undefined : settings.llmKey,
-		tools: settings.tools.length ? [...settings.tools] : undefined,
-		maxRounds: num(settings.maxRounds),
-		toolTimeoutSec: num(settings.toolTimeoutSec),
-		sampling: {
-			temperature: num(settings.temperature),
-			topP: num(settings.topP),
-			topK: num(settings.topK),
-			minP: num(settings.minP),
-			maxTokens: num(settings.maxTokens),
-			presencePenalty: num(settings.presencePenalty),
-			frequencyPenalty: num(settings.frequencyPenalty),
-			seed: num(settings.seed),
-			reasoningEffort: settings.reasoningEffort
-		},
-		llmTimeoutSec: num(settings.llmTimeoutSec),
+		tools: agentic && settings.tools.length ? [...settings.tools] : undefined,
+		maxRounds: agentic ? num(settings.maxRounds) : undefined,
+		toolTimeoutSec: agentic ? num(settings.toolTimeoutSec) : undefined,
+		sampling: model
+			? {
+					temperature: num(settings.temperature),
+					topP: num(settings.topP),
+					topK: num(settings.topK),
+					minP: num(settings.minP),
+					maxTokens: num(settings.maxTokens),
+					presencePenalty: num(settings.presencePenalty),
+					frequencyPenalty: num(settings.frequencyPenalty),
+					seed: num(settings.seed),
+					reasoningEffort: settings.reasoningEffort
+				}
+			: undefined,
+		llmTimeoutSec: model ? num(settings.llmTimeoutSec) : undefined,
 		tts: {
-			voice: settings.voice,
-			language: settings.language,
+			voice: sessionVoice(),
+			language: sessionLanguage(),
 			minChars: num(settings.ttsMinChars),
 			charsPerSecond: num(settings.ttsCharsPerSecond),
 			marginSeconds: num(settings.ttsMarginSeconds),

@@ -7,7 +7,13 @@
 	import { ph } from '../lib/fields.js';
 	import { ENDPOINT_EXAMPLE, MODES, type Mode } from '../lib/config.js';
 	import { ECHO_DEFAULT, ECHO_MODES, type S2SEcho } from '../lib/s2s.js';
-	import { clearContext, getClient, voice } from '../lib/voice.svelte.js';
+	import {
+		clearContext,
+		getClient,
+		sessionLanguage,
+		sessionVoice,
+		voice
+	} from '../lib/voice.svelte.js';
 
 	let models = $state<string[]>([]);
 	let tools = $state<string[]>([]);
@@ -32,9 +38,6 @@
 		settings.mode = (e.target as HTMLSelectElement).value as Mode;
 	}
 
-	// A select shows the value in force, which is the field when it is set and
-	// the server default otherwise: listing the default as an extra entry is
-	// what put ryan and auto in there twice.
 	// the whole configuration, as the code an integrator pastes on their page
 	async function copySnippet() {
 		try {
@@ -59,6 +62,8 @@
 		settings.llmModel = (e.target as HTMLSelectElement).value;
 	}
 
+	// A select shows the value in force: the field when the server serves it,
+	// the server default otherwise, never an extra entry for either.
 	function onVoice(e: Event) {
 		settings.voice = (e.target as HTMLSelectElement).value;
 	}
@@ -518,10 +523,7 @@
 				title="The voice every sentence is cloned from, read from voices/ at startup. reference speech continues a recording: timbre, pace and accent. speaker embedding only keeps the timbre, and starts faster."
 			>
 				<span class="model-label">Voice</span>
-				<select class="model-select" value={settings.voice || d?.voice || ''} onchange={onVoice}>
-					{#if settings.voice && !d?.tts_voices.includes(settings.voice)}
-						<option value={settings.voice}>{settings.voice}</option>
-					{/if}
+				<select class="model-select" value={sessionVoice() || d?.voice || ''} onchange={onVoice}>
 					{#each d?.tts_voices ?? [] as name (name)}
 						<option value={name}>{name}</option>
 					{/each}
@@ -535,13 +537,10 @@
 				<span class="model-label">Language</span>
 				<select
 					class="model-select"
-					value={settings.language || d?.language || 'auto'}
+					value={sessionLanguage() || d?.language || 'auto'}
 					onchange={onLanguage}
 				>
 					<option value="auto">auto</option>
-					{#if settings.language && settings.language !== 'auto' && !d?.tts_languages.includes(settings.language)}
-						<option value={settings.language}>{settings.language}</option>
-					{/if}
 					{#each d?.tts_languages ?? [] as name (name)}
 						<option value={name}>{name}</option>
 					{/each}

@@ -1,5 +1,5 @@
 import { ENDPOINT_EXAMPLE } from './config.js';
-import { settings } from './state.svelte.js';
+import { app, settings } from './state.svelte.js';
 import { toOptions } from './voice.svelte.js';
 
 // Turns the current settings into the snippet an integrator pastes on their
@@ -69,8 +69,11 @@ export function snippet(): string {
 		llmModel: undefined,
 		llmKey: undefined
 	}) ?? {}) as Record<string, unknown>;
-	const endpoint = settings.llmUrl || ENDPOINT_EXAMPLE;
-	const model = settings.llmModel || 'model-name';
+	// a server that owns its endpoint keeps it from the page: the command
+	// gets the examples, never what the browser kept from another server
+	const fixed = app.props?.defaults.llm_fixed ?? false;
+	const endpoint = (!fixed && settings.llmUrl) || ENDPOINT_EXAMPLE;
+	const model = (!fixed && settings.llmModel) || 'model-name';
 
 	// Everything stays relative to the page the snippet lands on: the module
 	// comes from the s2s-server that serves it, and the component resolves
