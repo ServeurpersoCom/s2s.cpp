@@ -20,6 +20,7 @@ export interface S2SDefaults {
 	tts_margin_seconds: number;
 	llm_timeout_sec: number;
 	max_rounds: number;
+	tool_timeout_sec: number;
 	reasoning_effort: string;
 	vad_neg_threshold: number;
 	vad_threshold: number;

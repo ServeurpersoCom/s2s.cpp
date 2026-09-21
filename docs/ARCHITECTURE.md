@@ -298,8 +298,10 @@ turn duration up to 60 s: the server refuses any other with an `error`
 naming the field, which keeps its default.
 
 `session.update` carries `tools`, the names of the tools an agentic
-session lets the model use, and `max_rounds`, its cap on the rounds of
-calls. An absent list and an empty one read the same: the model is
+session lets the model use, `max_rounds`, its cap on the rounds of
+calls, and `tool_timeout_sec`, how long one call may run, 10 s by
+default against the 5 s of `llm_timeout_sec`: a tool goes out to the
+network. An absent list and an empty one read the same: the model is
 offered none.
 
 HTTP routes: `/` the page, `/s2s.js` the component, `/props` the session

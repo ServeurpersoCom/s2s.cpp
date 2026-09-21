@@ -784,6 +784,9 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     if (patch.max_rounds > 0) {
         conn->client.max_rounds = patch.max_rounds;
     }
+    if (patch.tool_timeout_sec > 0) {
+        conn->client.llm.tool_timeout_sec = patch.tool_timeout_sec;
+    }
     if (!patch.echo.empty() && patch.echo != conn->echo) {
         // A fresh canceller learns the echo path of the new setup from
         // nothing; the previous one would start from a stale path.

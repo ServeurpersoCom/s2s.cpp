@@ -143,9 +143,11 @@ export interface S2SOptions {
 	llmKey?: string;
 	// names of the tools the model may use in the agentic mode, as the
 	// endpoint lists them on its own tool route, and the rounds of calls one
-	// turn may take before the answer is given up on
+	// turn may take before the answer is given up on, and the seconds a tool
+	// may work before its call fails
 	tools?: string[];
 	maxRounds?: number;
+	toolTimeoutSec?: number;
 	sampling?: S2SSampling;
 	tts?: S2STts;
 	llmTimeoutSec?: number;
@@ -578,6 +580,7 @@ export class S2S {
 				llm_timeout_sec: this.options.llmTimeoutSec,
 				tools: this.options.tools,
 				max_rounds: this.options.maxRounds,
+				tool_timeout_sec: this.options.toolTimeoutSec,
 				sampling: {
 					temperature: this.options.sampling?.temperature,
 					top_p: this.options.sampling?.topP,

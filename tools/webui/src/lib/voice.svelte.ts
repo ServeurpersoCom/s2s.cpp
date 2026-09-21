@@ -19,6 +19,7 @@ export function toOptions(): S2SOptions {
 		llmKey: fixed ? undefined : settings.llmKey,
 		tools: settings.tools.length ? [...settings.tools] : undefined,
 		maxRounds: num(settings.maxRounds),
+		toolTimeoutSec: num(settings.toolTimeoutSec),
 		sampling: {
 			temperature: num(settings.temperature),
 			topP: num(settings.topP),

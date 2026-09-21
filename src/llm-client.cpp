@@ -667,9 +667,9 @@ bool llm_client_tool_call(llm_client *              c,
     yyjson_mut_doc_free(doc);
 
     httplib::Client & client = *c->http;
-    client.set_connection_timeout(c->params.timeout_sec, 0);
-    client.set_read_timeout(c->params.timeout_sec, 0);
-    client.set_write_timeout(c->params.timeout_sec, 0);
+    client.set_connection_timeout(c->params.tool_timeout_sec, 0);
+    client.set_read_timeout(c->params.tool_timeout_sec, 0);
+    client.set_write_timeout(c->params.tool_timeout_sec, 0);
 
     httplib::Headers headers;
     if (!c->params.api_key.empty()) {

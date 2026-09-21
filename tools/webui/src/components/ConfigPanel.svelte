@@ -435,7 +435,7 @@
 
 				<div class="meta-grid">
 					<label
-						title="Longest the endpoint may stay silent, in seconds, before the answer is dropped with an error. It bounds the wait between two pieces of the stream, not the whole answer: reaching the endpoint, a long prompt to read or a slow first word count, a long answer does not."
+						title="Longest the endpoint may stay silent, in seconds, before the answer is dropped with an error: reaching it, a model it loads, the prompt it reads before the first word, and every pause of the stream. A long answer never trips it. A real time voice has no use for a model slower than that."
 						>Timeout <input
 							type="text"
 							placeholder={ph(d?.llm_timeout_sec)}
@@ -472,6 +472,14 @@
 							type="text"
 							placeholder={ph(d?.max_rounds)}
 							bind:value={settings.maxRounds}
+						/></label
+					>
+					<label
+						title="Longest a tool may work, in seconds, before its call fails: the endpoint runs it, a search or a fetch, and answers once it is done. Longer than the model timeout, a tool goes out to the network."
+						>Timeout <input
+							type="text"
+							placeholder={ph(d?.tool_timeout_sec)}
+							bind:value={settings.toolTimeoutSec}
 						/></label
 					>
 
