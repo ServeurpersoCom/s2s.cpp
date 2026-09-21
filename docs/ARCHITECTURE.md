@@ -211,12 +211,13 @@ unit left without a single letter or digit is not emitted: a talker given
 nothing to say never finds its end of speech. The log says so, with the
 length of the unit and never its text.
 
-The TTS bridge then skips a unit shorter than `tts_min_chars` characters,
-and bounds each synthesis to a frame budget derived from the text length,
-`tts_chars_per_second` plus `tts_margin_seconds`. All three are session
-parameters. The bridge draws the seed of every sentence itself and logs
-it with the sentence, so a take can be replayed exactly by setting that
-seed.
+In loopback a transcript shorter than `tts_min_chars` characters is not
+spoken back, the tail of a noise the recognizer had to name; the answers
+of the model are always spoken. The TTS bridge bounds each synthesis to
+a frame budget derived from the text length, `tts_chars_per_second` plus
+`tts_margin_seconds`. All three are session parameters. The bridge draws
+the seed of every sentence itself and logs it with the sentence, so a
+take can be replayed exactly by setting that seed.
 
 Every unit is a clone of one reference voice, read once at startup from
 `--voices`: a `<name>.spk` speaker embedding, and when the voice has them

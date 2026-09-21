@@ -540,7 +540,7 @@
 
 			<div class="meta-grid">
 				<label
-					title="A sentence shorter than this is not spoken at all: a talker given a lone character or two may never find its end of speech."
+					title="Loopback only: a transcript shorter than this is not spoken back, it is the tail of a noise the recognizer had to name. The answers of the model are always spoken."
 					>Min chars <input
 						type="text"
 						placeholder={ph(d?.tts_min_chars)}

@@ -124,8 +124,8 @@ export interface S2STts {
 	// voices; reference speech carries its own
 	language?: string;
 	sampling?: S2STtsSampling;
-	// guards: a unit shorter than minChars is not spoken, and the frame budget
-	// of a synthesis is derived from the text length
+	// guards: in loopback a transcript shorter than minChars is not spoken
+	// back, and the frame budget of a synthesis is derived from the text length
 	minChars?: number;
 	charsPerSecond?: number;
 	marginSeconds?: number;
@@ -490,8 +490,19 @@ export class S2S {
 		this.pushHistory();
 	}
 
+	// Forgets the conversation. An answer in flight goes with it: the server
+	// stops it, the speaker falls silent, and nothing of it is filed or shown,
+	// so whatever the server still sends for it finds it closed.
 	clearHistory() {
 		this.log('History cleared');
+		if (this.answering) {
+			this.send({ type: 'response.cancel' });
+			this.flushPlayback();
+			this.units = [];
+			this.answerDone = false;
+			this.answering = false;
+			this.setState('listening');
+		}
 		this.setHistory([]);
 	}
 

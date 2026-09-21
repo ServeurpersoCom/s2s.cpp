@@ -532,10 +532,22 @@ static void conn_answer(Connection * conn, const AnswerJob & job) {
     } else if (client.mode == "loopback") {
         // No endpoint in the path: the recognized text is the answer.
         answer = transcript;
-        SentenceUnit unit;
-        unit.text = answer;
-        unit.end  = sentence_utf16_len(answer);
-        conn_speak(conn, unit, client.tts);
+
+        // A couple of characters is not speech, it is the tail of a noise the
+        // recognizer had to name: spoken back, it sends the talker off its
+        // distribution. Characters, not bytes: an accented letter is one.
+        int n_chars = 0;
+        for (const char c : answer) {
+            n_chars += ((unsigned char) c & 0xC0) != 0x80;
+        }
+        if (n_chars < client.tts.guards.min_chars) {
+            s2s_log(S2S_LOG_INFO, "[TTS] Skipped %d characters, fewer than %d", n_chars, client.tts.guards.min_chars);
+        } else {
+            SentenceUnit unit;
+            unit.text = answer;
+            unit.end  = sentence_utf16_len(answer);
+            conn_speak(conn, unit, client.tts);
+        }
     } else {
         std::vector<llm_message> messages;
         if (!client.system_prompt.empty()) {

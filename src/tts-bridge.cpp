@@ -340,13 +340,6 @@ bool tts_bridge_speak(tts_bridge *              b,
     for (const char c : text) {
         n_chars += ((unsigned char) c & 0xC0) != 0x80;
     }
-    if (n_chars < request.guards.min_chars) {
-        // A couple of characters is not speech, it is the tail of a noise the
-        // recognizer had to name. Saying it aloud is what sends the talker
-        // off its distribution.
-        s2s_log(S2S_LOG_INFO, "[TTS] Skipped %d characters, fewer than %d", n_chars, request.guards.min_chars);
-        return true;
-    }
     if (cancel && cancel->load()) {
         return false;
     }

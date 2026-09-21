@@ -48,7 +48,7 @@ struct tts_sampling {
 // constants: a voice that gets cut short, or a recognizer that names noises,
 // is tuned from the surface.
 struct tts_guards {
-    int   min_chars        = 3;      // below this the unit is not spoken at all
+    int   min_chars        = 3;      // below this a loopback transcript is not spoken back
     float chars_per_second = 15.0f;  // speech rate used to budget the frames
     float margin_seconds   = 2.0f;   // added to the budget, and its floor
 };
