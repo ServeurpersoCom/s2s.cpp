@@ -52,13 +52,14 @@ if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
     endif()
 endif()
 
-# ggml as subdirectory, inherits GGML_CUDA, GGML_METAL, etc. from cmake flags.
+# ggml from GGML_SOURCE_DIR (the submodule by default), inherits GGML_CUDA, GGML_METAL, etc. from cmake flags.
 # CUDA graphs default on: standalone ggml ships them off. Overridable with
 # -DGGML_CUDA_GRAPHS=OFF or at runtime with GGML_CUDA_DISABLE_GRAPHS=1.
 if(NOT DEFINED GGML_CUDA_GRAPHS)
     set(GGML_CUDA_GRAPHS_DEFAULT ON)
 endif()
-add_subdirectory(ggml)
+set(GGML_SOURCE_DIR "${CMAKE_SOURCE_DIR}/ggml" CACHE PATH "ggml source tree")
+add_subdirectory(${GGML_SOURCE_DIR} ggml)
 
 # qwentts.cpp as a submodule: the TTS runs in process through its C ABI.
 # Its own CMakeLists builds a standalone project with its own ggml, its own
@@ -83,7 +84,7 @@ add_library(qwen-core STATIC
 target_compile_definitions(qwen-core PUBLIC QWEN_STATIC)
 target_include_directories(qwen-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/qwentts.cpp/src)
 target_include_directories(qwen-core PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/qwentts)
-target_include_directories(qwen-core SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ggml/include)
+target_include_directories(qwen-core SYSTEM PRIVATE ${GGML_SOURCE_DIR}/include)
 target_link_libraries(qwen-core PUBLIC ggml Threads::Threads)
 if(TARGET ggml-base)
     target_link_libraries(qwen-core PUBLIC ggml-base)
@@ -110,7 +111,7 @@ macro(link_ggml_backends target)
         ${CMAKE_BINARY_DIR}
     )
     target_include_directories(${target} SYSTEM PRIVATE
-        ${CMAKE_SOURCE_DIR}/ggml/include
+        ${GGML_SOURCE_DIR}/include
     )
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4 /wd4100 /wd4505)

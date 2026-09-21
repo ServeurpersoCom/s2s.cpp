@@ -79,6 +79,8 @@ git submodule update --init      # ggml and qwentts.cpp, not the ggml inside qwe
 NVCC_CCBIN=g++-13 ./buildcuda.sh # rolling release distros (Arch w/ GCC 16, etc.)
 ```
 
+`-DGGML_SOURCE_DIR=<path>` swaps the ggml submodule for another tree (upstream ggml, llama.cpp/ggml).
+
 `GGML_BACKEND` picks a device by name (`CUDA0`, `Vulkan1`...) when the
 machine has several.
 
