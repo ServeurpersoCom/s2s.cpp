@@ -82,8 +82,8 @@ struct Connection {
     conn_send_fn              send      = nullptr;
     void *                    send_user = nullptr;
 
-    // Numbers the connection in the log: its three threads write as
-    // Reader-N, Responder-N and Writer-N, so one grep follows one client.
+    // Numbers the connection in the log: its four threads write as Reader-N,
+    // Recognizer-N, Responder-N and Writer-N, so one grep follows one client.
     int id = 0;
 
     // The turn state machine. The reader feeds it and the responder releases

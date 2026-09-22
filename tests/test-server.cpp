@@ -139,7 +139,19 @@ static std::vector<std::string> mock_words(const std::string & text) {
 }
 
 static std::string mock_frame(const std::string & content) {
-    return "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"" + rt_escape(content) + "\"}}]}\n\n";
+    yyjson_mut_doc * doc     = yyjson_mut_doc_new(nullptr);
+    yyjson_mut_val * root    = yyjson_mut_obj(doc);
+    yyjson_mut_val * choices = yyjson_mut_obj_add_arr(doc, root, "choices");
+    yyjson_mut_val * choice  = yyjson_mut_arr_add_obj(doc, choices);
+    yyjson_mut_obj_add_int(doc, choice, "index", 0);
+    yyjson_mut_val * delta = yyjson_mut_obj_add_obj(doc, choice, "delta");
+    yyjson_mut_obj_add_strn(doc, delta, "content", content.c_str(), content.size());
+    yyjson_mut_doc_set_root(doc, root);
+    char *      json  = yyjson_mut_write(doc, 0, nullptr);
+    std::string frame = std::string("data: ") + (json ? json : "{}") + "\n\n";
+    free(json);
+    yyjson_mut_doc_free(doc);
+    return frame;
 }
 
 int main(int argc, char ** argv) {
@@ -410,22 +422,25 @@ int main(int argc, char ** argv) {
         }
     });
 
-    std::string session =
-        "{\"type\":\"session.update\",\"session\":{\"mode\":\"" + mode + "\",\"echo\":\"" + echo + "\"";
     if (!named.empty()) {
         llm_url = named;
     }
+    rt_frame         update  = rt_frame_begin("session.update");
+    yyjson_mut_val * session = yyjson_mut_obj_add_obj(update.doc, update.root, "session");
+    yyjson_mut_obj_add_strn(update.doc, session, "mode", mode.c_str(), mode.size());
+    yyjson_mut_obj_add_strn(update.doc, session, "echo", echo.c_str(), echo.size());
     if (!llm_url.empty()) {
-        session += ",\"llm_url\":\"" + llm_url + "\",\"llm_model\":\"mock\"";
+        yyjson_mut_obj_add_strn(update.doc, session, "llm_url", llm_url.c_str(), llm_url.size());
+        yyjson_mut_obj_add_str(update.doc, session, "llm_model", "mock");
     }
     if (timeout > 0) {
-        session += ",\"llm_timeout_sec\":" + std::to_string(timeout);
+        yyjson_mut_obj_add_int(update.doc, session, "llm_timeout_sec", timeout);
     }
     if (other) {
-        session += ",\"llm_url\":\"http://127.0.0.1:9/v1\",\"llm_key\":\"stolen\"";
+        yyjson_mut_obj_add_str(update.doc, session, "llm_url", "http://127.0.0.1:9/v1");
+        yyjson_mut_obj_add_str(update.doc, session, "llm_key", "stolen");
     }
-    session += "}}";
-    client.send(session);
+    client.send(rt_frame_end(update));
 
     // One frame per tick of a fixed clock: the voice of the current step, what
     // the loudspeaker plays during it, and the microphone that hears both.
@@ -516,13 +531,15 @@ int main(int argc, char ** argv) {
         }
 
         if (!mute) {
-            std::string message = "{\"type\":\"input_audio_buffer.append\",\"audio\":\"" +
-                                  rt_float_to_pcm16_base64(mic.data(), frame) + "\"";
-            if (any && echo == "server") {
-                message += ",\"reference\":\"" + rt_float_to_pcm16_base64(playback.data(), frame) + "\"";
+            const std::string audio = rt_float_to_pcm16_base64(mic.data(), frame);
+            const std::string reference =
+                any && echo == "server" ? rt_float_to_pcm16_base64(playback.data(), frame) : "";
+            rt_frame append = rt_frame_begin("input_audio_buffer.append");
+            rt_frame_str(append, "audio", audio);
+            if (!reference.empty()) {
+                rt_frame_str(append, "reference", reference);
             }
-            message += "}";
-            sent = client.send(message);
+            sent = client.send(rt_frame_end(append));
         }
 
         if (done) {

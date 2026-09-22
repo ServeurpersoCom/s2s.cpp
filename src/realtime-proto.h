@@ -38,7 +38,7 @@
 
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -406,66 +406,78 @@ static rt_client_message rt_parse(const std::string & frame) {
 }
 
 // Server frames. Each helper writes one complete object: the caller only ever
-// hands strings and numbers, never JSON.
-static std::string rt_event(const char * type) {
-    return std::string("{\"type\":\"") + type + "\"}";
+// hands strings and numbers, never JSON. A string value is referenced, not
+// copied: it outlives the write. Bytes that are not UTF-8 go out as they came,
+// like the rest of the pipeline treats them.
+#define RT_WRITE_FLAGS YYJSON_WRITE_ALLOW_INVALID_UNICODE
+
+// A frame under construction: its document and the object every field goes
+// into. rt_frame_end writes it and frees the document.
+struct rt_frame {
+    yyjson_mut_doc * doc  = nullptr;
+    yyjson_mut_val * root = nullptr;
+};
+
+static rt_frame rt_frame_begin(const char * type) {
+    rt_frame frame;
+    frame.doc  = yyjson_mut_doc_new(nullptr);
+    frame.root = yyjson_mut_obj(frame.doc);
+    yyjson_mut_doc_set_root(frame.doc, frame.root);
+    yyjson_mut_obj_add_str(frame.doc, frame.root, "type", type);
+    return frame;
 }
 
-static std::string rt_escape(const std::string & text) {
-    std::string out;
-    out.reserve(text.size() + 8);
-    for (unsigned char c : text) {
-        switch (c) {
-            case '"':
-                out += "\\\"";
-                break;
-            case '\\':
-                out += "\\\\";
-                break;
-            case '\n':
-                out += "\\n";
-                break;
-            case '\r':
-                out += "\\r";
-                break;
-            case '\t':
-                out += "\\t";
-                break;
-            default:
-                if (c < 0x20) {
-                    char buffer[8];
-                    snprintf(buffer, sizeof(buffer), "\\u%04x", c);
-                    out += buffer;
-                } else {
-                    out += (char) c;
-                }
-        }
-    }
+static void rt_frame_str(rt_frame & frame, const char * key, const std::string & value) {
+    yyjson_mut_obj_add_strn(frame.doc, frame.root, key, value.c_str(), value.size());
+}
+
+static std::string rt_frame_end(rt_frame & frame) {
+    char *      json = yyjson_mut_write(frame.doc, RT_WRITE_FLAGS, nullptr);
+    std::string out  = json ? json : "{}";
+    free(json);
+    yyjson_mut_doc_free(frame.doc);
     return out;
 }
 
+static std::string rt_event(const char * type) {
+    rt_frame frame = rt_frame_begin(type);
+    return rt_frame_end(frame);
+}
+
 static std::string rt_event_text(const char * type, const char * key, const std::string & value) {
-    return std::string("{\"type\":\"") + type + "\",\"" + key + "\":\"" + rt_escape(value) + "\"}";
+    rt_frame frame = rt_frame_begin(type);
+    rt_frame_str(frame, key, value);
+    return rt_frame_end(frame);
 }
 
 // What the voice speaks, one unit at a time. text_end counts UTF-16 code
 // units of the written text, so a browser slices its copy with it as is.
 static std::string rt_event_spoken(const std::string & unit, size_t text_end) {
-    return std::string("{\"type\":\"response.output_audio_transcript.delta\",\"delta\":\"") + rt_escape(unit) +
-           "\",\"text_end\":" + std::to_string(text_end) + "}";
+    rt_frame frame = rt_frame_begin("response.output_audio_transcript.delta");
+    rt_frame_str(frame, "delta", unit);
+    yyjson_mut_obj_add_uint(frame.doc, frame.root, "text_end", text_end);
+    return rt_frame_end(frame);
 }
 
 // The transcript of a user turn. item_id names the turn, so a later
 // transcript of the same turn replaces it instead of adding a message.
 static std::string rt_event_transcript(const std::string & item_id, const std::string & transcript) {
-    return std::string("{\"type\":\"conversation.item.input_audio_transcription.completed\",\"item_id\":\"") +
-           rt_escape(item_id) + "\",\"transcript\":\"" + rt_escape(transcript) + "\"}";
+    rt_frame frame = rt_frame_begin("conversation.item.input_audio_transcription.completed");
+    rt_frame_str(frame, "item_id", item_id);
+    rt_frame_str(frame, "transcript", transcript);
+    return rt_frame_end(frame);
 }
 
 static std::string rt_event_audio(const float * pcm, size_t n_samples) {
-    return "{\"type\":\"response.output_audio.delta\",\"delta\":\"" + rt_float_to_pcm16_base64(pcm, n_samples) + "\"}";
+    const std::string audio = rt_float_to_pcm16_base64(pcm, n_samples);
+    rt_frame          frame = rt_frame_begin("response.output_audio.delta");
+    rt_frame_str(frame, "delta", audio);
+    return rt_frame_end(frame);
 }
 
 static std::string rt_event_error(const std::string & message) {
-    return "{\"type\":\"error\",\"error\":{\"message\":\"" + rt_escape(message) + "\"}}";
+    rt_frame         frame = rt_frame_begin("error");
+    yyjson_mut_val * error = yyjson_mut_obj_add_obj(frame.doc, frame.root, "error");
+    yyjson_mut_obj_add_strn(frame.doc, error, "message", message.c_str(), message.size());
+    return rt_frame_end(frame);
 }

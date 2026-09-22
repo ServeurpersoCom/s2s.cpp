@@ -62,6 +62,24 @@ static bool origin_allowed(const std::vector<std::string> & origins, const httpl
     return std::find(origins.begin(), origins.end(), origin) != origins.end();
 }
 
+// Writes a document and frees it: the body of a JSON route.
+static std::string json_write(yyjson_mut_doc * doc, yyjson_write_flag flags) {
+    char *      json = yyjson_mut_write(doc, flags, nullptr);
+    std::string out  = json ? json : "{}";
+    free(json);
+    yyjson_mut_doc_free(doc);
+    return out;
+}
+
+// One string under one key: the shape of every error body.
+static std::string json_string(const char * key, const std::string & value) {
+    yyjson_mut_doc * doc  = yyjson_mut_doc_new(nullptr);
+    yyjson_mut_val * root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_strn(doc, root, key, value.c_str(), value.size());
+    return json_write(doc, 0);
+}
+
 static void on_signal(int) {
     if (g_server) {
         g_server->stop();
@@ -303,77 +321,80 @@ int main(int argc, char ** argv) {
             return;
         }
         const s2s_session_params turn;
+        const tts_request &      voice  = tts_bridge_defaults_request(setup.models.tts);
+        const tts_sampling &     tts    = tts_bridge_defaults(setup.models.tts);
+        const tts_guards &       guards = voice.guards;
 
-        std::string body = "{";
-        body += "\"version\":\"" + rt_escape(S2S_VERSION) + "\",";
-        body += "\"sample_rate\":" + std::to_string(S2S_INPUT_RATE) + ",";
+        yyjson_mut_doc * doc  = yyjson_mut_doc_new(nullptr);
+        yyjson_mut_val * root = yyjson_mut_obj(doc);
+        yyjson_mut_doc_set_root(doc, root);
+        yyjson_mut_obj_add_str(doc, root, "version", S2S_VERSION);
+        yyjson_mut_obj_add_int(doc, root, "sample_rate", S2S_INPUT_RATE);
+
         // Which files are actually loaded: the directory can hold several
         // quants of the same model and nobody should have to guess.
         // File names only: the page shows what is loaded, not where the
         // server keeps it, and the separator is the OS's business.
-        const auto file = [](const std::string & path) {
-            return rt_escape(std::filesystem::path(path).filename().string());
+        yyjson_mut_val * models = yyjson_mut_obj_add_obj(doc, root, "models");
+        const auto       file   = [doc, models](const char * key, const std::string & path) {
+            const std::string name = std::filesystem::path(path).filename().string();
+            yyjson_mut_obj_add_strncpy(doc, models, key, name.c_str(), name.size());
         };
-        body += "\"models\":{";
-        body += "\"vad\":\"" + file(vad_path) + "\",";
-        body += "\"turn\":\"" + file(turn_path) + "\",";
-        body += "\"asr\":\"" + file(asr_path) + "\",";
-        body += "\"talker\":\"" + file(talker_path) + "\",";
-        body += "\"codec\":\"" + file(codec_path) + "\",";
-        body += "\"aec\":\"" + file(aec_path) + "\"";
-        body += "},";
-        body += "\"defaults\":{";
-        body += "\"mode\":\"" + rt_escape(mode) + "\",";
-        body += std::string("\"llm_fixed\":") + (setup.llm_fixed ? "true" : "false") + ",";
-        body += "\"instructions\":\"" + rt_escape(system_prompt) + "\",";
-        body += "\"voice\":\"" + rt_escape(tts_bridge_defaults_request(setup.models.tts).voice) + "\",";
-        body += "\"language\":\"" + rt_escape(tts_bridge_defaults_request(setup.models.tts).language) + "\",";
-        const tts_sampling & tts = tts_bridge_defaults(setup.models.tts);
+        file("vad", vad_path);
+        file("turn", turn_path);
+        file("asr", asr_path);
+        file("talker", talker_path);
+        file("codec", codec_path);
+        file("aec", aec_path);
 
-        body += "\"tts_voices\":[";
-        const std::vector<std::string> & voices = tts_bridge_voices(setup.models.tts);
-        for (size_t i = 0; i < voices.size(); i++) {
-            body += std::string(i ? "," : "") + "\"" + rt_escape(voices[i]) + "\"";
-        }
-        body += "],";
-
-        body += "\"tts_languages\":[";
-        const std::vector<std::string> & languages = tts_bridge_languages(setup.models.tts);
-        for (size_t i = 0; i < languages.size(); i++) {
-            body += std::string(i ? "," : "") + "\"" + rt_escape(languages[i]) + "\"";
-        }
-        body += "],";
-
-        const tts_guards & guards = tts_bridge_defaults_request(setup.models.tts).guards;
-        body += "\"tts_min_chars\":" + std::to_string(guards.min_chars) + ",";
-        body += "\"tts_chars_per_second\":" + std::to_string(guards.chars_per_second) + ",";
-        body += "\"tts_margin_seconds\":" + std::to_string(guards.margin_seconds) + ",";
-        body += "\"llm_timeout_sec\":" + std::to_string(llm_defaults.timeout_sec) + ",";
-        body += "\"max_rounds\":" + std::to_string(setup.defaults.max_rounds) + ",";
-        body += "\"tool_timeout_sec\":" + std::to_string(llm_defaults.tool_timeout_sec) + ",";
-        body += "\"reasoning_effort\":\"" + rt_escape(llm_defaults.sampling.reasoning_effort) + "\",";
-        body += "\"tts_temperature\":" + std::to_string(tts.temperature) + ",";
-        body += "\"tts_top_k\":" + std::to_string(tts.top_k) + ",";
-        body += "\"tts_top_p\":" + std::to_string(tts.top_p) + ",";
-        body += "\"tts_repetition_penalty\":" + std::to_string(tts.repetition_penalty) + ",";
-        body += "\"tts_subtalker_temperature\":" + std::to_string(tts.subtalker_temperature) + ",";
-        body += "\"tts_subtalker_top_k\":" + std::to_string(tts.subtalker_top_k) + ",";
-        body += "\"tts_subtalker_top_p\":" + std::to_string(tts.subtalker_top_p) + ",";
+        yyjson_mut_val * defaults = yyjson_mut_obj_add_obj(doc, root, "defaults");
+        const auto       str      = [doc, defaults](const char * key, const std::string & value) {
+            yyjson_mut_obj_add_strn(doc, defaults, key, value.c_str(), value.size());
+        };
+        const auto strs = [doc, defaults](const char * key, const std::vector<std::string> & values) {
+            yyjson_mut_val * array = yyjson_mut_obj_add_arr(doc, defaults, key);
+            for (const std::string & value : values) {
+                yyjson_mut_arr_add_strn(doc, array, value.c_str(), value.size());
+            }
+        };
+        str("mode", mode);
+        yyjson_mut_obj_add_bool(doc, defaults, "llm_fixed", setup.llm_fixed);
+        str("instructions", system_prompt);
+        str("voice", voice.voice);
+        str("language", voice.language);
+        strs("tts_voices", tts_bridge_voices(setup.models.tts));
+        strs("tts_languages", tts_bridge_languages(setup.models.tts));
+        yyjson_mut_obj_add_int(doc, defaults, "tts_min_chars", guards.min_chars);
+        yyjson_mut_obj_add_real(doc, defaults, "tts_chars_per_second", guards.chars_per_second);
+        yyjson_mut_obj_add_real(doc, defaults, "tts_margin_seconds", guards.margin_seconds);
+        yyjson_mut_obj_add_int(doc, defaults, "llm_timeout_sec", llm_defaults.timeout_sec);
+        yyjson_mut_obj_add_int(doc, defaults, "max_rounds", setup.defaults.max_rounds);
+        yyjson_mut_obj_add_int(doc, defaults, "tool_timeout_sec", llm_defaults.tool_timeout_sec);
+        str("reasoning_effort", llm_defaults.sampling.reasoning_effort);
+        yyjson_mut_obj_add_real(doc, defaults, "tts_temperature", tts.temperature);
+        yyjson_mut_obj_add_int(doc, defaults, "tts_top_k", tts.top_k);
+        yyjson_mut_obj_add_real(doc, defaults, "tts_top_p", tts.top_p);
+        yyjson_mut_obj_add_real(doc, defaults, "tts_repetition_penalty", tts.repetition_penalty);
+        yyjson_mut_obj_add_real(doc, defaults, "tts_subtalker_temperature", tts.subtalker_temperature);
+        yyjson_mut_obj_add_int(doc, defaults, "tts_subtalker_top_k", tts.subtalker_top_k);
+        yyjson_mut_obj_add_real(doc, defaults, "tts_subtalker_top_p", tts.subtalker_top_p);
         // The ceiling in force, not the submodule maximum: this server caps
         // it lower, and the placeholder must say what actually applies.
-        body += "\"tts_max_new_tokens\":" + std::to_string(S2S_TTS_MAX_NEW_TOKENS) + ",";
-        body += "\"vad_neg_threshold\":" + std::to_string(turn.vad_neg_threshold) + ",";
-        body += "\"vad_threshold\":" + std::to_string(turn.vad_threshold) + ",";
-        body += "\"min_speech_ms\":" + std::to_string(turn.min_speech_ms) + ",";
-        body += "\"barge_in_ms\":" + std::to_string(turn.barge_in_ms) + ",";
-        body += "\"min_silence_ms\":" + std::to_string(turn.min_silence_ms) + ",";
-        body += "\"min_speech_continuation_ms\":" + std::to_string(turn.min_speech_continuation_ms) + ",";
-        body += "\"speech_pad_ms\":" + std::to_string(turn.speech_pad_ms) + ",";
-        body += "\"turn_threshold\":" + std::to_string(turn.turn_threshold) + ",";
-        body += "\"turn_max_wait_ms\":" + std::to_string(turn.turn_max_wait_ms) + ",";
-        body += "\"reopen_grace_ms\":" + std::to_string(turn.reopen_grace_ms);
-        body += "}}";
-        res.set_content(body, "application/json");
+        yyjson_mut_obj_add_int(doc, defaults, "tts_max_new_tokens", S2S_TTS_MAX_NEW_TOKENS);
+        yyjson_mut_obj_add_real(doc, defaults, "vad_neg_threshold", turn.vad_neg_threshold);
+        yyjson_mut_obj_add_real(doc, defaults, "vad_threshold", turn.vad_threshold);
+        yyjson_mut_obj_add_int(doc, defaults, "min_speech_ms", turn.min_speech_ms);
+        yyjson_mut_obj_add_int(doc, defaults, "barge_in_ms", turn.barge_in_ms);
+        yyjson_mut_obj_add_int(doc, defaults, "min_silence_ms", turn.min_silence_ms);
+        yyjson_mut_obj_add_int(doc, defaults, "min_speech_continuation_ms", turn.min_speech_continuation_ms);
+        yyjson_mut_obj_add_int(doc, defaults, "speech_pad_ms", turn.speech_pad_ms);
+        yyjson_mut_obj_add_real(doc, defaults, "turn_threshold", turn.turn_threshold);
+        yyjson_mut_obj_add_int(doc, defaults, "turn_max_wait_ms", turn.turn_max_wait_ms);
+        yyjson_mut_obj_add_int(doc, defaults, "reopen_grace_ms", turn.reopen_grace_ms);
+
+        // Every real above is a float: written as the shortest text that
+        // reads back to it, 0.6 and not 0.6000000238418579.
+        res.set_content(json_write(doc, YYJSON_WRITE_FP_TO_FLOAT), "application/json");
     });
 
     // Embedded webui: gzipped single page app built by tools/webui.
@@ -447,18 +468,20 @@ int main(int argc, char ** argv) {
         if (!llm_client_models(params, models)) {
             s2s_log(S2S_LOG_WARN, "[LLM] Model list failed: %s", llm_client_last_error());
             res.status = 502;
-            res.set_content(std::string("{\"error\":\"") + rt_escape(llm_client_last_error()) + "\"}",
-                            "application/json");
+            res.set_content(json_string("error", llm_client_last_error()), "application/json");
             return;
         }
         s2s_log(S2S_LOG_INFO, "[LLM] %zu models", models.size());
 
-        std::string body = "{\"data\":[";
-        for (size_t i = 0; i < models.size(); i++) {
-            body += std::string(i ? "," : "") + "{\"id\":\"" + rt_escape(models[i]) + "\"}";
+        yyjson_mut_doc * body = yyjson_mut_doc_new(nullptr);
+        yyjson_mut_val * root = yyjson_mut_obj(body);
+        yyjson_mut_doc_set_root(body, root);
+        yyjson_mut_val * data = yyjson_mut_obj_add_arr(body, root, "data");
+        for (const std::string & model : models) {
+            yyjson_mut_val * entry = yyjson_mut_arr_add_obj(body, data);
+            yyjson_mut_obj_add_strn(body, entry, "id", model.c_str(), model.size());
         }
-        body += "]}";
-        res.set_content(body, "application/json");
+        res.set_content(json_write(body, 0), "application/json");
     });
 
     // Tool list proxy: the same path as the model list, for the tools a
@@ -499,18 +522,19 @@ int main(int argc, char ** argv) {
         if (!llm_agent_tools(params, tools)) {
             s2s_log(S2S_LOG_WARN, "[Agent] Tool list failed: %s", llm_client_last_error());
             res.status = 502;
-            res.set_content(std::string("{\"error\":\"") + rt_escape(llm_client_last_error()) + "\"}",
-                            "application/json");
+            res.set_content(json_string("error", llm_client_last_error()), "application/json");
             return;
         }
         s2s_log(S2S_LOG_INFO, "[Agent] %zu tools", tools.size());
 
-        std::string body = "{\"data\":[";
-        for (size_t i = 0; i < tools.size(); i++) {
-            body += std::string(i ? "," : "") + "\"" + rt_escape(tools[i]) + "\"";
+        yyjson_mut_doc * body = yyjson_mut_doc_new(nullptr);
+        yyjson_mut_val * root = yyjson_mut_obj(body);
+        yyjson_mut_doc_set_root(body, root);
+        yyjson_mut_val * data = yyjson_mut_obj_add_arr(body, root, "data");
+        for (const std::string & tool : tools) {
+            yyjson_mut_arr_add_strn(body, data, tool.c_str(), tool.size());
         }
-        body += "]}";
-        res.set_content(body, "application/json");
+        res.set_content(json_write(body, 0), "application/json");
     });
 
     // s2s.js: the same client, standalone, for a page hosted elsewhere.
