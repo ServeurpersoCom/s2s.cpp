@@ -7,13 +7,13 @@
 //
 // It runs on a speech to silence boundary, a few times per turn, never on
 // the 32 ms window loop, so it sits on the CPU with the encoder threads
-// it needs and leaves the GPU to the ASR and the TTS.
+// it needs and leaves the GPU to the models that do run there.
 //
 // The model is stateless: every call re-reads the audio it is given, so
 // one st_context serves any number of streams. Concurrent calls are
 // serialized onto one internal worker thread, which runs every forward pass.
 //
-//   st_context * turn = st_init("models/smart-turn-v3.2-F32.gguf", 0);
+//   st_context * turn = st_init("models/smart-turn-v3.2-F32.gguf");
 //   float        p    = st_predict(turn, pcm, n_samples);
 //
 // Errors: st_init returns NULL, st_predict returns a negative value.

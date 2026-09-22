@@ -360,7 +360,8 @@ from every session and fixed for it: the model list route answers 403,
 and a patch that names an endpoint, a model or a key is refused with an
 error. Without these options the server has no endpoint at all, and each
 session names its own. `/props` never publishes the endpoint: its
-`llm_fixed` only tells the page whether it may name one.
+`llm_fixed` only tells the page whether it may name one, and `mcp_fixed`
+the same for the MCP servers.
 
 ## Module map
 
@@ -436,6 +437,7 @@ one of three brackets:
 | broken endpoint | the error reaches the client, the response still closes |
 | empty answer | a model that thinks and writes nothing: the answer closes as done, silent, the client gets the error and the log says why |
 | unreachable endpoint | a connection nothing answers, which no cancel reaches: the revisions are recognized as fast as ever, the answer fails within the timeout |
+| mcp tool | the agentic mode over MCP: the model calls the tool of a mock MCP server behind its key and its session id, and its result is spoken |
 | room | the echo canceller keeps the assistant out of what is heard, the playback flushed |
 | owned endpoint | nothing of the endpoint published or logged, another endpoint refused |
 

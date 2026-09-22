@@ -24,6 +24,7 @@
 #include "sp-detok.h"
 #include "tdt-decoder.h"
 #include "timer.h"
+#include "utf8.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -33,7 +34,7 @@
 #define ASR_DECODER_NODES 512
 
 struct pipeline_asr {
-    BackendPair bp = {};
+    ggml_backend_t backend = nullptr;
 
     ParakeetHParams        hp;
     ParakeetEncoderWeights encoder;
@@ -81,7 +82,7 @@ static bool pipeline_asr_load_constants(pipeline_asr * p) {
     p->mel_basis = ggml_new_tensor_2d(p->const_wctx.ctx, GGML_TYPE_F32, n_freq, p->mel_cfg.n_mels);
     p->log_guard = ggml_new_tensor_1d(p->const_wctx.ctx, GGML_TYPE_F32, 1);
 
-    if (!wctx_alloc(&p->const_wctx, p->bp.backend)) {
+    if (!wctx_alloc(&p->const_wctx, p->backend)) {
         return false;
     }
 
@@ -110,8 +111,8 @@ pipeline_asr * pipeline_asr_load(const pipeline_asr_params & params) {
         parakeet_read_hparams(gf, p->hp);
         p->mel_cfg = parakeet_mel_config(p->hp);
 
-        p->bp = backend_init("ASR");
-        if (!p->bp.backend) {
+        p->backend = backend_init("ASR");
+        if (!p->backend) {
             s2s_set_error("[ASR] No usable backend");
             gf_close(&gf);
             pipeline_asr_free(p);
@@ -123,7 +124,7 @@ pipeline_asr * pipeline_asr_load(const pipeline_asr_params & params) {
         parakeet_load_decoder(&p->decoder, &p->wctx, gf);
         sp_detok_load(&p->sp, gf, "asr.vocab");
 
-        const bool loaded = wctx_alloc(&p->wctx, p->bp.backend);
+        const bool loaded = wctx_alloc(&p->wctx, p->backend);
         gf_close(&gf);
         if (!loaded) {
             s2s_set_error("[ASR] Failed to upload the weights");
@@ -147,7 +148,7 @@ pipeline_asr * pipeline_asr_load(const pipeline_asr_params & params) {
         p->predict                 = parakeet_predict_build(dctx, p->decoder, ASR_DECODER_NODES);
         p->joint                   = parakeet_joint_build(dctx, p->decoder, ASR_DECODER_NODES);
 
-        ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(p->bp.backend);
+        ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(p->backend);
         p->predict_alloc                = ggml_gallocr_new(buft);
         p->joint_alloc                  = ggml_gallocr_new(buft);
         p->run_alloc                    = ggml_gallocr_new(buft);
@@ -186,7 +187,9 @@ void pipeline_asr_free(pipeline_asr * p) {
     graph_arena_free(&p->dec_arena);
     wctx_free(&p->wctx);
     wctx_free(&p->const_wctx);
-    backend_release(p->bp.backend, p->bp.cpu_backend);
+    if (p->backend) {
+        ggml_backend_free(p->backend);
+    }
     delete p;
 }
 
@@ -199,7 +202,7 @@ static void pipeline_asr_dump(const std::string & dir, const char * name, const 
         return;
     }
     const std::string path = dir + "/parakeet-" + name + ".f32";
-    FILE *            fp   = fopen(path.c_str(), "wb");
+    FILE *            fp   = utf8_fopen(path.c_str(), "wb");
     if (!fp) {
         s2s_log(S2S_LOG_WARN, "[ASR] Cannot write %s", path.c_str());
         return;
@@ -283,7 +286,7 @@ pk_status pipeline_asr_run(pipeline_asr *               p,
         struct ggml_tensor * t_mel   = ggml_new_tensor_2d(in_wctx.ctx, GGML_TYPE_F32, p->hp.n_mels, (int64_t) n_frames);
         struct ggml_tensor * t_pos =
             ggml_new_tensor_2d(in_wctx.ctx, GGML_TYPE_F32, p->hp.d_model, (int64_t) (2 * n_tokens - 1));
-        if (!wctx_alloc(&in_wctx, p->bp.backend)) {
+        if (!wctx_alloc(&in_wctx, p->backend)) {
             s2s_set_error("[ASR] Failed to allocate the per call inputs");
             return PK_STATUS_DECODE_FAILED;
         }
@@ -302,7 +305,7 @@ pk_status pipeline_asr_run(pipeline_asr *               p,
         ggml_build_forward_expand(mel_graph, mel_out);
 
         if (!ggml_gallocr_alloc_graph(p->run_alloc, mel_graph) ||
-            ggml_backend_graph_compute(p->bp.backend, mel_graph) != GGML_STATUS_SUCCESS) {
+            ggml_backend_graph_compute(p->backend, mel_graph) != GGML_STATUS_SUCCESS) {
             ggml_free(gctx);
             wctx_free(&in_wctx);
             s2s_set_error("[ASR] Mel graph failed");
@@ -348,7 +351,7 @@ pk_status pipeline_asr_run(pipeline_asr *               p,
         }
 
         if (!ggml_gallocr_alloc_graph(p->run_alloc, enc_graph) ||
-            ggml_backend_graph_compute(p->bp.backend, enc_graph) != GGML_STATUS_SUCCESS) {
+            ggml_backend_graph_compute(p->backend, enc_graph) != GGML_STATUS_SUCCESS) {
             ggml_free(gctx);
             wctx_free(&in_wctx);
             s2s_set_error("[ASR] Encoder graph failed");
@@ -382,7 +385,7 @@ pk_status pipeline_asr_run(pipeline_asr *               p,
         TdtStats stats;
         text.clear();
         const pk_status status =
-            parakeet_tdt_decode(p->bp.backend, p->decoder, p->sp, p->predict, p->joint, frames.data(), (int) n_tokens,
+            parakeet_tdt_decode(p->backend, p->decoder, p->sp, p->predict, p->joint, frames.data(), (int) n_tokens,
                                 params ? params->on_token : nullptr, params ? params->user : nullptr, text, stats);
         perf.decode_ms = t_decode.ms();
         pipeline_asr_dump(p->dump_dir, "prediction", stats.first_state);

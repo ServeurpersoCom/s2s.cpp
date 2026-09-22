@@ -65,7 +65,8 @@ void llm_client_free(llm_client * c) {
     delete c;
 }
 
-// Request body: the conversation plus the streaming switch.
+// Request body: the model, the streaming switch, every sampling field that is
+// set, the tool definitions when there are any, and the conversation.
 static std::string llm_client_body(const llm_client * c, const std::vector<llm_message> & messages) {
     yyjson_mut_doc * doc  = yyjson_mut_doc_new(nullptr);
     yyjson_mut_val * root = yyjson_mut_obj(doc);

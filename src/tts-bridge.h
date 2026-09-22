@@ -1,10 +1,11 @@
 #pragma once
 // tts-bridge.h: the speaking half of the loop, over the qwentts.cpp ABI
 //
-// One bridge holds one qt_context and speaks one unit at a time. The
-// synthesis streams: chunks reach the caller as the codec decodes them,
-// starting at a single 12.5 Hz frame so the first audio leaves early, and
-// the caller writes them straight to the client.
+// One bridge holds one qt_context and speaks one unit per call; concurrent
+// calls batch on the qwentts worker, up to max_batch. The synthesis streams:
+// chunks reach the caller as the codec decodes them, starting at a single
+// 12.5 Hz frame so the first audio leaves early, and the caller writes them
+// straight to the client.
 //
 // Cancellation is what makes a barge-in feel instant. The bridge polls an
 // atomic flag the caller raises, and qwentts checks it at the top of every
@@ -44,9 +45,10 @@ struct tts_sampling {
     int64_t seed                  = -1;  // negative draws a hardware seed, logged with the sentence
 };
 
-// The two guards that bound a synthesis. They are settings and not buried
-// constants: a voice that gets cut short, or a recognizer that names noises,
-// is tuned from the surface.
+// The guards of the voice. They are settings and not buried constants: a
+// voice that gets cut short, or a recognizer that names noises, is tuned from
+// the surface. min_chars is read by the loopback, the other two bound every
+// synthesis.
 struct tts_guards {
     int   min_chars        = 3;      // below this a loopback transcript is not spoken back
     float chars_per_second = 15.0f;  // speech rate used to budget the frames
@@ -77,8 +79,8 @@ struct tts_bridge_params {
 struct tts_request {
     std::string              voice;     // one of the labels tts_bridge_voices lists, empty keeps the default
     std::string              language;  // auto or one of tts_bridge_languages, empty keeps the default
-    // the languages of the browser, by preference: under auto the first one
-    // the talker knows gives the id, English stays when it knows none
+    // The languages of the browser, by preference: under auto the first one
+    // the talker knows gives the id, English stays when it knows none.
     std::vector<std::string> browser_languages;
     tts_sampling             sampling;
     tts_guards               guards;
@@ -90,8 +92,6 @@ typedef bool (*tts_chunk_cb)(const float * pcm, size_t n_samples, void * user);
 
 tts_bridge * tts_bridge_load(const tts_bridge_params & params);
 void         tts_bridge_free(tts_bridge * b);
-
-int tts_bridge_sample_rate(const tts_bridge * b);
 
 // The languages of the talker, read from the model. auto is not among them:
 // it is the absence of a language id, the default.
@@ -105,8 +105,8 @@ const std::vector<std::string> & tts_bridge_voices(const tts_bridge * b);
 // The submodule defaults, so a caller can publish them instead of guessing.
 const tts_sampling & tts_bridge_defaults(const tts_bridge * b);
 
-// The request the bridge falls back on: what the server was started with,
-// resolved against the model and the submodule defaults.
+// The request the bridge falls back on: the first voice, auto, and the
+// sampling and guards the bridge was loaded with.
 const tts_request & tts_bridge_defaults_request(const tts_bridge * b);
 
 // Speaks one unit. cancel is polled by the synthesis and by the chunk

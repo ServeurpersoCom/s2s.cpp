@@ -106,8 +106,9 @@ freeman.{spk,rvq,txt} reference speech
 freeman.spk speaker embedding only
 ```
 
-With the embedding alone, set the language to the one of the answers: it
-fixes the pronunciation. Reference speech brings its own.
+The language id only weighs on a lone word, a few words are read in the
+language they are written in: auto, the default, takes the language of the
+browser when the talker speaks it.
 
 `qwen-codec --talker` of the qwentts.cpp submodule makes the three files
 from a clean recording. `freeman` ships as the default.

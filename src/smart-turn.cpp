@@ -118,7 +118,6 @@ struct st_context {
     int n_layers    = 0;
     int n_heads     = 0;
     int d_model     = 0;
-    int d_ffn       = 0;
 
     std::vector<float> audio;    // [window + n_fft]
     std::vector<float> log_mel;  // [(n_frames + 1) * n_mels]
@@ -373,7 +372,6 @@ st_context * st_init(const char * gguf_path) {
         ctx->n_layers            = (int) gf_get_u32(gf, "turn.n_layers");
         ctx->n_heads             = (int) gf_get_u32(gf, "turn.n_heads");
         ctx->d_model             = (int) gf_get_u32(gf, "turn.d_model");
-        ctx->d_ffn               = (int) gf_get_u32(gf, "turn.d_ffn");
         ctx->mel_cfg.sample_rate = ctx->sample_rate;
         ctx->mel_cfg.n_fft       = (int) gf_get_u32(gf, "turn.n_fft");
         ctx->mel_cfg.hop         = (int) gf_get_u32(gf, "turn.hop");
@@ -381,7 +379,7 @@ st_context * st_init(const char * gguf_path) {
         ctx->mel_cfg.fmin        = 0.0f;
         ctx->mel_cfg.fmax        = (float) ctx->sample_rate * 0.5f;
 
-        ctx->backend = backend_init_cpu("SmartTurn", backend_cpu_n_threads()).backend;
+        ctx->backend = backend_init_cpu("SmartTurn", backend_cpu_n_threads());
         if (!ctx->backend) {
             s2s_set_error("[SmartTurn] Failed to init the CPU backend");
             gf_close(&gf);

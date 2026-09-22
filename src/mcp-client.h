@@ -27,8 +27,7 @@
 #include <string>
 #include <vector>
 
-// The version the client asks for, and the ones it accepts a server to answer
-// with: what the SDK of the reference lists.
+// The version the client asks for, the newest the SDK of the reference lists.
 #define MCP_PROTOCOL_VERSION "2025-11-25"
 
 struct mcp_client;

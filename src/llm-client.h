@@ -8,16 +8,17 @@
 // that works everywhere: POST /chat/completions with stream true, then the
 // content deltas of choices[0].
 //
-// The tool verbs are the exception: they speak the llama.cpp routes, and a
+// The tool routes are the exception: they speak the llama.cpp dialect, and a
 // conversation only reaches them in the agentic mode.
 //
-// Fields other engines add are ignored on purpose, reasoning traces first:
-// a reasoning model must not have its thinking read out loud.
+// Fields other engines add are ignored on purpose, and a reasoning trace is
+// only counted for the log: a reasoning model must not have its thinking read
+// out loud.
 //
 // Cancellation is the barge-in path. The atomic flag is polled on every
-// chunk the socket delivers, and the request is aborted by returning from
-// the receiver, which closes the connection and tells the endpoint to stop
-// generating.
+// chunk the socket delivers, and a watching thread closes the socket while
+// the endpoint is silent: either way the connection closes, which tells the
+// endpoint to stop generating.
 
 #include <atomic>
 #include <string>
@@ -120,8 +121,7 @@ const char * llm_client_tool_calls(const llm_client * c);
 
 // Lists the tools the endpoint runs, through GET {host}/tools, the llama.cpp
 // route that serves its built-in tools and those of its MCP servers alike.
-// An endpoint without that route fails here, which is what tells the user
-// that the tools of this mode need a llama.cpp server.
+// An endpoint without that route fails here.
 bool llm_client_tools(const llm_client_params & params, std::vector<llm_tool> & tools);
 
 // Runs one tool, through POST {host}/tools, and returns what goes into the

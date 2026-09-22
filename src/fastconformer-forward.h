@@ -35,20 +35,18 @@
 #define PARAKEET_LOG_GUARD 5.9604644775390625e-08f  // 2^-24
 
 struct ParakeetHParams {
-    int   sample_rate  = 16000;
-    int   n_fft        = 512;
-    int   win_length   = 400;
-    int   hop          = 160;
-    int   n_mels       = 128;
-    float preemphasis  = 0.97f;
-    int   n_layers     = 24;
-    int   n_heads      = 8;
-    int   d_model      = 1024;
-    int   d_ffn        = 4096;
-    int   conv_kernel  = 9;
-    int   sub_channels = 256;
-    int   sub_factor   = 8;
-    int   d_decoder    = 640;
+    int   sample_rate = 16000;
+    int   n_fft       = 512;
+    int   win_length  = 400;
+    int   hop         = 160;
+    int   n_mels      = 128;
+    float preemphasis = 0.97f;
+    int   n_layers    = 24;
+    int   n_heads     = 8;
+    int   d_model     = 1024;
+    int   conv_kernel = 9;
+    int   sub_factor  = 8;
+    int   d_decoder   = 640;
 };
 
 struct ParakeetBlockWeights {
@@ -96,20 +94,18 @@ struct ParakeetEncoderWeights {
 };
 
 static void parakeet_read_hparams(const GGUFModel & gf, ParakeetHParams & hp) {
-    hp.sample_rate  = (int) gf_get_u32(gf, "asr.sample_rate");
-    hp.n_fft        = (int) gf_get_u32(gf, "asr.n_fft");
-    hp.win_length   = (int) gf_get_u32(gf, "asr.win_length");
-    hp.hop          = (int) gf_get_u32(gf, "asr.hop");
-    hp.n_mels       = (int) gf_get_u32(gf, "asr.n_mels");
-    hp.preemphasis  = gf_get_f32(gf, "asr.preemphasis");
-    hp.n_layers     = (int) gf_get_u32(gf, "asr.n_layers");
-    hp.n_heads      = (int) gf_get_u32(gf, "asr.n_heads");
-    hp.d_model      = (int) gf_get_u32(gf, "asr.d_model");
-    hp.d_ffn        = (int) gf_get_u32(gf, "asr.d_ffn");
-    hp.conv_kernel  = (int) gf_get_u32(gf, "asr.conv_kernel");
-    hp.sub_channels = (int) gf_get_u32(gf, "asr.subsampling_channels");
-    hp.sub_factor   = (int) gf_get_u32(gf, "asr.subsampling_factor");
-    hp.d_decoder    = (int) gf_get_u32(gf, "asr.d_decoder");
+    hp.sample_rate = (int) gf_get_u32(gf, "asr.sample_rate");
+    hp.n_fft       = (int) gf_get_u32(gf, "asr.n_fft");
+    hp.win_length  = (int) gf_get_u32(gf, "asr.win_length");
+    hp.hop         = (int) gf_get_u32(gf, "asr.hop");
+    hp.n_mels      = (int) gf_get_u32(gf, "asr.n_mels");
+    hp.preemphasis = gf_get_f32(gf, "asr.preemphasis");
+    hp.n_layers    = (int) gf_get_u32(gf, "asr.n_layers");
+    hp.n_heads     = (int) gf_get_u32(gf, "asr.n_heads");
+    hp.d_model     = (int) gf_get_u32(gf, "asr.d_model");
+    hp.conv_kernel = (int) gf_get_u32(gf, "asr.conv_kernel");
+    hp.sub_factor  = (int) gf_get_u32(gf, "asr.subsampling_factor");
+    hp.d_decoder   = (int) gf_get_u32(gf, "asr.d_decoder");
 }
 
 static AudioMelConfig parakeet_mel_config(const ParakeetHParams & hp) {

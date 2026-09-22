@@ -7,6 +7,7 @@
 #include "audio-resample.h"
 #include "parakeet.h"
 #include "pipeline-asr.h"
+#include "utf8.h"
 #include "version.h"
 #include "wav.h"
 
@@ -42,6 +43,8 @@ static bool on_token(const char * chunk, void * user) {
 }
 
 int main(int argc, char ** argv) {
+    utf8_init(&argc, &argv);
+
     const char * model_path = nullptr;
     const char * wav_path   = nullptr;
     const char * out_path   = nullptr;
@@ -69,7 +72,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    FILE * fp = fopen(wav_path, "rb");
+    FILE * fp = utf8_fopen(wav_path, "rb");
     if (!fp) {
         fprintf(stderr, "[ASR] FATAL: cannot open %s\n", wav_path);
         return 1;
@@ -152,7 +155,7 @@ int main(int argc, char ** argv) {
     }
 
     if (out_path) {
-        FILE * out = fopen(out_path, "w");
+        FILE * out = utf8_fopen(out_path, "w");
         if (!out) {
             fprintf(stderr, "[ASR] FATAL: cannot write %s\n", out_path);
             return 1;

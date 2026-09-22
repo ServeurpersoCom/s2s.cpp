@@ -14,8 +14,8 @@
 #     answer heard   after the answer started playing: a new turn, a barge-in
 #
 # Around it: a push to talk, a broken endpoint, an endpoint that answers
-# nothing, an endpoint nothing answers at all, a room whose echo the server
-# cancels, and a server that owns its endpoint.
+# nothing, an endpoint nothing answers at all, a tool call over MCP, a room
+# whose echo the server cancels, and a server that owns its endpoint.
 #
 # The passages of examples/freeman.wav, cut on their speech:
 #     A  0.0 to 5.9 s    "If you go into different cultures, ... concepts of creation."

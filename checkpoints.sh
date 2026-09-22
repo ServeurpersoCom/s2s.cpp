@@ -6,7 +6,7 @@
 #   parakeet      safetensors and tokenizer from nvidia/parakeet-tdt-0.6b-v3
 #   localvqe      v1.3 PyTorch checkpoint from LocalAI-io/LocalVQE
 #
-# The TTS checkpoints belong to the qwentts submodule: run qwentts/checkpoints.sh
+# The TTS checkpoints belong to the qwentts submodule: run qwentts.cpp/checkpoints.sh
 # there, or fetch the prebuilt GGUF with ./models.sh.
 
 set -eu

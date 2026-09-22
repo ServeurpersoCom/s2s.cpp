@@ -122,11 +122,10 @@ export interface S2STtsSampling {
 export interface S2STts {
 	// name of a voice the server loaded, one of tts_voices on /props
 	voice?: string;
-	// auto, the default, or one of tts_languages on /props: the language id
-	// of the talker, which only weighs on a lone word, read in the language
-	// of the id, a few words being read in their own language whatever it
-	// is. auto is the language of the browser when the talker speaks it,
-	// English otherwise
+	// auto, the default, or one of tts_languages on /props. The language id
+	// only weighs on a lone word, a few words are read in their own language;
+	// auto is the language of the browser when the talker speaks it, English
+	// otherwise
 	language?: string;
 	sampling?: S2STtsSampling;
 	// guards: in loopback a transcript shorter than minChars is not spoken

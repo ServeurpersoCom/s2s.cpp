@@ -8,7 +8,7 @@ export const NEWLINE = '\n';
 // Pipeline modes. Loopback skips the language model and speaks the recognized
 // text back, which exercises the microphone, the turn detection, the
 // recognizer and the voice without an endpoint in the path. Agentic lets the
-// model use the tools of a llama.cpp endpoint, which no other endpoint runs.
+// model use the tools of the MCP servers and of a llama.cpp endpoint.
 export const MODES = ['loopback', 'conversation', 'agentic'] as const;
 export type Mode = (typeof MODES)[number];
 

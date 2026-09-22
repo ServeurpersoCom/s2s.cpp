@@ -4,7 +4,7 @@ import type { S2SProps } from './types.js';
 // Every call goes to the server that served the page, relative to it, so any
 // reverse proxy prefix just works.
 
-// GET /props: version, audio rate and the defaults every empty field falls
+// GET /props: the loaded models and the defaults every empty field falls
 // back to.
 export async function props(): Promise<S2SProps> {
 	const res = await fetch('props', {
@@ -31,10 +31,7 @@ export async function fetchModels(llmUrl: string, apiKey: string): Promise<strin
 	return list.map((item: { id?: string }) => item.id).filter((id: unknown): id is string => !!id);
 }
 
-// POST /v1/tools: the tools a llama.cpp endpoint runs, proxied the same way.
-// An endpoint that does not run any answers with an error, which is what the
-// agentic mode has to say for itself.
-// The tools the session may check, server by server: the title names the
+// POST /v1/tools, proxied the same way: the tools the session may check, server by server: the title names the
 // server, the URL of an MCP server the page named or the name a server gave
 // itself, "llama.cpp" for the endpoint's own.
 export interface ToolGroup {

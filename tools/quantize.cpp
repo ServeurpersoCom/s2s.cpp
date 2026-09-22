@@ -35,8 +35,7 @@ struct QuantVariant {
     enum ggml_type base;
     enum ggml_type bump;   // type for "important" tensors (or COUNT = no bump)
     enum ggml_type embed;  // type for embed_tokens (or COUNT = same as base)
-    // bump_mode: 0=none, 1=first N layers, 2=first+last+every 3rd, 3=all
-    // important
+    // bump_mode: 0 none, 1 first N layers, 2 first, last and every 3rd, 3 every important one
     int            bump_mode;
     int            bump_n;  // for mode 1: number of layers to bump
 };
@@ -305,10 +304,8 @@ int main(int argc, char ** argv) {
         bool can_convert = (t->type == GGML_TYPE_BF16 || t->type == GGML_TYPE_F16 || t->type == GGML_TYPE_F32);
         bool aligned     = (t->ne[0] % ggml_blck_size(target) == 0);
 
-        // Conv kernels (K=7,3,1,...) cannot fit a block-quant row: fall back
-        // to F16. F16 has no block size, 10-bit mantissa beats BF16 (7) and
-        // Q* effective on these weights, and gf_load_conv_f16 memcpys F16
-        // source straight to the F16 backend tensor at load time.
+        // A row that no block of the target fits goes to F16: no block size,
+        // and a 10 bit mantissa.
         if (can_convert && !aligned) {
             target  = GGML_TYPE_F16;
             aligned = true;

@@ -4,12 +4,6 @@
 // command line, the models loaded once and shared, the HTTP routes, and the
 // WebSocket that carries each conversation. What a conversation does lives
 // in s2s-conversation.cpp, which only sees Realtime frames.
-//
-// Modes:
-//   conversation  recognize, ask the LLM, speak the answer
-//   loopback      recognize and speak the transcript back, no endpoint in the
-//                 path, which is how the microphone, the turn detection, the
-//                 recognizer and the voice get tested on their own
 
 #include "httplib.h"
 #include "index.html.gz.hpp"
@@ -27,6 +21,7 @@
 #include "silero.h"
 #include "smart-turn.h"
 #include "tts-bridge.h"
+#include "utf8.h"
 #include "version.h"
 
 #include <algorithm>
@@ -131,6 +126,8 @@ static void print_usage(const char * prog) {
 }
 
 int main(int argc, char ** argv) {
+    utf8_init(&argc, &argv);
+
     // Every thread this server starts names itself; the one that logs
     // without a name is the compute worker of qwentts.
     s2s_log_thread("Main");
@@ -182,7 +179,7 @@ int main(int argc, char ** argv) {
             llm_defaults.model = argv[++i];
         } else if (arg == "--llm-key-file" && has_value) {
             // The key is the first line of the file.
-            std::ifstream in(argv[++i]);
+            std::ifstream in(std::filesystem::u8path(argv[++i]));
             if (!std::getline(in, llm_defaults.api_key) || llm_defaults.api_key.empty()) {
                 s2s_log(S2S_LOG_ERROR, "[Server] FATAL: no key in %s", argv[i]);
                 return 1;
@@ -198,7 +195,7 @@ int main(int argc, char ** argv) {
                 s2s_log(S2S_LOG_ERROR, "[Server] FATAL: --mcp-key-file needs an --mcp before it");
                 return 1;
             }
-            std::ifstream in(argv[++i]);
+            std::ifstream in(std::filesystem::u8path(argv[++i]));
             if (!std::getline(in, setup.defaults.mcp.back().api_key) || setup.defaults.mcp.back().api_key.empty()) {
                 s2s_log(S2S_LOG_ERROR, "[Server] FATAL: no key in %s", argv[i]);
                 return 1;
@@ -326,12 +323,11 @@ int main(int argc, char ** argv) {
     });
 
     // Single source of truth for the session defaults: the UI leaves a field
-    // empty to mean "whatever the server was started with", and shows this
-    // value as the placeholder. The engine setup is not here: it belongs to
-    // the command line and to the startup log. Sampling is absent on purpose:
-    // an empty sampling field leaves the endpoint to its own defaults, which
-    // is the only sane answer when the endpoint can be llama-server, Ollama
-    // or a cloud API.
+    // empty to mean the server default, and shows this value as the
+    // placeholder. The engine setup is not here: it belongs to the command
+    // line and to the startup log. The LLM sampling is absent, reasoning_effort
+    // apart: an empty sampling field leaves the endpoint to its own defaults,
+    // whether it is llama-server, Ollama or a cloud API.
     server.Get("/props", [&](const httplib::Request & req, httplib::Response & res) {
         if (!origin_allowed(origins, req)) {
             res.status = 403;
@@ -354,7 +350,7 @@ int main(int argc, char ** argv) {
         // server keeps it, and the separator is the OS's business.
         yyjson_mut_val * models = yyjson_mut_obj_add_obj(doc, root, "models");
         const auto       file   = [doc, models](const char * key, const std::string & path) {
-            const std::string name = std::filesystem::path(path).filename().string();
+            const std::string name = std::filesystem::u8path(path).filename().u8string();
             yyjson_mut_obj_add_strncpy(doc, models, key, name.c_str(), name.size());
         };
         file("vad", vad_path);
@@ -503,9 +499,9 @@ int main(int argc, char ** argv) {
         res.set_content(json_write(body, 0), "application/json");
     });
 
-    // Tool list proxy: the same path as the model list, for the tools a
-    // llama.cpp endpoint runs. An endpoint without that route answers with
-    // its error, which is how the page says that this mode needs llama.cpp.
+    // Tool list proxy: the same path as the model list, for the tools of the
+    // MCP servers the page names and of the endpoint when it is a llama.cpp
+    // server. It fails only when no server lists any.
     server.Post("/v1/tools", [&](const httplib::Request & req, httplib::Response & res) {
         if (!origin_allowed(origins, req)) {
             res.status = 403;

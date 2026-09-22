@@ -30,7 +30,8 @@
 // one or an address nothing answers, and --llm-timeout bounds the wait on it.
 // Its route picks its behavior: v1 answers, broken fails with an HTTP 500,
 // midstream reports a failure inside the stream, empty thinks and then ends
-// the generation without a word.
+// the generation without a word, agent calls the clock tool of the mock MCP
+// server and then speaks its result.
 
 #include "audio-resample.h"
 #include "httplib.h"

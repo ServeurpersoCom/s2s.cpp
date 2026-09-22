@@ -1,5 +1,5 @@
 // Server defaults, the single source of truth behind every empty field.
-export interface S2SDefaults {
+interface S2SDefaults {
 	mode: string;
 	llm_fixed: boolean; // the server owns the endpoint, the page names none
 	mcp_fixed: boolean; // the server owns the MCP servers, the page names none
@@ -36,17 +36,18 @@ export interface S2SDefaults {
 	reopen_grace_ms: number;
 }
 
-export interface S2SModels {
+// The files really loaded, one per model.
+interface S2SModels {
 	vad: string;
 	turn: string;
 	asr: string;
 	talker: string;
 	codec: string;
+	aec: string;
 }
 
+// What the page reads of /props.
 export interface S2SProps {
-	version: string;
 	models: S2SModels;
-	sample_rate: number;
 	defaults: S2SDefaults;
 }

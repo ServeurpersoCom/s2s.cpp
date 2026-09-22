@@ -49,12 +49,6 @@
 #include <string>
 #include <vector>
 
-enum s2s_session_state {
-    S2S_SESSION_IDLE = 0,
-    S2S_SESSION_USER_SPEAKING,
-    S2S_SESSION_PENDING_END,
-};
-
 enum s2s_session_event {
     S2S_EVENT_SPEECH_STARTED = 0,  // a turn opened
     S2S_EVENT_SPEECH_STOPPED,      // the speech to silence boundary
@@ -117,9 +111,10 @@ void s2s_session_set_params(s2s_session * s, const s2s_session_params & params);
 void s2s_session_push(s2s_session * s, const float * pcm, size_t n_samples);
 
 // Tells the session whether the assistant holds the floor, which is what
-// turns a speech start into a barge-in, held to barge_in_ms: a word said
-// over the assistant has to outlast what the echo canceller leaves of it. The session holds no lock: a caller
-// that shares it between threads serializes every call, this one included.
+// turns a speech start into a barge-in, held to barge_in_ms: a word said over
+// the assistant has to outlast what the echo canceller leaves of it. The
+// session holds no lock: a caller that shares it between threads serializes
+// every call, this one included.
 void s2s_session_set_speaking(s2s_session * s, bool speaking);
 
 // Releases the committed turn: its answer is ready to be heard, or over. The
@@ -132,8 +127,3 @@ void s2s_session_release(s2s_session * s, int turn_id, int revision);
 // is what a push to talk button and the end of a stream need. No turn open
 // means nothing happens.
 void s2s_session_commit_now(s2s_session * s);
-
-// Drops the current turn and the model states, for a new conversation.
-void s2s_session_reset(s2s_session * s);
-
-s2s_session_state s2s_session_get_state(const s2s_session * s);

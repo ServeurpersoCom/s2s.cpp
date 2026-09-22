@@ -1,5 +1,5 @@
 #pragma once
-// pipeline-asr.h: pcm -> text orchestration. Owns the backend pair, the loaded
+// pipeline-asr.h: pcm -> text orchestration. Owns the backend, the loaded
 // weights, the piece table and the decoder graphs, and drives mel -> conv2d
 // stem -> FastConformer encoder -> projection -> TDT greedy loop ->
 // detokenize. The public ABI in parakeet.h wraps this; the debug path calls it

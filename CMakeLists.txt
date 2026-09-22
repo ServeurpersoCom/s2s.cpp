@@ -52,7 +52,8 @@ if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
     endif()
 endif()
 
-# ggml from GGML_SOURCE_DIR (the submodule by default), inherits GGML_CUDA, GGML_METAL, etc. from cmake flags.
+# ggml from GGML_SOURCE_DIR (the submodule by default), inherits GGML_CUDA,
+# GGML_METAL, etc. from the cmake flags.
 # CUDA graphs default on: standalone ggml ships them off. Overridable with
 # -DGGML_CUDA_GRAPHS=OFF or at runtime with GGML_CUDA_DISABLE_GRAPHS=1.
 if(NOT DEFINED GGML_CUDA_GRAPHS)
@@ -91,10 +92,12 @@ if(TARGET ggml-base)
 endif()
 add_dependencies(qwen-core qwentts-version)
 
-# cpp-httplib: HTTP and WebSocket server for s2s-server.
+# cpp-httplib: the HTTP and WebSocket server, and the HTTP client of the
+# endpoint and the MCP servers.
 add_subdirectory(vendor/cpp-httplib)
 
-# yyjson (MIT, fast JSON parser and writer): Realtime protocol frames.
+# yyjson (MIT, fast JSON parser and writer): every JSON the server reads or
+# writes.
 add_library(yyjson STATIC vendor/yyjson/yyjson.c)
 target_include_directories(yyjson PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/yyjson)
 if(MSVC)
@@ -155,9 +158,9 @@ add_executable(parakeet-transcribe tools/parakeet-transcribe.cpp)
 link_ggml_backends(parakeet-transcribe)
 target_link_libraries(parakeet-transcribe PRIVATE parakeet-core)
 
-# webui: convert tools/public/index.html.gz to a C header for embedding.
-# the .gz is committed to git so the C++ build works without npm.
-# to update: cd tools/webui && npm install && npm run build, then rebuild.
+# webui: tools/public/index.html.gz and s2s.js.gz embedded as C headers. The
+# .gz are committed so the C++ build works without npm; ./buildwebui.sh
+# rebuilds them.
 set(WEBUI_INPUT "${CMAKE_CURRENT_SOURCE_DIR}/tools/public/index.html.gz")
 set(WEBUI_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/index.html.gz.hpp")
 add_custom_command(

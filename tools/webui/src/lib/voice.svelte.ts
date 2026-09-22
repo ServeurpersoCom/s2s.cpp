@@ -14,7 +14,7 @@ export function sessionVoice(): string | undefined {
 	return served(settings.voice, app.props?.defaults.tts_voices);
 }
 
-// auto is no language of the list, the talker guesses it from the text
+// auto is not in the list, and every server takes it
 export function sessionLanguage(): string | undefined {
 	const list = app.props?.defaults.tts_languages;
 	return served(settings.language, list && [...list, 'auto']);
@@ -110,7 +110,7 @@ export function toOptions(): S2SOptions {
 // One line of the conversation. draft is what the model wrote, spokenEnd how
 // far into it the voice went: it trails the draft by one synthesis unit, and
 // stops there on a barge-in.
-export interface ChatTurn {
+interface ChatTurn {
 	role: 'user' | 'assistant';
 	draft: string;
 	spokenEnd: number;

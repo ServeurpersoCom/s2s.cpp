@@ -1,7 +1,7 @@
 #pragma once
 // s2s-error.h: diagnostics shared by every lib in the project
 //
-// Header only so the vad, turn and asr libs pull the same helpers without
+// Header only so every lib of the project pulls the same helpers without
 // a translation unit of their own. The functions are inline, so the sink and
 // the error slot they hold are one for the whole program, whichever file
 // sets or reads them. Four entry points:

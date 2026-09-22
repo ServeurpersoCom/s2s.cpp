@@ -1,10 +1,9 @@
 // s2s-conversation.cpp: the voice loop of one conversation
 //
 // One process, any number of conversations. Every model loads once and is
-// shared: the VAD, the turn classifier and the echo canceller keep their per
-// stream state in the session or the connection, while the recognizer and
-// the voice serialize internally, so a second client queues rather than
-// doubling the VRAM.
+// shared: the VAD, the turn classifier and the recognizer run one call at a
+// time, the echo canceller and the voice batch the connections together, and
+// every per stream state lives in the session or the connection.
 //
 // Each connection runs four threads. The reader owns the incoming frames and
 // the listening half: it decodes them, feeds the session, and answers the
@@ -20,6 +19,7 @@
 //
 // Modes:
 //   conversation  recognize, ask the LLM, speak the answer
+//   agentic       the same, with the rounds of tool calls the model asks for
 //   loopback      recognize and speak the transcript back, no endpoint in the
 //                 path, which is how the microphone, the turn detection, the
 //                 recognizer and the voice get tested on their own
@@ -832,7 +832,7 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     }
     if (!patch.echo.empty() && patch.echo != conn->echo) {
         // A fresh canceller learns the echo path of the new setup from
-        // nothing; the previous one would start from a stale path.
+        // nothing.
         conn->echo = patch.echo;
         if (conn->aec) {
             s2s_log(S2S_LOG_INFO, "[AEC] Canceller off");
@@ -1054,7 +1054,7 @@ void conn_frame(Connection * conn, const std::string & frame) {
             audio_resample_stream_push(&conn->mic_resample, message.audio.data(), message.audio.size(),
                                        conn->resampled);
             if (conn->aec) {
-                // a frame without reference is a frame where nothing played
+                // A frame without reference is a frame where nothing played.
                 const bool played = message.reference.size() == message.audio.size();
                 if (!played) {
                     conn->silence.assign(message.audio.size(), 0.0f);

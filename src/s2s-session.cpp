@@ -21,6 +21,12 @@
 #include <algorithm>
 #include <cstring>
 
+enum s2s_session_state {
+    S2S_SESSION_IDLE = 0,
+    S2S_SESSION_USER_SPEAKING,
+    S2S_SESSION_PENDING_END,
+};
+
 // Defined below, next to the state machine it belongs to.
 static void s2s_session_commit(s2s_session * s, float score, int grace);
 
@@ -41,11 +47,6 @@ struct SampleRing {
         size              = 0;
         const size_t keep = std::min(held.size(), capacity);
         push(held.data() + held.size() - keep, keep);
-    }
-
-    void clear() {
-        head = 0;
-        size = 0;
     }
 
     void push(const float * samples, size_t n) {
@@ -196,36 +197,11 @@ void s2s_session_set_speaking(s2s_session * s, bool speaking) {
     }
 }
 
-s2s_session_state s2s_session_get_state(const s2s_session * s) {
-    return s ? s->phase : S2S_SESSION_IDLE;
-}
-
 void s2s_session_commit_now(s2s_session * s) {
     if (!s || s->phase == S2S_SESSION_IDLE || s->turn_pcm.empty()) {
         return;
     }
     s2s_session_commit(s, 0.0f, 0);
-}
-
-void s2s_session_reset(s2s_session * s) {
-    if (!s) {
-        return;
-    }
-    sv_state_reset(s->state);
-    s->partial.clear();
-    s->turn_pcm.clear();
-    s->lookback.clear();
-    s->stream.clear();
-    s->phase       = S2S_SESSION_IDLE;
-    s->speech_run  = 0;
-    s->silence_run = 0;
-    s->pending_run = 0;
-    s->revision    = 0;
-    s->grace_left  = 0;
-    s->committed   = false;
-    s->released    = false;
-    s->speaking    = false;
-    s->in_speech   = false;
 }
 
 static void s2s_session_emit(s2s_session * s, s2s_session_event event, float score) {

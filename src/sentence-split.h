@@ -7,9 +7,7 @@
 // ends with leaves on the flush.
 //
 // There is no length cap on purpose: cutting a sentence on a character count
-// lands mid syntagm and the voice pauses where no reader would. If a model
-// ever writes without punctuation, that deserves a parameter on the surface,
-// not a number buried here.
+// lands mid syntagm and the voice pauses where no reader would.
 //
 // Markdown emphasis, list markers and emoji are dropped on the way out: they
 // are written for the eye, and a talker given nothing to say never finds its

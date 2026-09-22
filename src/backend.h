@@ -1,32 +1,23 @@
 #pragma once
 // backend.h: GGML backend initialization
 //
-// All modules use the same pattern: load all backends, pick best GPU,
-// keep CPU as fallback. Each backend_init call returns a fresh backend
-// pair with its own device context and memory pool, so independent
-// contexts never share allocator state and can run concurrently.
-// Sharing within one pipeline is done by passing the same BackendPair
-// to each module.
+// A model on the device takes the best backend, or the one GGML_BACKEND
+// names; a model that never leaves the host takes the CPU backend on the
+// threads it asks for. Each call returns a fresh backend with its own device
+// context and memory pool, so two models never share allocator state and can
+// run concurrently.
 
 #include "ggml-backend.h"
 #include "s2s-error.h"
 
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
 #include <thread>
 
-struct BackendPair {
-    ggml_backend_t backend;
-    ggml_backend_t cpu_backend;
-    bool           has_gpu;
-};
-
-// Physical core count heuristic (logical / 2 for HT/SMT).
-// Used for GGML CPU thread count: GEMM shares SIMD units across hyperthreads,
-// so one thread per physical core is optimal.
+// Physical core count heuristic (logical / 2 for HT/SMT): GEMM shares the
+// SIMD units across hyperthreads, so one thread per physical core is optimal.
 static int backend_cpu_n_threads(void) {
     int n = (int) std::thread::hardware_concurrency() / 2;
     return n > 0 ? n : 1;
@@ -94,15 +85,12 @@ static void s2s_ggml_log(enum ggml_log_level level, const char * text, void * us
     }
 }
 
-// Initialize backends: load all available (CUDA, Metal, Vulkan...),
-// pick the best one, keep CPU as fallback.
-// label: log prefix, e.g. "Pipeline", "Audio", "Thinker"
-// Each call returns a fresh backend pair with its own memory pool.
-// Returns a BackendPair with .backend == NULL when initialisation fails;
-// the caller must check this before passing it to any pipeline_*_load.
-static BackendPair backend_init(const char * label) {
-    // Magic static: log callback install and dynamic backend loading
-    // happen exactly once, safe under concurrent init calls.
+// The best backend, or the one GGML_BACKEND names (CUDA0, Vulkan0, CPU...),
+// on one thread per physical core when it is the CPU. label opens the log
+// line. NULL when no backend can be initialized.
+static ggml_backend_t backend_init(const char * label) {
+    // Magic static: the log callback and the dynamic backend loading happen
+    // exactly once, safe under concurrent init calls.
     static const bool loaded = [] {
         ggml_log_set(s2s_ggml_log, nullptr);
         ggml_backend_load_all();
@@ -110,18 +98,12 @@ static BackendPair backend_init(const char * label) {
     }();
     (void) loaded;
 
-    BackendPair bp = {};
-
-    // GGML_BACKEND env var: force a specific device instead of auto-best.
-    // Device names: CUDA0, Vulkan0, CPU, BLAS (see ggml_backend_dev_name).
-    const char * force_backend = std::getenv("GGML_BACKEND");
+    ggml_backend_t backend       = nullptr;
+    const char *   force_backend = std::getenv("GGML_BACKEND");
     if (force_backend) {
-        bp.backend = ggml_backend_init_by_name(force_backend, nullptr);
-        if (!bp.backend) {
-            // Assemble the device list inline so the log callback gets one
-            // self-contained line instead of three. The available list can
-            // grow with each backend that registers, so a std::string here
-            // keeps the formatting allocation-free for the common case.
+        backend = ggml_backend_init_by_name(force_backend, nullptr);
+        if (!backend) {
+            // One line lists every device, so the log reads it whole.
             std::string msg = "[Load] GGML_BACKEND=";
             msg += force_backend;
             msg += " not found. Available:";
@@ -130,62 +112,43 @@ static BackendPair backend_init(const char * label) {
                 msg += ggml_backend_dev_name(ggml_backend_dev_get(i));
             }
             s2s_log(S2S_LOG_ERROR, "%s", msg.c_str());
-            return BackendPair{};
+            return nullptr;
         }
     } else {
-        bp.backend = ggml_backend_init_best();
+        backend = ggml_backend_init_best();
     }
-    if (!bp.backend) {
+    if (!backend) {
         s2s_log(S2S_LOG_ERROR, "[Load] No backend available");
-        return BackendPair{};
+        return nullptr;
     }
-    bool best_is_cpu = (strcmp(ggml_backend_name(bp.backend), "CPU") == 0);
-    int  n_threads   = backend_cpu_n_threads();
-    if (best_is_cpu) {
-        ggml_backend_free(bp.backend);
-        bp.backend     = cpu_backend_new(n_threads);
-        bp.cpu_backend = bp.backend;
-    } else {
-        bp.cpu_backend = cpu_backend_new(n_threads);
-    }
-    if (!bp.cpu_backend) {
-        s2s_log(S2S_LOG_ERROR, "[Load] Failed to init CPU backend");
-        if (bp.backend && bp.backend != bp.cpu_backend) {
-            ggml_backend_free(bp.backend);
-        }
-        return BackendPair{};
-    }
-    bp.has_gpu = !best_is_cpu;
-    s2s_log(S2S_LOG_INFO, "[Load] %s backend: %s (CPU threads: %d)", label, ggml_backend_name(bp.backend), n_threads);
-    return bp;
-}
-
-// Free a backend pair returned by backend_init.
-static void backend_release(ggml_backend_t backend, ggml_backend_t cpu_backend) {
-    if (backend && backend != cpu_backend) {
+    const int n_threads = backend_cpu_n_threads();
+    if (strcmp(ggml_backend_name(backend), "CPU") == 0) {
         ggml_backend_free(backend);
+        backend = cpu_backend_new(n_threads);
+        if (!backend) {
+            s2s_log(S2S_LOG_ERROR, "[Load] Failed to init the CPU backend");
+            return nullptr;
+        }
+        s2s_log(S2S_LOG_INFO, "[Load] %s backend: CPU (threads: %d)", label, n_threads);
+        return backend;
     }
-    if (cpu_backend) {
-        ggml_backend_free(cpu_backend);
-    }
+    s2s_log(S2S_LOG_INFO, "[Load] %s backend: %s", label, ggml_backend_name(backend));
+    return backend;
 }
 
-// CPU only pair on n_threads threads, for the modules that never leave the
-// host: the VAD window loop and the turn classifier.
-static BackendPair backend_init_cpu(const char * label, int n_threads) {
+// The CPU backend on n_threads threads, for the models that never leave the
+// host: the VAD window loop and the turn classifier. NULL on failure.
+static ggml_backend_t backend_init_cpu(const char * label, int n_threads) {
     // In DL builds the CPU device only appears in the registry once the
     // backends are loaded, so a context that never asks for a GPU still has to
     // go through the loader.
     ggml_backend_load_all();
 
-    BackendPair bp = {};
-    bp.backend     = cpu_backend_new(n_threads);
-    bp.cpu_backend = bp.backend;
-    bp.has_gpu     = false;
-    if (!bp.backend) {
+    ggml_backend_t backend = cpu_backend_new(n_threads);
+    if (!backend) {
         s2s_log(S2S_LOG_ERROR, "[Load] Failed to init the CPU backend");
-        exit(1);
+        return nullptr;
     }
     s2s_log(S2S_LOG_INFO, "[Load] %s backend: CPU (threads: %d)", label, n_threads);
-    return bp;
+    return backend;
 }

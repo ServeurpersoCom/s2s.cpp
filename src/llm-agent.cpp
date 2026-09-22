@@ -20,13 +20,11 @@ struct LlmAgentTool {
 };
 
 struct llm_agent {
-    std::vector<mcp_server_params> servers;
-    std::vector<mcp_client *>      clients;  // one per server, in its order, NULL for one that cannot be reached
+    std::vector<mcp_client *> clients;  // one per server, in its order, NULL for one that cannot be reached
 };
 
 llm_agent * llm_agent_new(const std::vector<mcp_server_params> & servers) {
     llm_agent * agent = new llm_agent();
-    agent->servers    = servers;
     for (const mcp_server_params & server : servers) {
         mcp_client * client = mcp_client_new(server);
         if (!client) {

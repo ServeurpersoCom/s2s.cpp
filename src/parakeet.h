@@ -1,14 +1,13 @@
 #pragma once
 // parakeet.h: public ABI for the Parakeet TDT recognizer.
 //
-// Single-header public API. Pure C99, consumable from C and C++ alike.
-// Bindings (Python ctypes, Rust bindgen, Go cgo) parse this file directly.
-// Style follows whisper.h / llama.h: extern "C" linkage on every entry,
-// POD structs only, const char * UTF-8 strings, pk_status enum returns.
+// Pure C99, in the style of whisper.h and llama.h: extern "C" linkage on
+// every entry, POD structs only, const char * UTF-8 strings, pk_status enum
+// returns.
 //
 // The opaque pk_context aggregates everything the recognition path needs
 // (mel frontend, conv2d stem, FastConformer encoder, TDT prediction network
-// and joint, the piece table, the GGML backend pair). One init, one free,
+// and joint, the piece table, the GGML backend). One init, one free,
 // one transcribe call covers the full pcm -> text path. The lower level
 // pipeline_asr_* entries in pipeline-asr.h stay available for the debug
 // paths that dump stage tensors, but they are not part of this ABI.

@@ -10,9 +10,9 @@ import { toOptions } from './voice.svelte.js';
 //
 // The endpoint, its model and its API key never appear in the options: a page
 // is read by anyone, so the key stays on the server, and a server that owns
-// its endpoint refuses a session naming any part of it. The snippet opens with the command that gives the
-// server its endpoint, the URL and the model filled in, the key left for the
-// integrator to write in a file next to it.
+// its endpoint refuses a session naming any part of it. The snippet opens
+// with the command that gives the server its endpoint, the URL and the model
+// filled in, the key left for the integrator to write in a file next to it.
 
 // A JSON string is a valid JavaScript string, line breaks and backslashes
 // escaped. The snippet lands in a <script>, so a closing tag inside a prompt

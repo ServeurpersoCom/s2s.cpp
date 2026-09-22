@@ -12,7 +12,7 @@
 //   diagonal state space bottleneck
 //   subpixel decoders 5-1 with skips       -> [256, 1, 27] mask
 //   3x3 complex convolving mask on the mic analysis
-//   synthesis to a 512 sample frame, overlap-added by the caller
+//   synthesis to a 512 sample frame, overlap-added on the host
 //
 // Every per stream tensor carries the streams on its last dim, so one graph
 // serves a whole batch of them: the weights are read once and the kernels
@@ -100,7 +100,7 @@ struct LvDecoder {
 };
 
 struct lv_context {
-    BackendPair bp = {};
+    ggml_backend_t backend = nullptr;
 
     struct ggml_tensor * analysis  = nullptr;  // [512, 512]
     struct ggml_tensor * synthesis = nullptr;  // [512, 512]
@@ -483,7 +483,7 @@ static bool lv_build_graph(lv_context * ctx) {
     ggml_set_output(ctx->out_pcm);
     ggml_build_forward_expand(ctx->graph, ctx->out_pcm);
 
-    ctx->state_buf = ggml_backend_alloc_ctx_tensors(ctx->state_ctx, ctx->bp.backend);
+    ctx->state_buf = ggml_backend_alloc_ctx_tensors(ctx->state_ctx, ctx->backend);
     if (!ctx->state_buf) {
         return false;
     }
@@ -600,7 +600,7 @@ static void lv_worker(lv_context * ctx) {
         ggml_backend_tensor_set(ctx->in_ref, ctx->ref_host.data(), 0, ctx->ref_host.size() * sizeof(float));
         ggml_backend_tensor_set(ctx->in_valid, ctx->valid.data(), 0, ctx->valid.size() * sizeof(float));
         ggml_backend_tensor_set(ctx->in_hold, ctx->hold.data(), 0, ctx->hold.size() * sizeof(float));
-        const bool ok = ggml_backend_graph_compute(ctx->bp.backend, ctx->graph) == GGML_STATUS_SUCCESS;
+        const bool ok = ggml_backend_graph_compute(ctx->backend, ctx->graph) == GGML_STATUS_SUCCESS;
         if (ok) {
             ggml_backend_tensor_get(ctx->out_pcm, ctx->out_host.data(), 0, ctx->out_host.size() * sizeof(float));
         }
@@ -649,8 +649,8 @@ lv_context * lv_init(const char * gguf_path) {
         ctx->power_law   = gf_get_f32(gf, "lv.power_law_c");
         ctx->eps         = gf_get_f32(gf, "lv.norm_eps");
 
-        ctx->bp = backend_init("LocalVQE");
-        if (!ctx->bp.backend) {
+        ctx->backend = backend_init("LocalVQE");
+        if (!ctx->backend) {
             s2s_set_error("[LocalVQE] Failed to init the backend");
             gf_close(&gf);
             delete ctx;
@@ -684,7 +684,7 @@ lv_context * lv_init(const char * gguf_path) {
         ctx->mask_re  = gf_load_tensor_f32(&ctx->wctx, gf, "mask.v_real");
         ctx->mask_im  = gf_load_tensor_f32(&ctx->wctx, gf, "mask.v_imag");
 
-        const bool loaded = wctx_alloc(&ctx->wctx, ctx->bp.backend);
+        const bool loaded = wctx_alloc(&ctx->wctx, ctx->backend);
         gf_close(&gf);
         if (!loaded) {
             s2s_set_error("[LocalVQE] Failed to upload the weights");
@@ -692,7 +692,7 @@ lv_context * lv_init(const char * gguf_path) {
             return nullptr;
         }
 
-        ctx->alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(ctx->bp.backend));
+        ctx->alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(ctx->backend));
         if (!graph_arena_init(&ctx->arena, LV_MAX_NODES) || !ctx->alloc) {
             s2s_set_error("[LocalVQE] Failed to allocate the graph arena");
             lv_free(ctx);
@@ -742,7 +742,9 @@ void lv_free(lv_context * ctx) {
     }
     graph_arena_free(&ctx->arena);
     wctx_free(&ctx->wctx);
-    backend_release(ctx->bp.backend, ctx->bp.cpu_backend);
+    if (ctx->backend) {
+        ggml_backend_free(ctx->backend);
+    }
     delete ctx;
 }
 

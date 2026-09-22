@@ -4,9 +4,8 @@
 	import ChatCard from './ChatCard.svelte';
 	import LogCard from './LogCard.svelte';
 
-	// The component itself draws nothing. This panel only owns its lifetime,
-	// so the page stays free for whatever gets designed here later. It arrives
-	// from ./s2s.js, the same file an integrator imports.
+	// The component itself draws nothing: this panel only owns its lifetime.
+	// It arrives from ./s2s.js, the same file an integrator imports.
 	onMount(createVoice);
 
 	// Settings edited on the left reach a running session live: applySettings

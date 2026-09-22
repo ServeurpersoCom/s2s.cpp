@@ -16,9 +16,7 @@
 //   width               = ceil(lpfw * orig / base)
 //   kernel_size         = 2 * width + orig
 //   kernel[j, k]        = sinc(t * pi) * hann(t)^2 * (base / orig)
-//                          with t = clamp(((k - width) / orig - j / new) *
-//                          base,
-//                                         -lpfw, lpfw)
+//   t                   = clamp(((k - width) / orig - j / new) * base, -lpfw, lpfw)
 //   target_length       = ceil(sr_out * n_in / sr_in)
 //
 // Apply: pad (width, width + orig), strided conv1d, transpose, truncate.

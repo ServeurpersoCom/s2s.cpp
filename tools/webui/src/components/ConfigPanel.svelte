@@ -73,10 +73,9 @@
 		settings.language = (e.target as HTMLSelectElement).value;
 	}
 
-	// an endpoint that answers fills the selector, one that does not leaves the
-	// free text field. The failure itself lands in the server logs.
-	// the selector is either filled by the endpoint or empty: a model name is
-	// what the endpoint answered, never a placeholder invented here.
+	// an endpoint that answers fills the selector, one that does not empties it
+	// and the toast says why: a model name is what the endpoint answered, never
+	// a placeholder invented here.
 	async function loadModels() {
 		if (!settings.llmUrl) {
 			models = [];
@@ -106,8 +105,8 @@
 		}
 	}
 
-	// a tool the endpoint no longer runs stays checked in the settings until
-	// the user says otherwise: the list is the session's, not the endpoint's.
+	// a tool no server lists any more stays checked in the settings until the
+	// user says otherwise: the list is the session's, not the servers'.
 	function onTool(name: string, e: Event) {
 		const checked = (e.target as HTMLInputElement).checked;
 		settings.tools = checked
@@ -116,7 +115,7 @@
 	}
 
 	// One gesture fills both lists: in the agentic mode the tools come from
-	// the endpoint the models come from.
+	// the MCP servers and from the endpoint the models come from.
 	function reload() {
 		loadModels();
 		if (mode === 'agentic') {
@@ -133,8 +132,7 @@
 			});
 	}
 
-	// an empty sampling field leaves the endpoint to its own default, so
-	// clearing the section is how a user gets back to it
+	// clears the endpoint and stops the session that was talking to it
 	function clearLlm() {
 		settings.llmUrl = '';
 		settings.llmModel = '';
@@ -203,7 +201,7 @@
 	onMount(loadProps);
 
 	// The page lists the models once /props says the endpoint belongs to the
-	// session, and only in conversation. The effect follows this boolean alone:
+	// session, in every mode but loopback. The effect follows this boolean alone:
 	// /props landing or a field being typed does not change it, so neither
 	// sends a request.
 	let listsModels = $derived(!!d && mode !== 'loopback' && !d.llm_fixed);

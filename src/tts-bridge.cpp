@@ -13,11 +13,10 @@
 //   freeman.{spk,rvq,txt} reference speech
 //   freeman.spk speaker embedding only
 //
-// Two guards live here, both learned from a talker that ran to its frame cap
-// on a degenerate input: a text shorter than the floor is not spoken at all,
-// and the frame budget of a synthesis is derived from the length of the text
-// instead of being left at the model maximum. Both are settings published in
-// /props and editable from the surface, never hidden numbers.
+// The frame budget of a synthesis is derived from the length of the text, so
+// a talker that misses its end of speech stops within a few seconds of the
+// text. The rate and the margin are settings published in /props and
+// editable from the surface, never hidden numbers.
 
 #include "tts-bridge.h"
 
@@ -65,8 +64,6 @@ struct tts_bridge {
     tts_request  defaults;
     tts_sampling sampling_defaults;
     tts_engine   engine;
-
-    int sample_rate = 0;
 };
 
 // Both callbacks run on the qwentts worker. They carry the same state so a
@@ -106,7 +103,7 @@ static void tts_bridge_log(enum qt_log_level level, const char * msg, void * use
 
 // Whole file into bytes, false when it cannot be read or is empty.
 static bool tts_bridge_read(const std::filesystem::path & path, std::string & out) {
-    FILE * f = utf8_fopen(path.string().c_str(), "rb");
+    FILE * f = utf8_fopen(path.u8string().c_str(), "rb");
     if (!f) {
         return false;
     }
@@ -121,7 +118,7 @@ static bool tts_bridge_read(const std::filesystem::path & path, std::string & ou
 }
 
 static bool tts_bridge_load_voice(const tts_bridge * b, const std::filesystem::path & spk_path, TtsVoice & voice) {
-    voice.name = spk_path.stem().string();
+    voice.name = spk_path.stem().u8string();
 
     std::string bytes;
     if (!tts_bridge_read(spk_path, bytes) || bytes.size() % sizeof(float) != 0) {
@@ -146,7 +143,7 @@ static bool tts_bridge_load_voice(const tts_bridge * b, const std::filesystem::p
         return true;
     }
 
-    if (!rvq_read_file(rvq_path.string().c_str(), qt_num_codebooks(b->ctx), TTS_RVQ_CODE_BITS, voice.codes,
+    if (!rvq_read_file(rvq_path.u8string().c_str(), qt_num_codebooks(b->ctx), TTS_RVQ_CODE_BITS, voice.codes,
                        &voice.n_frames)) {
         s2s_set_error("[TTS] Voice %s has an unreadable .rvq", voice.name.c_str());
         return false;
@@ -167,7 +164,7 @@ static bool tts_bridge_load_voice(const tts_bridge * b, const std::filesystem::p
 static bool tts_bridge_load_voices(tts_bridge * b, const std::string & dir) {
     std::vector<std::filesystem::path> paths;
     std::error_code                    error;
-    for (const auto & entry : std::filesystem::directory_iterator(dir, error)) {
+    for (const auto & entry : std::filesystem::directory_iterator(std::filesystem::u8path(dir), error)) {
         if (entry.path().extension() == ".spk") {
             paths.push_back(entry.path());
         }
@@ -250,7 +247,6 @@ tts_bridge * tts_bridge_load(const tts_bridge_params & params) {
     b->engine                 = params.engine;
     b->engine.max_batch       = init.max_batch;
     b->engine.codec_chunk_sec = init.codec_chunk_sec;
-    b->sample_rate            = 24000;
 
     if (!tts_bridge_load_voices(b, params.voices_dir)) {
         tts_bridge_free(b);
@@ -276,8 +272,8 @@ tts_bridge * tts_bridge_load(const tts_bridge_params & params) {
     b->sampling_defaults.max_new_tokens        = reference.max_new_tokens;
     b->sampling_defaults.seed                  = reference.seed;
 
-    s2s_log(S2S_LOG_INFO, "[TTS] %s, %zu voices, default %s, %zu languages, %d Hz", qt_version(), b->voices.size(),
-            b->defaults.voice.c_str(), b->languages.size(), b->sample_rate);
+    s2s_log(S2S_LOG_INFO, "[TTS] %s, %zu voices, default %s, %zu languages", qt_version(), b->voices.size(),
+            b->defaults.voice.c_str(), b->languages.size());
     s2s_log(S2S_LOG_INFO, "[TTS] Engine: batch %d, flash attention %s, clamp fp16 %s, codec chunk %.1f s",
             b->engine.max_batch, b->engine.use_fa ? "on" : "off", b->engine.clamp_fp16 ? "on" : "off",
             (double) b->engine.codec_chunk_sec);
@@ -290,10 +286,6 @@ void tts_bridge_free(tts_bridge * b) {
     }
     qt_free(b->ctx);
     delete b;
-}
-
-int tts_bridge_sample_rate(const tts_bridge * b) {
-    return b ? b->sample_rate : 0;
 }
 
 const std::vector<std::string> & tts_bridge_languages(const tts_bridge * b) {

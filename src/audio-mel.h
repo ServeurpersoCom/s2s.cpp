@@ -44,7 +44,6 @@ struct AudioMelConfig {
 };
 
 struct AudioMelConstants {
-    AudioMelConfig     cfg;
     int                n_freq;
     std::vector<float> hann;       // [n_fft]
     std::vector<float> dft_real;   // [n_freq, n_fft] row major  ne=(n_fft, n_freq)
@@ -78,7 +77,6 @@ static inline float audio_mel_mel_to_hz(float mel) {
 // Bake the Hann window, the cos/sin DFT matrices and the Slaney filterbank.
 // Trig is evaluated in f64 to keep the roundoff under the f32 ULP.
 static void audio_mel_compute_constants(const AudioMelConfig & cfg, AudioMelConstants & c) {
-    c.cfg    = cfg;
     c.n_freq = cfg.n_fft / 2 + 1;
 
     // The window vector spans n_fft so the DFT matmul stays one shape. A
@@ -136,19 +134,6 @@ static void audio_mel_compute_constants(const AudioMelConfig & cfg, AudioMelCons
     }
 }
 
-// Build the mel graph. The constants live as caller owned graph inputs,
-// matching the sibling qwentts.cpp frontend.
-//
-// Inputs:
-//   audio_padded [T_padded]          f32, reflect padded by the caller
-//   hann         [n_fft]             f32 host constant
-//   dft_real     [n_fft, n_freq]     f32 host constant
-//   dft_imag     [n_fft, n_freq]     f32 host constant
-//   mel_basis    [n_freq, n_mels]    f32 host constant
-//
-// Returns the log10 mel with ne = [n_frames_full, n_mels] (memory n_mels outer,
-// frame inner). The caller drops the trailing frame and applies the Whisper max
-// normalization on the host.
 // Power spectrogram of a reflect or zero padded signal. im2col cuts the
 // frames, the window is applied elementwise, and the DFT runs as two real
 // matmuls since GGML has no FFT op. Returns [n_freq, n_frames].
@@ -180,8 +165,7 @@ static struct ggml_tensor * audio_spectrogram_build_graph(struct ggml_context * 
     return power;
 }
 
-// Build the Whisper mel graph. The constants live as caller owned graph
-// inputs, matching the sibling qwentts.cpp frontend.
+// Build the Whisper mel graph. The constants are caller owned graph inputs.
 //
 // Inputs:
 //   audio_padded [T_padded]          f32, reflect padded by the caller

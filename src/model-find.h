@@ -1,5 +1,7 @@
 #pragma once
 // model-find.h: the GGUF files the server loads, found by name in a directory
+//
+// Paths are UTF-8 in and out, on Windows as everywhere.
 
 #include <cstdlib>
 #include <filesystem>
@@ -43,8 +45,8 @@ static std::string find_model(const std::string & dir, const char * prefix, cons
     std::string best_name;
 
     std::error_code error;
-    for (const auto & entry : std::filesystem::directory_iterator(dir, error)) {
-        const std::string name = entry.path().filename().string();
+    for (const auto & entry : std::filesystem::directory_iterator(std::filesystem::u8path(dir), error)) {
+        const std::string name = entry.path().filename().u8string();
         if (name.rfind(prefix, 0) != 0 || name.find(variant) == std::string::npos || name.size() <= 5 ||
             name.compare(name.size() - 5, 5, ".gguf") != 0) {
             continue;
@@ -63,7 +65,7 @@ static std::string find_model(const std::string & dir, const char * prefix, cons
                 }
             }
         }
-        best      = entry.path().string();
+        best      = entry.path().u8string();
         best_name = name;
     }
     return best;

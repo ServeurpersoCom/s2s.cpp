@@ -8,7 +8,7 @@
 //
 // The model runs on the CPU with a single thread: 2 MB of weights per
 // 32 ms window is far below the point where a GPU dispatch pays off, and
-// keeping it off the device leaves the whole GPU to the ASR and the TTS.
+// keeping it off the device leaves the GPU to the models that do run there.
 //
 // One sv_context holds the weights and the compute graph, and serializes
 // concurrent sv_prob calls internally, so several streams share one

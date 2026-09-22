@@ -21,8 +21,8 @@
 #    include <unistd.h>
 #endif
 
-// portable fd wrappers. avoids macros that collide with C++ method names
-// (e.g. sink.write() in httplib would be eaten by a write() macro).
+// Portable fd wrappers, functions rather than macros: a write() macro would
+// eat a method of the same name, sink.write() of httplib for instance.
 #ifdef _WIN32
 static int fd_pipe(int fd[2]) {
     return _pipe(fd, 4096, _O_BINARY);
@@ -84,8 +84,8 @@ static void fd_close(int fd) {
 #include <string>
 #include <thread>
 
-// log capture: intercept stderr via pipe, forward to terminal + ring buffer.
-// SSE clients connect to /logs and receive lines in real time.
+// The ring of the latest lines, which /logs replays to a new client before it
+// streams the lines that follow.
 #define LOG_RING_BITS 9
 #define LOG_RING_SIZE (1 << LOG_RING_BITS)
 #define LOG_RING_MASK (LOG_RING_SIZE - 1)
@@ -103,8 +103,8 @@ static std::atomic<bool> g_log_drained{ false };  // the reader forwarded everyt
 // How long a crash waits for the reader to drain the pipe before it goes on.
 #define LOG_CRASH_DRAIN_MS 1000
 
-// reader thread: drain pipe, forward to real stderr, push lines to ring.
-// exits when the write end of the pipe is closed (fd_dup2 restores real stderr).
+// Drains the pipe into the real stderr and the ring, until the write end of
+// the pipe closes when the capture stops.
 static void log_reader_main() {
     char        buf[4096];
     std::string partial;
@@ -210,9 +210,8 @@ static void setup_log_capture() {
     g_pipe_read_fd = pipefd[0];
     fd_dup2(pipefd[1], STDERR_FILENO);
     fd_close(pipefd[1]);
-    // A loader aborts the process with exit() on a fatal error, which skips
-    // every destructor: the hook still drains the pipe, so the message that
-    // explains the failure reaches the terminal.
+    // exit() skips the destructors of the stack, this capture's included: the
+    // hook still drains the pipe, so the last message reaches the terminal.
     atexit(log_capture_stop);
     g_log_reader = std::thread(log_reader_main);
 
@@ -232,8 +231,7 @@ struct LogCapture {
     ~LogCapture() { log_capture_stop(); }
 };
 
-// GET /logs: SSE stream of stderr lines.
-// sends backlog (up to LOG_RING_SIZE) then streams new lines in real time.
+// GET /logs: the ring as server sent events, then every new line as it comes.
 static void handle_logs(const httplib::Request &, httplib::Response & res) {
     res.set_header("Cache-Control", "no-cache");
     res.set_header("X-Accel-Buffering", "no");
