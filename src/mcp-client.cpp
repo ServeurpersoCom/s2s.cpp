@@ -216,7 +216,7 @@ static bool mcp_exchange(mcp_client *              c,
         return false;
     }
     if (!response) {
-        s2s_set_error("[MCP] %s", httplib::to_string(response.error()).c_str());
+        s2s_set_error("[MCP] %s", http_error(response).c_str());
         return false;
     }
     if (response->has_header("Mcp-Session-Id")) {

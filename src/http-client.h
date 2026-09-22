@@ -38,6 +38,24 @@ static inline bool http_split_url(const std::string & url, std::string & host, s
     return true;
 }
 
+// The error of a request that got no response. When the TLS handshake is what
+// failed, the reason the TLS library gives follows, or the httplib TLS error
+// code when the library recorded none.
+static inline std::string http_error(const httplib::Result & result) {
+    std::string error = httplib::to_string(result.error());
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+    if (result.ssl_backend_error() != 0) {
+        char reason[256];
+        ERR_error_string_n((unsigned long) result.ssl_backend_error(), reason, sizeof(reason));
+        error += ", ";
+        error += reason;
+    } else if (result.ssl_error() != 0) {
+        error += ", TLS error code " + std::to_string(result.ssl_error());
+    }
+#endif
+    return error;
+}
+
 // The HTTP client of one host, or none when httplib cannot make one: a port
 // out of range, a scheme it does not speak, https on a build without TLS. It
 // throws for some of them and hands back an empty client for the others;

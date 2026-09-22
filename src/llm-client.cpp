@@ -417,7 +417,7 @@ bool llm_client_stream(llm_client *                     c,
         return answered();
     }
     if (!result) {
-        s2s_set_error("[LLM] %s", httplib::to_string(result.error()).c_str());
+        s2s_set_error("[LLM] %s", http_error(result).c_str());
         return false;
     }
     if (result->status < 200 || result->status >= 300) {
@@ -457,7 +457,7 @@ bool llm_client_models(const llm_client_params & params, std::vector<std::string
 
     httplib::Result result = client.Get((path + "/models").c_str(), headers);
     if (!result) {
-        s2s_set_error("[LLM] %s", httplib::to_string(result.error()).c_str());
+        s2s_set_error("[LLM] %s", http_error(result).c_str());
         return false;
     }
     if (result->status < 200 || result->status >= 300) {
@@ -528,7 +528,7 @@ bool llm_client_tools(const llm_client_params & params, std::vector<llm_tool> & 
 
     httplib::Result result = client.Get((llm_client_root(path) + "/tools").c_str(), headers);
     if (!result) {
-        s2s_set_error("[LLM] %s", httplib::to_string(result.error()).c_str());
+        s2s_set_error("[LLM] %s", http_error(result).c_str());
         return false;
     }
     if (result->status < 200 || result->status >= 300) {
@@ -610,7 +610,7 @@ bool llm_client_tool_call(llm_client *              c,
         return false;
     }
     if (!response) {
-        s2s_set_error("[LLM] %s", httplib::to_string(response.error()).c_str());
+        s2s_set_error("[LLM] %s", http_error(response).c_str());
         return false;
     }
     if (response->status < 200 || response->status >= 300) {
