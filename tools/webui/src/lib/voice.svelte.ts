@@ -253,13 +253,12 @@ export async function createVoice(): Promise<S2S> {
 		turn.spokenEnd = textEnd;
 	});
 	s2s.on('history', saveHistory);
-	// everything the component reports goes to the server log, so the card on
-	// the right tells the whole story, and a failure also pops the toast
+	// the log of the component goes to the server log, so the card on the right
+	// tells the whole story, and an error pops the toast
 	s2s.on('log', (line) => {
 		postLog(line);
 	});
 	s2s.on('error', (message) => {
-		postLog(`Error: ${message}`);
 		toast(message);
 	});
 
