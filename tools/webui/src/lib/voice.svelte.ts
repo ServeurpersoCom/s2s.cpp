@@ -1,4 +1,4 @@
-import type { S2S, S2SMessage, S2SOptions, S2SState } from './s2s.js';
+import type { S2S, S2SMcpServer, S2SMessage, S2SOptions, S2SState } from './s2s.js';
 import { postLog } from './api.js';
 import { num } from './fields.js';
 import { app, settings, toast } from './state.svelte.js';
@@ -27,10 +27,22 @@ export function sessionLanguage(): string | undefined {
 // own. Only what the session applies goes out: the tools in the agentic
 // mode alone, the model settings in every mode but loopback, where no model
 // is in the path. The choices of the other modes stay in the settings.
+// The MCP servers of the settings, one per line: the URL, then the key it
+// takes after a space, when it takes one.
+export function mcpServers(text: string): S2SMcpServer[] {
+	return text
+		.split('\n')
+		.map((line) => line.trim().split(/\s+/))
+		.filter((parts) => parts[0])
+		.map(([url, key]) => (key ? { url, key } : { url }));
+}
+
 export function toOptions(): S2SOptions {
 	const d = app.props?.defaults;
-	// a server that owns its endpoint takes none of it from the page
+	// a server that owns its endpoint takes none of it from the page, and
+	// the same for its MCP servers
 	const fixed = d?.llm_fixed ?? false;
+	const mcpFixed = d?.mcp_fixed ?? false;
 	const mode = settings.mode || d?.mode || '';
 	const agentic = mode === 'agentic';
 	const model = mode !== 'loopback';
@@ -41,6 +53,7 @@ export function toOptions(): S2SOptions {
 		llmModel: fixed ? undefined : settings.llmModel,
 		llmKey: fixed ? undefined : settings.llmKey,
 		tools: agentic && settings.tools.length ? [...settings.tools] : undefined,
+		mcp: agentic && !mcpFixed && settings.mcp.trim() ? mcpServers(settings.mcp) : undefined,
 		maxRounds: agentic ? num(settings.maxRounds) : undefined,
 		toolTimeoutSec: agentic ? num(settings.toolTimeoutSec) : undefined,
 		sampling: model

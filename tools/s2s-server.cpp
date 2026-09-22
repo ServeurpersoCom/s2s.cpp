@@ -105,16 +105,18 @@ static void print_usage(const char * prog) {
             "  --llm-url <url>        OpenAI compatible endpoint\n"
             "  --llm-model <name>     Model on that endpoint\n"
             "  --llm-key-file <path>  File holding its API key, read at startup\n"
+            "  --mcp <url>            MCP server the agentic mode uses, repeatable, Streamable HTTP\n"
+            "  --mcp-key-file <path>  File holding the key of the --mcp named before it\n"
             "\n"
             "Security:\n"
             "  --origin <url>         Allowed browser origin, repeatable. Rejects a WebSocket\n"
             "                         or an HTTP route called from another page. Empty allows\n"
             "                         every origin. A script can forge this header, so it only\n"
             "                         keeps third party pages out.\n"
-            "  --llm-host <host>      Allowed endpoint host, repeatable, host[:port]. The server\n"
-            "                         fetches the endpoint a client names, so an empty list lets\n"
-            "                         it reach anything it can route to. Naming the hosts closes\n"
-            "                         that door.\n"
+            "  --llm-host <host>      Allowed endpoint and MCP host, repeatable, host[:port].\n"
+            "                         The server fetches what a client names, so an empty list\n"
+            "                         lets it reach anything it can route to. Naming the hosts\n"
+            "                         closes that door.\n"
             "\n"
             "Engine:\n"
             "  --max-batch <N>        Concurrent syntheses batched on the GPU (default: 1)\n"
@@ -186,6 +188,21 @@ int main(int argc, char ** argv) {
                 return 1;
             }
             setup.llm_fixed = true;
+        } else if (arg == "--mcp" && has_value) {
+            mcp_server_params server;
+            server.url = argv[++i];
+            setup.defaults.mcp.push_back(server);
+            setup.mcp_fixed = true;
+        } else if (arg == "--mcp-key-file" && has_value) {
+            if (setup.defaults.mcp.empty()) {
+                s2s_log(S2S_LOG_ERROR, "[Server] FATAL: --mcp-key-file needs an --mcp before it");
+                return 1;
+            }
+            std::ifstream in(argv[++i]);
+            if (!std::getline(in, setup.defaults.mcp.back().api_key) || setup.defaults.mcp.back().api_key.empty()) {
+                s2s_log(S2S_LOG_ERROR, "[Server] FATAL: no key in %s", argv[i]);
+                return 1;
+            }
         } else if (arg == "--max-batch" && has_value) {
             engine.max_batch = atoi(argv[++i]);
         } else if (arg == "--no-fa") {
@@ -359,6 +376,7 @@ int main(int argc, char ** argv) {
         };
         str("mode", mode);
         yyjson_mut_obj_add_bool(doc, defaults, "llm_fixed", setup.llm_fixed);
+        yyjson_mut_obj_add_bool(doc, defaults, "mcp_fixed", setup.mcp_fixed);
         str("instructions", system_prompt);
         str("voice", voice.voice);
         str("language", voice.language);
@@ -494,7 +512,8 @@ int main(int argc, char ** argv) {
             return;
         }
 
-        llm_client_params params = llm_defaults;
+        llm_client_params              params  = llm_defaults;
+        std::vector<mcp_server_params> servers = setup.defaults.mcp;
 
         yyjson_doc * doc = yyjson_read(req.body.c_str(), req.body.size(), 0);
         if (doc) {
@@ -507,33 +526,64 @@ int main(int argc, char ** argv) {
             if (!setup.llm_fixed && !key.empty()) {
                 params.api_key = key;
             }
+            // The MCP servers of the request, as the session would name them.
+            yyjson_val * mcp   = yyjson_obj_get(root, "mcp");
+            size_t       index = 0;
+            size_t       max   = 0;
+            yyjson_val * entry = nullptr;
+            yyjson_arr_foreach(mcp, index, max, entry) {
+                mcp_server_params named;
+                named.url         = rt_json_str(entry, "url");
+                named.api_key     = rt_json_str(entry, "key");
+                named.timeout_sec = params.tool_timeout_sec;
+                if (!setup.mcp_fixed && !named.url.empty()) {
+                    servers.push_back(named);
+                }
+            }
             yyjson_doc_free(doc);
         }
 
-        if (!host_allowed(llm_hosts, params.base_url)) {
-            s2s_log(S2S_LOG_WARN, "[HTTP] Endpoint host %s is not allowed", url_host(params.base_url).c_str());
+        bool allowed = host_allowed(llm_hosts, params.base_url);
+        for (const mcp_server_params & mcp_server : servers) {
+            allowed = allowed && host_allowed(llm_hosts, mcp_server.url);
+        }
+        if (!allowed) {
+            s2s_log(S2S_LOG_WARN, "[HTTP] A host of the tool list is not allowed");
             res.status = 403;
-            res.set_content("{\"error\":\"endpoint host not allowed\"}", "application/json");
+            res.set_content("{\"error\":\"host not allowed\"}", "application/json");
             return;
         }
 
         s2s_log(S2S_LOG_INFO, "[HTTP] Tool list");
 
-        std::vector<std::string> tools;
-        if (!llm_agent_tools(params, tools)) {
+        // A list is one visit: the MCP sessions it opens end with it.
+        llm_agent *                  agent = llm_agent_new(servers);
+        std::vector<llm_agent_group> groups;
+        const bool                   listed = llm_agent_tools(agent, params, nullptr, groups);
+        llm_agent_free(agent);
+        if (!listed) {
             s2s_log(S2S_LOG_WARN, "[Agent] Tool list failed: %s", llm_client_last_error());
             res.status = 502;
             res.set_content(json_string("error", llm_client_last_error()), "application/json");
             return;
         }
-        s2s_log(S2S_LOG_INFO, "[Agent] %zu tools", tools.size());
+        s2s_log(S2S_LOG_INFO, "[Agent] %zu servers with tools", groups.size());
 
+        // One entry per server: the URL the page named as its title, or the
+        // name the server gave itself when the URL is the server's own to
+        // keep, like the endpoint, and the tools under it.
         yyjson_mut_doc * body = yyjson_mut_doc_new(nullptr);
         yyjson_mut_val * root = yyjson_mut_obj(body);
         yyjson_mut_doc_set_root(body, root);
         yyjson_mut_val * data = yyjson_mut_obj_add_arr(body, root, "data");
-        for (const std::string & tool : tools) {
-            yyjson_mut_arr_add_strn(body, data, tool.c_str(), tool.size());
+        for (const llm_agent_group & group : groups) {
+            const std::string title = group.url.empty() || setup.mcp_fixed ? group.name : group.url;
+            yyjson_mut_val *  entry = yyjson_mut_arr_add_obj(body, data);
+            yyjson_mut_obj_add_strncpy(body, entry, "title", title.c_str(), title.size());
+            yyjson_mut_val * tools = yyjson_mut_obj_add_arr(body, entry, "tools");
+            for (const std::string & tool : group.tools) {
+                yyjson_mut_arr_add_strn(body, tools, tool.c_str(), tool.size());
+            }
         }
         res.set_content(json_write(body, 0), "application/json");
     });
@@ -602,8 +652,8 @@ int main(int argc, char ** argv) {
     signal(SIGTERM, on_signal);
 
     s2s_log(S2S_LOG_INFO, "[Server] s2s-server %s", S2S_VERSION);
-    s2s_log(S2S_LOG_INFO, "[Server] Mode: %s, endpoint %s", mode.c_str(),
-            setup.llm_fixed ? "set by the command line" : "named by the session");
+    s2s_log(S2S_LOG_INFO, "[Server] Mode: %s, endpoint %s, %zu MCP servers", mode.c_str(),
+            setup.llm_fixed ? "set by the command line" : "named by the session", setup.defaults.mcp.size());
     s2s_log(S2S_LOG_INFO, "[Server] Listening on http://%s:%d", host.c_str(), port);
 
     if (!server.listen(host, port)) {

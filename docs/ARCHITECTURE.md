@@ -177,14 +177,26 @@ the length of the reasoning dropped, and its `finish_reason`.
 The `agentic` mode answers a turn with as many rounds as the model asks
 for. A round is one stream plus the calls it ends on: the request
 carries the definitions of the checked tools, the model writes words,
-calls, or both, and every call is run by the endpoint through its own
-route. The results come back as `tool` messages, one per call, and the
+calls, or both, and every call is run by the server that offered the
+tool. The results come back as `tool` messages, one per call, and the
 next round starts.
 
-The loop lives in the client because llama.cpp runs the tools but drives
-nothing: `GET /tools` lists them, `POST /tools` runs one, and the chat
-endpoint keeps no state between rounds, so the whole conversation, the
-calls and their results included, travels again each time.
+The tools come from two kinds of server. The MCP servers the session
+names, any number, reached by JSON-RPC over Streamable HTTP the way the
+official SDK does it: `initialize` and `notifications/initialized`
+open a session, `tools/list` gives the tools page by page, `tools/call`
+runs one, the session id and the protocol version travel in the headers
+of every request, and `DELETE` ends the session when the connection
+closes. And the endpoint itself when it is a llama.cpp server, through
+its own routes: `GET /tools` lists them, `POST /tools` runs one. The
+MCP servers come first, the endpoint after them, a name listed once.
+With an MCP server the endpoint can be any OpenAI compatible server.
+
+The loop lives in the client because the servers run the tools but
+drive nothing: the chat endpoint keeps no state between rounds, so the
+whole conversation, the calls and their results included, travels
+again each time. The MCP sessions of a connection stay open across its
+turns.
 
 The voice hears every round, since the deltas of each stream go through
 the same splitter: a model that speaks before it calls is spoken as it
@@ -192,7 +204,7 @@ writes. A barge-in cuts a round the way it cuts a plain answer, a tool
 in flight included, and the cap on the rounds ends a model that calls
 forever, the turn failing with the reason.
 
-Only this mode leaves the OpenAI dialect. The tool routes belong to
+Only the `/tools` routes leave the OpenAI dialect: they belong to
 llama.cpp, and the tools of the MCP servers it spawns come out of the
 same list as its own.
 
@@ -313,17 +325,21 @@ turn duration up to 60 s: the server refuses any other with an `error`
 naming the field, which keeps its default.
 
 `session.update` carries `tools`, the names of the tools an agentic
-session lets the model use, `max_rounds`, its cap on the rounds of
-calls, and `tool_timeout_sec`, how long one call may run, 10 s by
-default against the 5 s of `llm_timeout_sec`: a tool goes out to the
-network. An absent list and an empty one read the same: the model is
-offered none.
+session lets the model use, `mcp`, the MCP servers it names as a list
+of `{url, key}`, `max_rounds`, its cap on the rounds of calls, and
+`tool_timeout_sec`, how long one call may run, 10 s by default against
+the 5 s of `llm_timeout_sec`: a tool goes out to the network. An
+absent list and an empty one read the same: the model is offered none.
+A server started with `--mcp` owns its MCP servers the way `--llm-url`
+owns the endpoint: a session that names any is refused. The hosts of
+MCP servers pass the same allowlist as the endpoint's.
 
 HTTP routes: `/` the page, `/s2s.js` the component, `/props` the session
 defaults and the loaded models, `/health`, `/logs` the server log as SSE,
 `/log` where the page posts its own lines, `POST /v1/models` which lists
 the models of the endpoint a client names, and `POST /v1/tools` which
-lists the tools it runs. Both are proxies: the browser only ever talks to
+lists the tools of the MCP servers and the endpoint it names. Both are
+proxies: the browser only ever talks to
 s2s-server, so an endpoint on a loopback address or without CORS headers
 still fills the page, and the API key stays on this machine.
 
@@ -362,8 +378,10 @@ session names its own. `/props` never publishes the endpoint: its
 | `src/parakeet.h` | ASR lib, C ABI |
 | `src/pipeline-asr.h`, `src/fastconformer-forward.h`, `src/tdt-decoder.h`, `src/sp-detok.h` | Parakeet internals |
 | `src/s2s-session.h` | turn state machine |
+| `src/http-client.h` | what the HTTP clients share: one client per host, cancelled from a watching thread |
 | `src/llm-client.h` | chat completions SSE client, the model list and the two tool routes |
-| `src/llm-agent.h` | the rounds of tool calls of one agentic turn |
+| `src/mcp-client.h` | MCP client over Streamable HTTP: handshake, tool list, tool calls |
+| `src/llm-agent.h` | the tool servers of one session and the rounds of tool calls of one agentic turn |
 | `src/sentence-split.h`, `src/emoji.h` | streaming text to synthesis units |
 | `src/tts-bridge.h` | qwentts.cpp calls, per request voice, sampling and guards |
 | `src/realtime-proto.h` | Realtime event encode and decode |

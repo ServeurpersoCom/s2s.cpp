@@ -136,6 +136,11 @@ export interface S2STts {
 	marginSeconds?: number;
 }
 
+export interface S2SMcpServer {
+	url: string;
+	key?: string;
+}
+
 export interface S2SOptions {
 	// The server, as the address its page is served from. Empty, or absent,
 	// is the page itself, which works behind any reverse proxy prefix. The
@@ -146,11 +151,13 @@ export interface S2SOptions {
 	llmUrl?: string;
 	llmModel?: string;
 	llmKey?: string;
-	// names of the tools the model may use in the agentic mode, as the
-	// endpoint lists them on its own tool route, and the rounds of calls one
+	// names of the tools the model may use in the agentic mode, as the tool
+	// list of the server names them, the MCP servers that run some of them,
+	// each a Streamable HTTP URL and the key it takes, the rounds of calls one
 	// turn may take before the answer is given up on, and the seconds a tool
 	// may work before its call fails
 	tools?: string[];
+	mcp?: S2SMcpServer[];
 	maxRounds?: number;
 	toolTimeoutSec?: number;
 	sampling?: S2SSampling;
@@ -594,6 +601,7 @@ export class S2S {
 				llm_key: this.options.llmKey,
 				llm_timeout_sec: this.options.llmTimeoutSec,
 				tools: this.options.tools,
+				mcp: this.options.mcp,
 				max_rounds: this.options.maxRounds,
 				tool_timeout_sec: this.options.toolTimeoutSec,
 				sampling: {

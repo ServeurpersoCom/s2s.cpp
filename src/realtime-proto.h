@@ -34,6 +34,7 @@
 // a later revision of the protocol still works here; an unknown type gets an
 // error event and the session goes on.
 
+#include "mcp-client.h"
 #include "yyjson.h"
 
 #include <cmath>
@@ -76,45 +77,47 @@ struct rt_session_patch {
 
     // Tools the session lets the model use, by name, in the agentic mode.
     // Absent and empty read the same: the model is offered none.
-    std::vector<std::string> tools;
-    int                      max_rounds        = -1;
-    int                      tool_timeout_sec  = -1;
-    float                    temperature       = -1.0f;
-    float                    top_p             = -1.0f;
-    int                      top_k             = -1;
-    float                    min_p             = -1.0f;
-    int                      max_tokens        = -1;
-    float                    presence_penalty  = -100.0f;
-    float                    frequency_penalty = -100.0f;
-    int64_t                  seed              = -1;
-    std::string              reasoning_effort;
-    std::string              tts_voice;
-    std::string              tts_language;
-    std::vector<std::string> tts_browser_languages;
-    float                    tts_temperature            = -1.0f;
-    int                      tts_top_k                  = -1;
-    float                    tts_top_p                  = -1.0f;
-    float                    tts_repetition_penalty     = -1.0f;
-    float                    tts_subtalker_temperature  = -1.0f;
-    int                      tts_subtalker_top_k        = -1;
-    float                    tts_subtalker_top_p        = -1.0f;
-    int                      tts_max_new_tokens         = -1;
-    int64_t                  tts_seed                   = -1;
-    int                      tts_min_chars              = -1;
-    float                    tts_chars_per_second       = -1.0f;
-    float                    tts_margin_seconds         = -1.0f;
-    int                      llm_timeout_sec            = -1;
-    float                    vad_neg_threshold          = -1.0f;
-    float                    vad_threshold              = -1.0f;
-    int                      min_speech_ms              = -1;
-    int                      barge_in_ms                = -1;
-    int                      min_silence_ms             = -1;
-    int                      min_speech_continuation_ms = -1;
-    int                      speech_pad_ms              = -1;
-    float                    turn_threshold             = -1.0f;
-    int                      incomplete_delay_ms        = -1;
-    int                      turn_max_wait_ms           = -1;
-    int                      reopen_grace_ms            = -1;
+    std::vector<std::string>       tools;
+    // MCP servers the session names, each a URL and the key it takes.
+    std::vector<mcp_server_params> mcp;
+    int                            max_rounds        = -1;
+    int                            tool_timeout_sec  = -1;
+    float                          temperature       = -1.0f;
+    float                          top_p             = -1.0f;
+    int                            top_k             = -1;
+    float                          min_p             = -1.0f;
+    int                            max_tokens        = -1;
+    float                          presence_penalty  = -100.0f;
+    float                          frequency_penalty = -100.0f;
+    int64_t                        seed              = -1;
+    std::string                    reasoning_effort;
+    std::string                    tts_voice;
+    std::string                    tts_language;
+    std::vector<std::string>       tts_browser_languages;
+    float                          tts_temperature            = -1.0f;
+    int                            tts_top_k                  = -1;
+    float                          tts_top_p                  = -1.0f;
+    float                          tts_repetition_penalty     = -1.0f;
+    float                          tts_subtalker_temperature  = -1.0f;
+    int                            tts_subtalker_top_k        = -1;
+    float                          tts_subtalker_top_p        = -1.0f;
+    int                            tts_max_new_tokens         = -1;
+    int64_t                        tts_seed                   = -1;
+    int                            tts_min_chars              = -1;
+    float                          tts_chars_per_second       = -1.0f;
+    float                          tts_margin_seconds         = -1.0f;
+    int                            llm_timeout_sec            = -1;
+    float                          vad_neg_threshold          = -1.0f;
+    float                          vad_threshold              = -1.0f;
+    int                            min_speech_ms              = -1;
+    int                            barge_in_ms                = -1;
+    int                            min_silence_ms             = -1;
+    int                            min_speech_continuation_ms = -1;
+    int                            speech_pad_ms              = -1;
+    float                          turn_threshold             = -1.0f;
+    int                            incomplete_delay_ms        = -1;
+    int                            turn_max_wait_ms           = -1;
+    int                            reopen_grace_ms            = -1;
 
     std::string invalid;  // the first field refused, empty when every one was usable
 };
@@ -309,6 +312,19 @@ static rt_client_message rt_parse(const std::string & frame) {
         message.patch.tool_timeout_sec = rt_json_count(fields, "tool_timeout_sec", message.patch.invalid);
 
         message.patch.tools = rt_json_strs(fields, "tools");
+
+        yyjson_val * mcp   = yyjson_obj_get(fields, "mcp");
+        size_t       index = 0;
+        size_t       max   = 0;
+        yyjson_val * entry = nullptr;
+        yyjson_arr_foreach(mcp, index, max, entry) {
+            mcp_server_params server;
+            server.url     = rt_json_str(entry, "url");
+            server.api_key = rt_json_str(entry, "key");
+            if (!server.url.empty()) {
+                message.patch.mcp.push_back(server);
+            }
+        }
 
         yyjson_val * llm = yyjson_obj_get(fields, "sampling");
         if (llm) {

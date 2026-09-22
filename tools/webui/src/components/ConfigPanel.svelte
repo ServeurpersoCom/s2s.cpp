@@ -2,7 +2,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { RefreshCw, X } from '@lucide/svelte';
 	import { app, settings, toast } from '../lib/state.svelte.js';
-	import { fetchModels, fetchTools, props } from '../lib/api.js';
+	import { fetchModels, fetchTools, props, type ToolGroup } from '../lib/api.js';
 	import { snippet } from '../lib/snippet.js';
 	import { ph } from '../lib/fields.js';
 	import { ENDPOINT_EXAMPLE, MODES, type Mode } from '../lib/config.js';
@@ -10,13 +10,14 @@
 	import {
 		clearContext,
 		getClient,
+		mcpServers,
 		sessionLanguage,
 		sessionVoice,
 		voice
 	} from '../lib/voice.svelte.js';
 
 	let models = $state<string[]>([]);
-	let tools = $state<string[]>([]);
+	let tools = $state<ToolGroup[]>([]);
 
 	let d = $derived(app.props?.defaults);
 
@@ -27,7 +28,7 @@
 	const MODE_LABELS: Record<string, string> = {
 		loopback: 'Loopback, to test the system',
 		conversation: 'Conversation, to plug your LLM',
-		agentic: 'Agentic, llama.cpp built-in tools'
+		agentic: 'Agentic, MCP servers and llama.cpp'
 	};
 
 	function label(mode: string): string {
@@ -92,12 +93,13 @@
 		}
 	}
 
-	// the tools the endpoint runs, which only a llama.cpp server has: an
-	// endpoint without them answers with an error, the list stays empty and
-	// the toast says why.
+	// the tools the session may check: those of the MCP servers named here,
+	// and those of the endpoint when it is a llama.cpp server. Nothing to
+	// list answers with an error, the list stays empty and the toast says
+	// why.
 	async function loadTools() {
 		try {
-			tools = await fetchTools(settings.llmUrl, settings.llmKey);
+			tools = await fetchTools(settings.llmUrl, settings.llmKey, mcpServers(settings.mcp));
 		} catch (e: unknown) {
 			tools = [];
 			toast(e instanceof Error ? e.message : String(e));
@@ -137,6 +139,7 @@
 		settings.llmUrl = '';
 		settings.llmModel = '';
 		settings.llmKey = '';
+		settings.mcp = '';
 		settings.systemPrompt = '';
 		settings.temperature = '';
 		settings.topP = '';
@@ -477,9 +480,28 @@
 		</details>
 
 		{#if mode === 'agentic'}
-			<details>
-				<summary>Tools, run by the llama.cpp endpoint</summary>
+			<details class="has-clear">
+				<summary>Tools, MCP servers and llama.cpp</summary>
+				<button
+					type="button"
+					class="clear-btn details-clear"
+					title="Reload the tools"
+					onclick={loadTools}
+					aria-label="Reload the tools"
+				>
+					<RefreshCw size={16} />
+				</button>
 				<div class="details-body">
+					{#if !d?.mcp_fixed}
+						<label
+							title="MCP servers the model may call, one per line: the Streamable HTTP URL, then a space and the key when the server takes one."
+							>MCP servers <textarea
+								rows="4"
+								placeholder={'https://huggingface.co/mcp your-key\nhttps://mcp.exa.ai/mcp'}
+								bind:value={settings.mcp}
+							></textarea></label
+						>
+					{/if}
 					<div class="meta-grid">
 						<label
 							title="Rounds of tool calls one answer may take: the model calls, the endpoint runs, the model reads the results and may call again. Reaching the cap fails the answer."
@@ -499,16 +521,19 @@
 						>
 					</div>
 
-					{#each tools as tool (tool)}
-						<label class="tool"
-							><input
-								type="checkbox"
-								checked={settings.tools.includes(tool)}
-								onchange={(e) => onTool(tool, e)}
-							/>{tool}</label
-						>
+					{#each tools as group (group.title)}
+						<span class="tool-server">{group.title}</span>
+						{#each group.tools as tool (tool)}
+							<label class="tool"
+								><input
+									type="checkbox"
+									checked={settings.tools.includes(tool)}
+									onchange={(e) => onTool(tool, e)}
+								/>{tool}</label
+							>
+						{/each}
 					{:else}
-						<span class="tool">The endpoint lists no tool</span>
+						<span class="tool">No tool listed</span>
 					{/each}
 				</div>
 			</details>
@@ -694,6 +719,8 @@
 		position: absolute;
 		top: 0.4rem;
 		right: 0;
+		width: 20px;
+		height: 20px;
 	}
 	.clear-btn {
 		display: inline-flex;
@@ -739,6 +766,11 @@
 		gap: 0.4rem;
 		font-size: 0.85rem;
 		color: var(--fg-dim);
+	}
+	.tool-server {
+		font-size: 0.85rem;
+		color: var(--fg);
+		overflow-wrap: anywhere;
 	}
 	.model-row {
 		display: flex;

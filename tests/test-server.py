@@ -215,6 +215,14 @@ def check_unreachable(label, run):
     return check("%s error" % label, bool(errors), "the answer failed: %s" % (errors[0] if errors else "no error")) and ok
 
 
+# The agentic mode over MCP: the model calls the clock, which the mock MCP
+# server runs behind its key and its session id, and speaks its result.
+def check_mcp(label, run):
+    spoken = " ".join(rest for _, rest in run.at("Event", "response.output_audio_transcript.delta")).lower()
+    ok = check("%s spoken" % label, "noon" in spoken and "clock" in spoken, "the answer speaks the result of the tool")
+    return check("%s error" % label, not run.errors(), "no error") and ok
+
+
 def check_broken(label, run):
     errors = run.errors()
     return check("%s error" % label, bool(errors) and all("model not loaded" in e for e in errors),
@@ -240,6 +248,7 @@ CASES = [
     ("push to talk", FAST + ["say:0-3", "commit", "mute:3"], check_push_to_talk),
     ("broken endpoint", ["--mode", "conversation", "--llm", "broken", "say:" + A, "pause:3"], check_broken),
     ("empty answer", ["--mode", "conversation", "--llm", "empty", "say:" + A, "pause:3"], check_empty),
+    ("mcp tool", ["--mode", "agentic", "--llm", "agent", "--mcp", "say:" + A, "pause:3"], check_mcp),
     ("unreachable endpoint", ["--mode", "conversation", "--llm-url", UNREACHABLE, "--llm-timeout", "3", "say:" + A,
                               "pause:1.5", "say:" + B, "pause:3"], check_unreachable),
     ("room", ["--mode", "loopback", "--echo", "server", "--room", "say:" + A, "heard:1000", "say:" + C, "pause:3"],
@@ -322,7 +331,18 @@ def main():
         os.remove(key_file)
 
     ok = check_grace_log(TMP + "/server.log") and ok
+    ok = check_mcp_log(TMP + "/server.log") and ok
     return 0 if ok else 1
+
+
+# From the server log: the MCP session was opened as the protocol says, the
+# tool came from the list of the server, and its call went through.
+def check_mcp_log(path):
+    text = open(path, errors="replace").read()
+    opened = "-MCP] Session with mock-mcp, protocol 2025-06-18, session id kept" in text
+    listed = "-MCP] 1 tools from mock-mcp" in text
+    called = re.search(r"-Agent\] Round 1, clock returned \d+ bytes", text) is not None
+    return check("mcp log", opened and listed and called, "handshake, list and call of the mock MCP server")
 
 
 # From the server log, over every case: a turn turns final no sooner than the
@@ -339,7 +359,8 @@ def check_grace_log(path):
             at, grace = commits.pop((m.group(1), m.group(3)))
             if grace > 0.0:
                 graced += 1
-                ok = ok and float(m.group(2)) - at >= grace - 0.001
+                # both times and the grace are printed with two decimals
+                ok = ok and float(m.group(2)) - at >= grace - 0.02
     return check("grace log", ok and graced > 0, "%d answers held for the grace of their commit" % graced)
 
 

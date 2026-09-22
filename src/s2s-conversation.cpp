@@ -117,6 +117,12 @@ struct Connection {
     // the endpoint host changes.
     llm_client * llm = nullptr;
 
+    // The tool servers of the agentic mode, the responder's alone. The MCP
+    // sessions in it stay open across turns and follow the list the session
+    // named, kept here to tell a change.
+    llm_agent *                    agent = nullptr;
+    std::vector<mcp_server_params> agent_servers;
+
     // Committed turns waiting for the recognizer, and recognized ones waiting
     // for the responder.
     std::mutex              queue_mutex;
@@ -596,10 +602,25 @@ static void conn_answer(Connection * conn, const AnswerJob & job) {
                 return !self->conn->cancel.load();
             };
 
+            // The MCP sessions of the agent live with the connection and
+            // follow its list of servers: a changed list, or a changed tool
+            // timeout, gets fresh ones.
+            if (client.mode == "agentic") {
+                std::vector<mcp_server_params> servers = client.mcp;
+                for (mcp_server_params & server : servers) {
+                    server.timeout_sec = client.llm.tool_timeout_sec;
+                }
+                if (!conn->agent || conn->agent_servers != servers) {
+                    llm_agent_free(conn->agent);
+                    conn->agent         = llm_agent_new(servers);
+                    conn->agent_servers = servers;
+                }
+            }
+
             Timer      t_llm;
             const bool streamed = client.mode == "agentic" ?
-                                      llm_agent_run(llm, client.llm, client.tools, client.max_rounds, messages,
-                                                    on_delta, &stream_tap, &conn->cancel, answer) :
+                                      llm_agent_run(conn->agent, llm, client.llm, client.tools, client.max_rounds,
+                                                    messages, on_delta, &stream_tap, &conn->cancel, answer) :
                                       llm_client_stream(llm, messages, on_delta, &stream_tap, &conn->cancel, answer);
 
             // The tail is a unit like the others: a one sentence answer has
@@ -789,6 +810,20 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
         conn->client.mode = patch.mode;
     }
     conn->client.tools = patch.tools;
+    if (conn->setup->mcp_fixed) {
+        if (!patch.mcp.empty()) {
+            conn_error(conn, "[Realtime] The MCP servers are set by the server");
+        }
+    } else {
+        conn->client.mcp.clear();
+        for (const mcp_server_params & server : patch.mcp) {
+            if (host_allowed(conn->setup->llm_hosts, server.url)) {
+                conn->client.mcp.push_back(server);
+            } else {
+                conn_error(conn, ("[Realtime] MCP host " + url_host(server.url) + " is not allowed").c_str());
+            }
+        }
+    }
     if (patch.max_rounds > 0) {
         conn->client.max_rounds = patch.max_rounds;
     }
@@ -1073,6 +1108,7 @@ void conn_close(Connection * conn) {
     conn->recognizer.join();
     conn->responder.join();
     llm_client_free(conn->llm);
+    llm_agent_free(conn->agent);
     {
         std::lock_guard<std::mutex> lock(conn->out_mutex);
         conn->out_stop = true;

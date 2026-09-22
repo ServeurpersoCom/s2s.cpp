@@ -77,7 +77,9 @@ static void print_usage(const char * prog) {
             "  --mode <mode>          loopback or conversation (default: loopback)\n"
             "  --echo <method>        server, native or off (default: off)\n"
             "  --room                 the playback reaches the microphone through a room\n"
-            "  --llm <route>          runs the mock endpoint and names it: v1, broken, midstream, empty\n"
+            "  --llm <route>          runs the mock endpoint and names it: v1, broken, midstream, empty,\n"
+            "                         agent, which calls the clock tool once before it answers\n"
+            "  --mcp                  names the mock MCP server, which runs the clock tool\n"
             "  --llm-first-ms <N>     mock delay before the first word (default: 100)\n"
             "  --llm-token-ms <N>     mock delay between words (default: 20)\n"
             "  --llm-url <url>        names this endpoint instead of the mock\n"
@@ -154,6 +156,83 @@ static std::string mock_frame(const std::string & content) {
     return frame;
 }
 
+// The mock MCP server: one JSON-RPC message per POST, the way the reference
+// SDK answers, a session id given at initialize and demanded after it, the
+// tool list as an event stream and the call as plain JSON, a bearer key on
+// every request.
+static void mock_mcp(httplib::Server & mock, Timer & timer) {
+    mock.Post("/mcp", [&timer](const httplib::Request & req, httplib::Response & res) {
+        yyjson_doc *  doc    = yyjson_read(req.body.c_str(), req.body.size(), 0);
+        yyjson_val *  root   = doc ? yyjson_doc_get_root(doc) : nullptr;
+        std::string   method = rt_json_str(root, "method");
+        yyjson_val *  value  = root ? yyjson_obj_get(root, "id") : nullptr;
+        const int64_t id     = value && yyjson_is_int(value) ? yyjson_get_sint(value) : 0;
+        yyjson_doc_free(doc);
+        printf("[Mock] %7.2fs  mcp      %s id=%lld\n", timer.ms() / 1000.0, method.c_str(), (long long) id);
+        fflush(stdout);
+
+        if (req.get_header_value("Authorization") != "Bearer mock-key") {
+            res.status = 401;
+            res.set_content(
+                "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"unauthorized\"},\"id\":null}",
+                "application/json");
+            return;
+        }
+        if (method == "initialize") {
+            res.set_header("Mcp-Session-Id", "mock-session");
+            res.set_content("{\"jsonrpc\":\"2.0\",\"id\":" + std::to_string(id) +
+                                ",\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{}},"
+                                "\"serverInfo\":{\"name\":\"mock-mcp\",\"version\":\"1\"}}}",
+                            "application/json");
+            return;
+        }
+        if (method == "notifications/initialized") {
+            res.status = 202;
+            return;
+        }
+        if (req.get_header_value("Mcp-Session-Id") != "mock-session") {
+            res.status = 404;
+            return;
+        }
+        if (method == "tools/list") {
+            res.set_content(
+                ": keep alive\n\n"
+                "event: message\nid: 1\ndata: {\"jsonrpc\":\"2.0\",\"id\":" +
+                    std::to_string(id) +
+                    ",\"result\":{\"tools\":[{\"name\":\"clock\",\"description\":\"The time of day\","
+                    "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}}]}}\n\n",
+                "text/event-stream");
+            return;
+        }
+        if (method == "tools/call") {
+            res.set_content(
+                "{\"jsonrpc\":\"2.0\",\"id\":" + std::to_string(id) +
+                    ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"It is noon.\"}],\"isError\":false}}",
+                "application/json");
+            return;
+        }
+        res.set_content("{\"jsonrpc\":\"2.0\",\"id\":" + std::to_string(id) +
+                            ",\"error\":{\"code\":-32601,\"message\":\"method not found\"}}",
+                        "application/json");
+    });
+    mock.Delete("/mcp", [](const httplib::Request &, httplib::Response & res) { res.status = 405; });
+}
+
+// One round of the mock model: does the conversation already carry the
+// result of a tool.
+static bool mock_has_tool_result(const std::string & body) {
+    yyjson_doc * doc      = yyjson_read(body.c_str(), body.size(), 0);
+    yyjson_val * messages = doc ? yyjson_obj_get(yyjson_doc_get_root(doc), "messages") : nullptr;
+    size_t       idx, max;
+    yyjson_val * message;
+    bool         found = false;
+    yyjson_arr_foreach(messages, idx, max, message) {
+        found = found || rt_json_str(message, "role") == "tool";
+    }
+    yyjson_doc_free(doc);
+    return found;
+}
+
 int main(int argc, char ** argv) {
     std::string       mode = "loopback";
     std::string       echo = "off";
@@ -162,6 +241,7 @@ int main(int argc, char ** argv) {
     int               timeout  = -1;
     bool              room     = false;
     bool              other    = false;
+    bool              mcp      = false;
     int               first_ms = 100;
     int               token_ms = 20;
     std::vector<Step> script;
@@ -189,6 +269,8 @@ int main(int argc, char ** argv) {
             timeout = atoi(argv[++i]);
         } else if (arg == "--other-endpoint") {
             other = true;
+        } else if (arg == "--mcp") {
+            mcp = true;
         } else if (args.size() < 2) {
             args.push_back(argv[i]);
         } else if (parse_step(argv[i], step)) {
@@ -323,6 +405,31 @@ int main(int argc, char ** argv) {
                                 "data: {\"error\":{\"message\":\"context size exceeded\"}}\n\n",
                             "text/event-stream");
         });
+        // The agent: a call of the clock first, the words once its result is
+        // in the conversation.
+        mock.Post("/agent/chat/completions", [&](const httplib::Request & req, httplib::Response & res) {
+            if (mock_has_tool_result(req.body)) {
+                printf("[Mock] %7.2fs  request  with the result of the clock\n", timer.ms() / 1000.0);
+                fflush(stdout);
+                std::string frames;
+                for (const std::string & word : mock_words("It is noon, the clock said. ")) {
+                    frames += mock_frame(word);
+                }
+                res.set_content(frames + "data: [DONE]\n\n", "text/event-stream");
+                return;
+            }
+            printf("[Mock] %7.2fs  request  %s\n", timer.ms() / 1000.0,
+                   req.body.find("\"clock\"") != std::string::npos ? "offered the clock, calling it" :
+                                                                     "without the clock");
+            fflush(stdout);
+            res.set_content(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\","
+                "\"type\":\"function\",\"function\":{\"name\":\"clock\",\"arguments\":\"{}\"}}]}}]}\n\n"
+                "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
+                "data: [DONE]\n\n",
+                "text/event-stream");
+        });
+        mock_mcp(mock, timer);
         mock.Post("/empty/chat/completions", [](const httplib::Request &, httplib::Response & res) {
             res.set_content(
                 "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"Nothing to add.\"}}]}\n\n"
@@ -435,6 +542,17 @@ int main(int argc, char ** argv) {
     }
     if (timeout > 0) {
         yyjson_mut_obj_add_int(update.doc, session, "llm_timeout_sec", timeout);
+    }
+    if (mcp && !route.empty()) {
+        // The mock MCP server lives on the mock endpoint, and the session
+        // checks its one tool.
+        const std::string mcp_url = llm_url.substr(0, llm_url.rfind('/')) + "/mcp";
+        yyjson_mut_val *  servers = yyjson_mut_obj_add_arr(update.doc, session, "mcp");
+        yyjson_mut_val *  server  = yyjson_mut_arr_add_obj(update.doc, servers);
+        yyjson_mut_obj_add_strncpy(update.doc, server, "url", mcp_url.c_str(), mcp_url.size());
+        yyjson_mut_obj_add_str(update.doc, server, "key", "mock-key");
+        yyjson_mut_val * tools = yyjson_mut_obj_add_arr(update.doc, session, "tools");
+        yyjson_mut_arr_add_str(update.doc, tools, "clock");
     }
     if (other) {
         yyjson_mut_obj_add_str(update.doc, session, "llm_url", "http://127.0.0.1:9/v1");

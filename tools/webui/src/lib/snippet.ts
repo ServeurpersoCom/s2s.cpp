@@ -62,12 +62,15 @@ function object(value: Record<string, unknown>, indent: string): string {
 }
 
 export function snippet(): string {
+	// the endpoint and the MCP servers belong to the server that runs the
+	// page, keys included: the command below names them, the options never
 	const options = (prune({
 		url: settings.serverUrl,
 		...toOptions(),
 		llmUrl: undefined,
 		llmModel: undefined,
-		llmKey: undefined
+		llmKey: undefined,
+		mcp: undefined
 	}) ?? {}) as Record<string, unknown>;
 	// a server that owns its endpoint keeps it from the page: the command
 	// gets the examples, never what the browser kept from another server
@@ -85,14 +88,16 @@ export function snippet(): string {
 	const body = `const s2s = new S2S(${object(options, '\t')});`;
 
 	return `<!--
-	The endpoint and its API key stay on the server, never in this page. Put
-	your key in a file, then start s2s-server with them (server.cmd on Windows
-	takes the same options):
+	The endpoint, the MCP servers and their keys stay on the server, never in
+	this page. Put each key in a file, then start s2s-server with them
+	(server.cmd on Windows takes the same options):
 
 	echo "YOUR_API_KEY" > llm.key
+	echo "YOUR_MCP_KEY" > mcp.key
 	./build/s2s-server --host 0.0.0.0 --port 8088 --models ./models \\
 		--origin https://your-site.example \\
-		--llm-url ${endpoint} --llm-model ${model} --llm-key-file llm.key
+		--llm-url ${endpoint} --llm-model ${model} --llm-key-file llm.key \\
+		--mcp https://example.com/mcp --mcp-key-file mcp.key
 -->
 <button id="talk">Talk</button>
 

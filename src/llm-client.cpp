@@ -14,17 +14,12 @@
 
 #include "llm-client.h"
 
-#include "httplib.h"
-#include "s2s-error.h"
+#include "http-client.h"
 #include "yyjson.h"
 
-#include <chrono>
 #include <cstring>
-#include <memory>
-#include <thread>
 
 #define LLM_REASON_MAX     200  // characters of an endpoint's error reason kept in the message
-#define LLM_CANCEL_POLL_MS 10   // how often a request that receives nothing looks at the cancel flag
 #define LLM_TOOL_CALLS_MAX 64   // calls one answer may ask for, what an index out of range is read against
 
 struct llm_client {
@@ -35,78 +30,6 @@ struct llm_client {
     std::unique_ptr<httplib::Client> http;  // kept alive across requests to the same host
 
     std::string tool_calls;                 // the calls the last stream ended on, empty when it ended on words
-};
-
-// Splits "http://host:port/v1" into the part httplib connects to and the
-// prefix every request hangs off.
-static bool llm_client_split_url(const std::string & url, std::string & host, std::string & path) {
-    const size_t scheme = url.find("://");
-    if (scheme == std::string::npos) {
-        return false;
-    }
-    const size_t slash = url.find('/', scheme + 3);
-    if (slash == std::string::npos) {
-        host = url;
-        path = "";
-        return true;
-    }
-    host = url.substr(0, slash);
-    path = url.substr(slash);
-    while (!path.empty() && path.back() == '/') {
-        path.pop_back();
-    }
-    return true;
-}
-
-// The HTTP client of one endpoint host, or none when httplib cannot make one:
-// a port out of range, a scheme it does not speak, https on a build without
-// TLS. It throws for some of them and hands back an empty client for the
-// others; either way nothing past this point sees an unusable client.
-static std::unique_ptr<httplib::Client> llm_client_http(const std::string & host) {
-    std::unique_ptr<httplib::Client> http;
-    try {
-        http = std::make_unique<httplib::Client>(host);
-    } catch (const std::exception &) {
-        http.reset();
-    }
-    if (!http || !http->is_valid()) {
-        s2s_set_error("[LLM] The endpoint URL cannot be reached: bad port, unknown scheme, or https without TLS");
-        return nullptr;
-    }
-    return http;
-}
-
-// Closes the socket under a request the caller cancels. The receiver of a
-// stream only runs when bytes arrive, so while the endpoint is silent, during
-// a prefill or before its headers, this is what sees the flag. It keeps
-// closing until the request returns, so a socket opened after the flag rose
-// is closed too.
-struct LlmCancelWatch {
-    httplib::Client &         client;
-    const std::atomic<bool> * cancel;
-    std::atomic<bool>         finished{ false };
-    std::thread               thread;
-
-    LlmCancelWatch(httplib::Client & http, const std::atomic<bool> * flag) : client(http), cancel(flag) {
-        if (!cancel) {
-            return;
-        }
-        thread = std::thread([this]() {
-            while (!finished.load()) {
-                if (this->cancel->load()) {
-                    this->client.stop();
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(LLM_CANCEL_POLL_MS));
-            }
-        });
-    }
-
-    ~LlmCancelWatch() {
-        finished.store(true);
-        if (thread.joinable()) {
-            thread.join();
-        }
-    }
 };
 
 llm_client * llm_client_new(const llm_client_params & params) {
@@ -121,16 +44,15 @@ llm_client * llm_client_new(const llm_client_params & params) {
 bool llm_client_set_params(llm_client * c, const llm_client_params & params) {
     std::string host;
     std::string path;
-    if (!llm_client_split_url(params.base_url, host, path)) {
+    if (!http_split_url(params.base_url, host, path)) {
         s2s_set_error("[LLM] The endpoint URL has no scheme");
         return false;
     }
     if (!c->http || host != c->host) {
-        std::unique_ptr<httplib::Client> http = llm_client_http(host);
+        std::unique_ptr<httplib::Client> http = http_open(host, "[LLM]");
         if (!http) {
             return false;
         }
-        http->set_keep_alive(true);
         c->http = std::move(http);
     }
     c->params = params;
@@ -470,7 +392,7 @@ bool llm_client_stream(llm_client *                     c,
 
     httplib::Result result;
     {
-        LlmCancelWatch watch(client, cancel);
+        HttpCancelWatch watch(client, cancel);
         result = client.Post(url.c_str(), headers, request, "application/json", receiver);
     }
 
@@ -514,12 +436,12 @@ bool llm_client_stream(llm_client *                     c,
 bool llm_client_models(const llm_client_params & params, std::vector<std::string> & models) {
     std::string host;
     std::string path;
-    if (!llm_client_split_url(params.base_url, host, path)) {
+    if (!http_split_url(params.base_url, host, path)) {
         s2s_set_error("[LLM] The endpoint URL has no scheme");
         return false;
     }
 
-    std::unique_ptr<httplib::Client> http = llm_client_http(host);
+    std::unique_ptr<httplib::Client> http = http_open(host, "[LLM]");
     if (!http) {
         return false;
     }
@@ -585,12 +507,12 @@ const char * llm_client_tool_calls(const llm_client * c) {
 bool llm_client_tools(const llm_client_params & params, std::vector<llm_tool> & tools) {
     std::string host;
     std::string path;
-    if (!llm_client_split_url(params.base_url, host, path)) {
+    if (!http_split_url(params.base_url, host, path)) {
         s2s_set_error("[LLM] The endpoint URL has no scheme");
         return false;
     }
 
-    std::unique_ptr<httplib::Client> http = llm_client_http(host);
+    std::unique_ptr<httplib::Client> http = http_open(host, "[LLM]");
     if (!http) {
         return false;
     }
@@ -678,7 +600,7 @@ bool llm_client_tool_call(llm_client *              c,
 
     httplib::Result response;
     {
-        LlmCancelWatch watch(client, cancel);
+        HttpCancelWatch watch(client, cancel);
         response = client.Post((llm_client_root(c->path) + "/tools").c_str(), headers, request, "application/json");
     }
 

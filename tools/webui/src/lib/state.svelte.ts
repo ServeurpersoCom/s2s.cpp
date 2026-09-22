@@ -14,6 +14,7 @@ export interface Settings {
 	llmModel: string;
 	llmKey: string;
 	tools: string[];
+	mcp: string; // one MCP server per line, its URL then its key
 	maxRounds: string;
 	toolTimeoutSec: string;
 	systemPrompt: string;
@@ -67,6 +68,7 @@ function defaults(): Settings {
 		llmModel: '',
 		llmKey: '',
 		tools: [],
+		mcp: '',
 		maxRounds: '',
 		toolTimeoutSec: '',
 		systemPrompt: '',
@@ -156,6 +158,7 @@ $effect.root(() => {
 			llmModel: settings.llmModel,
 			llmKey: settings.llmKey,
 			tools: settings.tools,
+			mcp: settings.mcp,
 			maxRounds: settings.maxRounds,
 			toolTimeoutSec: settings.toolTimeoutSec,
 			systemPrompt: settings.systemPrompt,

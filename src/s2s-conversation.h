@@ -40,10 +40,12 @@ struct ClientSettings {
     std::string             system_prompt;
     std::vector<rt_message> history;
 
-    // Tools the model is offered in the agentic mode, by name, and the
-    // rounds of calls one turn may take.
-    std::vector<std::string> tools;
-    int                      max_rounds = LLM_AGENT_MAX_ROUNDS;
+    // Tools the model is offered in the agentic mode, by name, the MCP
+    // servers that run some of them, and the rounds of calls one turn may
+    // take.
+    std::vector<std::string>       tools;
+    std::vector<mcp_server_params> mcp;
+    int                            max_rounds = LLM_AGENT_MAX_ROUNDS;
 };
 
 // What every conversation of the process shares, set once at startup.
@@ -56,9 +58,11 @@ struct ConversationSetup {
     ClientSettings defaults;
 
     // The endpoint belongs to the server once it names one on the command
-    // line: sessions neither see it nor change it. Otherwise the server has
-    // none, and each session names its own, from the allowed hosts.
+    // line, and so do the MCP servers once it names any: sessions neither see
+    // them nor change them. Otherwise the server has none, and each session
+    // names its own, from the allowed hosts.
     bool                     llm_fixed = false;
+    bool                     mcp_fixed = false;
     std::vector<std::string> llm_hosts;
 };
 

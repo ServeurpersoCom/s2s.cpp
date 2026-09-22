@@ -34,18 +34,37 @@ export async function fetchModels(llmUrl: string, apiKey: string): Promise<strin
 // POST /v1/tools: the tools a llama.cpp endpoint runs, proxied the same way.
 // An endpoint that does not run any answers with an error, which is what the
 // agentic mode has to say for itself.
-export async function fetchTools(llmUrl: string, apiKey: string): Promise<string[]> {
+// The tools the session may check, server by server: the title names the
+// server, the URL of an MCP server the page named or the name a server gave
+// itself, "llama.cpp" for the endpoint's own.
+export interface ToolGroup {
+	title: string;
+	tools: string[];
+}
+
+export async function fetchTools(
+	llmUrl: string,
+	apiKey: string,
+	mcp: { url: string; key?: string }[]
+): Promise<ToolGroup[]> {
 	const res = await fetch('v1/tools', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url: llmUrl, key: apiKey }),
+		body: JSON.stringify({ url: llmUrl, key: apiKey, mcp }),
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
 	});
 	const body = await res.json().catch(() => ({}));
 	if (!res.ok) throw new Error(body?.error || `${res.status} ${res.statusText}`);
 
 	const list = Array.isArray(body?.data) ? body.data : [];
-	return list.filter((name: unknown): name is string => typeof name === 'string');
+	return list
+		.filter((group: unknown) => typeof group === 'object' && group !== null)
+		.map((group: { title?: unknown; tools?: unknown }) => ({
+			title: typeof group.title === 'string' ? group.title : '',
+			tools: Array.isArray(group.tools)
+				? group.tools.filter((name: unknown): name is string => typeof name === 'string')
+				: []
+		}));
 }
 
 // POST /log: browser side events, so they land in the same stream as the

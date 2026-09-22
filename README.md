@@ -37,8 +37,8 @@ big one for the model.
 - A pause to think does not hand it the floor, and going on before its
   answer starts keeps your sentence whole
 - Speaks as soon as the model has written its first sentence
-- Hands free agentic loop on a llama.cpp endpoint: the model calls the
-  tools you checked, the endpoint runs them, the voice tells you what
+- Hands free agentic loop: the model calls the tools you checked, MCP
+  servers or the llama.cpp endpoint run them, the voice tells you what
   came back
 - Clones one reference voice for every sentence, so the voice stays the
   same from the first word to the last
@@ -126,12 +126,14 @@ The endpoint is any OpenAI compatible server: llama-server, Ollama,
 LM Studio, a cloud API. The voice reads the text in the language it is
 written in, so the system prompt decides the language of the answers.
 
-The agentic mode is the one exception: it runs the tools of a llama.cpp
-server, which no other endpoint offers. Start llama-server with
-`--tools`, or `--tools all`, and the playground lists what it runs, the
-tools of its MCP servers included. Check the ones this session may use,
-set how many rounds of calls one answer may take, and talk: nothing of
-this travels to another endpoint.
+The agentic mode takes its tools from MCP servers, any that speak
+Streamable HTTP, a web search for instance, named in the playground one
+per line with the key each takes, and from the endpoint itself when it
+is a llama.cpp server started with `--tools`, or `--tools all`. Reload
+the models and the playground lists what they run; check the ones this
+session may use, set how many rounds of calls one answer may take, and
+talk. A server started with `--mcp` owns its MCP servers the way
+`--llm-url` owns the endpoint.
 
 A page shown to other people must not hold the endpoint key, so the
 server can own the endpoint. The playground then hides its endpoint
@@ -142,6 +144,9 @@ echo "YOUR_API_KEY" > llm.key
 ./build/s2s-server --origin https://your-site.example \
     --llm-url https://api.example.com/v1 --llm-model model-name --llm-key-file llm.key
 ```
+
+The same goes for MCP servers: `--mcp https://mcp.example.com/mcp
+--mcp-key-file mcp.key`, repeatable, and the page names none.
 
 The microphone needs a secure context, which `http://localhost`
 satisfies; serving the UI from a LAN address or a domain requires HTTPS

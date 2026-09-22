@@ -2,6 +2,7 @@
 export interface S2SDefaults {
 	mode: string;
 	llm_fixed: boolean; // the server owns the endpoint, the page names none
+	mcp_fixed: boolean; // the server owns the MCP servers, the page names none
 	instructions: string;
 	voice: string;
 	language: string;
