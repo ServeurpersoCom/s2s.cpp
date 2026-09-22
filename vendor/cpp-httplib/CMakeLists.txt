@@ -20,13 +20,15 @@ if(WIN32)
     target_link_libraries(httplib PRIVATE ws2_32)
 
     # LibreSSL: static ssl and crypto only, no apps, tests or install rules
+    set(BUILD_SHARED_LIBS OFF)
     set(LIBRESSL_APPS OFF CACHE BOOL "" FORCE)
     set(LIBRESSL_TESTS OFF CACHE BOOL "" FORCE)
     set(LIBRESSL_SKIP_INSTALL ON CACHE BOOL "" FORCE)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../libressl ${CMAKE_BINARY_DIR}/libressl EXCLUDE_FROM_ALL)
 
-    # httplib.h loads the Windows certificate store and links crypt32 itself
-    target_compile_definitions(httplib PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
+    # httplib.h loads the Windows certificate store, links crypt32 and
+    # undefines the wincrypt.h macros that clash with the LibreSSL headers
+    target_compile_definitions(httplib PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT LIBRESSL_DISABLE_OVERRIDE_WINCRYPT_DEFINES_WARNING)
     target_link_libraries(httplib PUBLIC ssl crypto)
     message(STATUS "httplib: https client enabled (vendored LibreSSL)")
     return()
