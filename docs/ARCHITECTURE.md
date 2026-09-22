@@ -76,7 +76,7 @@ IDLE          --speech >= min_speech_ms-->               USER_SPEAKING
 IDLE, speaking --speech >= barge_in_ms-->                barge-in, USER_SPEAKING
 USER_SPEAKING --silence >= min_silence_ms-->             PENDING_END
 PENDING_END   --turn complete-->                         committed, IDLE
-PENDING_END   --incomplete, then turn_max_wait_ms-->     committed, IDLE
+PENDING_END   --incomplete, then incomplete_delay_ms-->  committed, IDLE
 PENDING_END   --speech >= min_speech_continuation_ms-->  USER_SPEAKING
 committed     --speech >= min_speech_continuation_ms-->  USER_SPEAKING, same turn
 committed     --grace over and released-->               final
@@ -93,10 +93,18 @@ in seconds of it.
 
 Recognition and the endpoint request start at the commit, but the first
 unit waits until the session reports the turn final, which takes two
-things. The grace: a commit the classifier judged complete keeps its
-answer silent for `reopen_grace_ms`, counted on the audio, so a breath
-inside a sentence never lets the assistant cut in; a commit forced by
-`turn_max_wait_ms` has waited already and has none. The release: the
+things. The grace, counted on the audio, so a breath inside a sentence
+never lets the assistant cut in: a commit the classifier judged complete
+keeps its answer silent for `reopen_grace_ms`. A turn it judged unfinished
+waits `incomplete_delay_ms` with nothing running, the length of the
+pauses a speaker takes for breath, then commits with what is left of
+`turn_max_wait_ms` as its grace: the answer is computed during the
+silence, and heard at `turn_max_wait_ms` at the latest, or as soon as
+it is ready when the endpoint takes longer. The delay is the trade: a
+speaker who goes on within it costs nothing, one who goes on after it
+costs a request nobody hears, and the shorter it is the slower an
+endpoint the wait can hide. A commit the client forces has no grace.
+The release: the
 responder tells the session, under the session lock it shares with the
 reader, when its first unit reaches the gate or when the turn ends with
 nothing to say. A client that stops streaming after its commit still
@@ -125,7 +133,8 @@ Defaults, published on `/props` and patchable per session:
 | `min_speech_continuation_ms` | 192 | reopens a turn from `PENDING_END` |
 | `speech_pad_ms` | 500 | audio kept before the speech onset and after its end |
 | `turn_threshold` | 0.5 | Smart Turn completion probability |
-| `turn_max_wait_ms` | 2000 | commit an incomplete turn anyway |
+| `incomplete_delay_ms` | 600 | silence before an incomplete turn commits, nothing running |
+| `turn_max_wait_ms` | 2000 | the answer to an incomplete turn is heard by then |
 | `reopen_grace_ms` | 800 | least silence kept on the answer to a complete commit |
 
 Smart Turn reads a sliding window of the last 8 seconds of the stream,

@@ -86,6 +86,7 @@ export function toOptions(): S2SOptions {
 		},
 		turn: {
 			threshold: num(settings.turnThreshold),
+			incompleteDelayMs: num(settings.turnIncompleteDelayMs),
 			maxWaitMs: num(settings.turnMaxWaitMs),
 			graceMs: num(settings.turnGraceMs)
 		},

@@ -325,22 +325,22 @@ def main():
     return 0 if ok else 1
 
 
-# From the server log, over every case: a turn committed as complete turns
-# final no sooner than the grace. A forced commit has none, which the push to
-# talk shows with an answer sooner than the grace.
+# From the server log, over every case: a turn turns final no sooner than the
+# grace its commit was given, which the log states. A commit the client forces
+# has none, which the push to talk shows with an answer sooner than the grace.
 def check_grace_log(path):
     commits, graced, ok = {}, 0, True
     for line in open(path, errors="replace"):
-        m = re.search(r"\[Reader-(\d+)-Session\] Turn committed at ([\d.]+)s \(turn (\d+) .*completion ([\d.]+)", line)
+        m = re.search(r"\[Reader-(\d+)-Session\] Turn committed at ([\d.]+)s \(turn (\d+) .*grace ([\d.]+)s", line)
         if m:
             commits[(m.group(1), m.group(3))] = (float(m.group(2)), float(m.group(4)))
         m = re.search(r"-(\d+)-Session\] Turn final at ([\d.]+)s \(turn (\d+) ", line)
         if m and (m.group(1), m.group(3)) in commits:
-            at, score = commits.pop((m.group(1), m.group(3)))
-            if score > 0.0:
+            at, grace = commits.pop((m.group(1), m.group(3)))
+            if grace > 0.0:
                 graced += 1
-                ok = ok and float(m.group(2)) - at >= GRACE_S - 0.001
-    return check("grace log", ok and graced > 0, "%d answers to a complete commit held for the grace" % graced)
+                ok = ok and float(m.group(2)) - at >= grace - 0.001
+    return check("grace log", ok and graced > 0, "%d answers held for the grace of their commit" % graced)
 
 
 def owned_routes():

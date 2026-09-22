@@ -30,6 +30,7 @@ export interface S2SDefaults {
 	min_speech_continuation_ms: number;
 	speech_pad_ms: number;
 	turn_threshold: number;
+	incomplete_delay_ms: number;
 	turn_max_wait_ms: number;
 	reopen_grace_ms: number;
 }

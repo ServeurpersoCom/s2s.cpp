@@ -82,6 +82,9 @@ export interface S2SVad {
 
 export interface S2STurn {
 	threshold?: number;
+	// a turn judged unfinished waits this long with nothing running, then
+	// its answer is computed in silence and heard at maxWaitMs at the latest
+	incompleteDelayMs?: number;
 	maxWaitMs?: number;
 	// how long the answer to a turn judged complete stays silent, so the
 	// speaker can go on without the assistant cutting in
@@ -634,6 +637,7 @@ export class S2S {
 				},
 				turn: {
 					threshold: this.options.turn?.threshold,
+					incomplete_delay_ms: this.options.turn?.incompleteDelayMs,
 					max_wait_ms: this.options.turn?.maxWaitMs,
 					reopen_grace_ms: this.options.turn?.graceMs
 				}

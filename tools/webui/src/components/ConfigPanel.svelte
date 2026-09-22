@@ -179,6 +179,7 @@
 
 	function clearTurn() {
 		settings.turnThreshold = '';
+		settings.turnIncompleteDelayMs = '';
 		settings.turnMaxWaitMs = '';
 		settings.turnGraceMs = '';
 	}
@@ -364,7 +365,15 @@
 					/></label
 				>
 				<label
-					title="Longest a pause judged unfinished can last before the turn is committed anyway, so a conversation never stalls. It is also the delay of a single word the model finds unfinished."
+					title="How long a pause judged unfinished stays free: going on within it costs nothing. After it the answer starts computing in silence, and going on then still continues the same turn, at the price of a wasted request. Shorter hides a slower endpoint; longer wastes less."
+					>Incomplete delay ms <input
+						type="text"
+						placeholder={ph(d?.incomplete_delay_ms)}
+						bind:value={settings.turnIncompleteDelayMs}
+					/></label
+				>
+				<label
+					title="Longest a pause judged unfinished can last before the answer is heard, so a conversation never stalls. It is also the delay of a single word the model finds unfinished."
 					>Max wait ms <input
 						type="text"
 						placeholder={ph(d?.turn_max_wait_ms)}

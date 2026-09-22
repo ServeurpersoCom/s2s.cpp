@@ -49,6 +49,7 @@ export interface Settings {
 	minSpeechContinuationMs: string;
 	speechPadMs: string;
 	turnThreshold: string;
+	turnIncompleteDelayMs: string;
 	turnMaxWaitMs: string;
 	turnGraceMs: string;
 	echo: S2SEcho | '';
@@ -101,6 +102,7 @@ function defaults(): Settings {
 		minSpeechContinuationMs: '',
 		speechPadMs: '',
 		turnThreshold: '',
+		turnIncompleteDelayMs: '',
 		turnMaxWaitMs: '',
 		turnGraceMs: '',
 		echo: '',
@@ -189,6 +191,7 @@ $effect.root(() => {
 			minSpeechContinuationMs: settings.minSpeechContinuationMs,
 			speechPadMs: settings.speechPadMs,
 			turnThreshold: settings.turnThreshold,
+			turnIncompleteDelayMs: settings.turnIncompleteDelayMs,
 			turnMaxWaitMs: settings.turnMaxWaitMs,
 			turnGraceMs: settings.turnGraceMs,
 			echo: settings.echo,

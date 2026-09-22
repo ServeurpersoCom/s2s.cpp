@@ -9,7 +9,7 @@
 //   IDLE, speaking --speech >= barge_in_ms-->             barge-in, USER_SPEAKING
 //   USER_SPEAKING --silence >= min_silence_ms-->          PENDING_END
 //   PENDING_END   --turn complete-->                      committed, IDLE
-//   PENDING_END   --incomplete, then turn_max_wait_ms-->  committed, IDLE
+//   PENDING_END   --incomplete, then incomplete_delay_ms--> committed, IDLE
 //   PENDING_END   --speech >= min_speech_continuation_ms--> USER_SPEAKING
 //   committed     --speech >= min_speech_continuation_ms--> USER_SPEAKING, same turn
 //   committed     --grace over and released-->           final
@@ -25,10 +25,13 @@
 // next commit hands the whole utterance over again under a new revision. A
 // user who has heard nothing of the answer is still in the same turn.
 //
-// The grace keeps the answer of a commit the classifier judged complete
-// silent for reopen_grace_ms, counted on the audio: a breath inside a
-// sentence never lets the assistant cut in. A commit forced by
-// turn_max_wait_ms or by the caller has waited already and has no grace.
+// The grace keeps the answer silent, counted on the audio, so a breath
+// inside a sentence never lets the assistant cut in: reopen_grace_ms after a
+// commit the classifier judged complete. A turn it judged unfinished waits
+// incomplete_delay_ms with nothing running, the pauses of a breath, then
+// commits with the rest of turn_max_wait_ms as its grace: the answer is
+// computed while the silence lasts and heard at turn_max_wait_ms at the
+// latest. A commit the caller forces has no grace.
 //
 // The committed audio ends speech_pad_ms after the last speech: the silence
 // a turn keeps while it waits is not handed over, since a short word drowned
@@ -67,14 +70,15 @@ struct s2s_session_params {
     // and lasts while the probability stays at or above vad_neg_threshold.
     float vad_neg_threshold          = 0.45f;
     float vad_threshold              = 0.6f;
-    int   min_speech_ms              = 192;  // opens a turn while the assistant is silent
-    int   barge_in_ms                = 384;  // opens one over the assistant, and cuts it
-    int   min_silence_ms             = 64;   // ends the speech
-    int   min_speech_continuation_ms = 192;  // resumes it
-    int   speech_pad_ms              = 500;  // audio kept before the onset and after the end
+    int   min_speech_ms              = 192;   // opens a turn while the assistant is silent
+    int   barge_in_ms                = 384;   // opens one over the assistant, and cuts it
+    int   min_silence_ms             = 64;    // ends the speech
+    int   min_speech_continuation_ms = 192;   // resumes it
+    int   speech_pad_ms              = 500;   // audio kept before the onset and after the end
     float turn_threshold             = 0.5f;
-    int   turn_max_wait_ms           = 2000;
-    int   reopen_grace_ms            = 800;
+    int   incomplete_delay_ms        = 600;   // nothing runs on an unfinished turn until then
+    int   turn_max_wait_ms           = 2000;  // the answer to it is heard by then
+    int   reopen_grace_ms            = 800;   // silence kept on the answer to a finished one
 };
 
 // One event, with the audio attached when the turn is committed.
@@ -87,6 +91,7 @@ struct s2s_session_report {
     const float *     pcm;         // committed turn audio, only on a commit
     size_t            n_samples;   // up to speech_pad_ms after the last speech
     size_t            n_held;      // what the turn holds, the silence it waited through included
+    double            grace_sec;   // silence kept on the answer, only on a commit
 };
 
 typedef void (*s2s_session_cb)(const s2s_session_report * report, void * user);

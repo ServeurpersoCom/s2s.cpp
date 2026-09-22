@@ -750,11 +750,13 @@ static void conn_on_session_event(const s2s_session_report * report, void * user
 
         case S2S_EVENT_TURN_COMMITTED:
             {
-                s2s_log(
-                    S2S_LOG_INFO,
-                    "[Session] Turn committed at %.2fs (turn %d rev %d), %.2fs of audio kept of %.2fs, completion %.3f",
-                    report->time_sec, report->turn_id, report->revision, (double) report->n_samples / S2S_MODEL_RATE,
-                    (double) report->n_held / S2S_MODEL_RATE, (double) report->turn_score);
+                s2s_log(S2S_LOG_INFO,
+                        "[Session] Turn committed at %.2fs (turn %d rev %d), %.2fs of audio kept of %.2fs, completion "
+                        "%.3f, "
+                        "grace %.2fs",
+                        report->time_sec, report->turn_id, report->revision,
+                        (double) report->n_samples / S2S_MODEL_RATE, (double) report->n_held / S2S_MODEL_RATE,
+                        (double) report->turn_score, report->grace_sec);
 
                 TurnAudio turn;
                 turn.pcm.assign(report->pcm, report->pcm + report->n_samples);
@@ -947,6 +949,9 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     }
     if (patch.turn_threshold >= 0.0f) {
         conn->params.turn_threshold = patch.turn_threshold;
+    }
+    if (patch.incomplete_delay_ms >= 0) {
+        conn->params.incomplete_delay_ms = patch.incomplete_delay_ms;
     }
     if (patch.turn_max_wait_ms >= 0) {
         conn->params.turn_max_wait_ms = patch.turn_max_wait_ms;

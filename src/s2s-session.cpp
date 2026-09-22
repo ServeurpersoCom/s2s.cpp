@@ -22,7 +22,7 @@
 #include <cstring>
 
 // Defined below, next to the state machine it belongs to.
-static void s2s_session_commit(s2s_session * s, float score, bool forced);
+static void s2s_session_commit(s2s_session * s, float score, int grace);
 
 // The most recent samples of the stream, up to a fixed capacity: a push
 // overwrites the oldest ones, and a read copies what is held out, oldest
@@ -84,7 +84,8 @@ struct s2s_session {
     int reopen_windows = 0;
     int close_windows  = 0;  // windows of silence that end the speech
     int pad_windows    = 0;
-    int wait_windows   = 0;  // windows to wait on an incomplete turn
+    int delay_windows  = 0;  // windows an incomplete turn waits before its commit
+    int wait_windows   = 0;  // windows before the answer to an incomplete turn is heard
     int grace_windows  = 0;  // windows a complete commit keeps its answer silent
 
     s2s_session_state phase = S2S_SESSION_IDLE;
@@ -100,15 +101,16 @@ struct s2s_session {
     int silence_run = 0;
     int pending_run = 0;                // windows spent in PENDING_END
 
-    int  grace_left = 0;                // windows of grace left to the committed turn
-    bool committed  = false;            // a committed turn not final yet, resumable until it is
-    bool released   = false;            // its answer is ready to be heard, or over
-    int  turn_id    = 0;
-    int  revision   = 0;
-    bool speaking   = false;
-    bool in_speech  = false;  // the VAD side of the hysteresis
+    int  grace_left  = 0;               // windows of grace left to the committed turn
+    int  grace_given = 0;               // windows of grace the commit was given
+    bool committed   = false;           // a committed turn not final yet, resumable until it is
+    bool released    = false;           // its answer is ready to be heard, or over
+    int  turn_id     = 0;
+    int  revision    = 0;
+    bool speaking    = false;
+    bool in_speech   = false;  // the VAD side of the hysteresis
 
-    size_t n_windows = 0;     // windows consumed since the start of the stream
+    size_t n_windows = 0;      // windows consumed since the start of the stream
 };
 
 static int s2s_session_windows(int ms, int window, int sample_rate) {
@@ -163,6 +165,8 @@ void s2s_session_set_params(s2s_session * s, const s2s_session_params & params) 
     s->close_windows  = s2s_session_windows(params.min_silence_ms, s->window, s->sample_rate);
     s->pad_windows    = s2s_session_windows(params.speech_pad_ms, s->window, s->sample_rate);
     s->wait_windows   = s2s_session_windows(params.turn_max_wait_ms, s->window, s->sample_rate);
+    s->delay_windows =
+        std::min(s->wait_windows, s2s_session_windows(params.incomplete_delay_ms, s->window, s->sample_rate));
     s->grace_windows =
         params.reopen_grace_ms > 0 ? s2s_session_windows(params.reopen_grace_ms, s->window, s->sample_rate) : 0;
 
@@ -171,10 +175,11 @@ void s2s_session_set_params(s2s_session * s, const s2s_session_params & params) 
     // threshold instead of in the middle of it.
     s->lookback.resize((size_t) (std::max(s->open_windows, s->barge_windows) + s->pad_windows) * (size_t) s->window);
 
-    s2s_log(S2S_LOG_INFO,
-            "[Session] Window %d samples, open %d, barge-in %d, reopen %d, close %d, wait %d, grace %d windows",
-            s->window, s->open_windows, s->barge_windows, s->reopen_windows, s->close_windows, s->wait_windows,
-            s->grace_windows);
+    s2s_log(
+        S2S_LOG_INFO,
+        "[Session] Window %d samples, open %d, barge-in %d, reopen %d, close %d, delay %d, wait %d, grace %d windows",
+        s->window, s->open_windows, s->barge_windows, s->reopen_windows, s->close_windows, s->delay_windows,
+        s->wait_windows, s->grace_windows);
 }
 
 void s2s_session_free(s2s_session * s) {
@@ -199,7 +204,7 @@ void s2s_session_commit_now(s2s_session * s) {
     if (!s || s->phase == S2S_SESSION_IDLE || s->turn_pcm.empty()) {
         return;
     }
-    s2s_session_commit(s, 0.0f, true);
+    s2s_session_commit(s, 0.0f, 0);
 }
 
 void s2s_session_reset(s2s_session * s) {
@@ -238,6 +243,7 @@ static void s2s_session_emit(s2s_session * s, s2s_session_event event, float sco
         report.pcm       = s->turn_pcm.data();
         report.n_samples = std::min(s->turn_pcm.size(), s->speech_end + pad);
         report.n_held    = s->turn_pcm.size();
+        report.grace_sec = (double) (s->grace_given * (size_t) s->window) / (double) s->sample_rate;
     }
     s->cb(&report, s->user);
 }
@@ -273,23 +279,24 @@ static void s2s_session_open_turn(s2s_session * s) {
     s2s_session_emit(s, S2S_EVENT_SPEECH_STARTED, 0.0f);
 }
 
-// Hands the turn over and keeps its audio, which a resumption continues,
-// until the turn is final. A forced commit waited already and has no grace.
-// A resumption takes speech that starts after the commit: a commit made
-// mid word does not resume on the rest of that word.
-static void s2s_session_commit(s2s_session * s, float score, bool forced) {
+// Hands the turn over with grace windows of silence on its answer, and keeps
+// its audio, which a resumption continues, until the turn is final. A
+// resumption takes speech that starts after the commit: a commit made mid
+// word does not resume on the rest of that word.
+static void s2s_session_commit(s2s_session * s, float score, int grace) {
     s->phase       = S2S_SESSION_IDLE;
     s->pending_run = 0;
     s->speech_run  = 0;
     s->committed   = true;
     s->released    = false;
-    s->grace_left  = forced ? 0 : s->grace_windows;
+    s->grace_left  = grace;
+    s->grace_given = grace;
     s2s_session_emit(s, S2S_EVENT_TURN_COMMITTED, score);
 }
 
 // One 512 sample window: the grace, the probability, then the state machine.
 // The grace counts the windows after the one that committed, so it lasts
-// exactly reopen_grace_ms.
+// exactly what the commit was given.
 static void s2s_session_window(s2s_session * s, const float * window) {
     if (s->grace_left > 0 && --s->grace_left == 0) {
         s2s_session_try_final(s);
@@ -351,7 +358,7 @@ static void s2s_session_window(s2s_session * s, const float * window) {
                     s2s_log(S2S_LOG_INFO, "[Session] Turn classifier on %.2fs of stream, completion %.3f",
                             (double) s->scratch.size() / s->sample_rate, (double) score);
                     if (score >= s->params.turn_threshold) {
-                        s2s_session_commit(s, score, false);
+                        s2s_session_commit(s, score, s->grace_windows);
                     } else {
                         s2s_session_emit(s, S2S_EVENT_TURN_REOPENED, score);
                     }
@@ -366,12 +373,13 @@ static void s2s_session_window(s2s_session * s, const float * window) {
                     s->revision++;
                     s->phase = S2S_SESSION_USER_SPEAKING;
                     s2s_session_emit(s, S2S_EVENT_SPEECH_STARTED, 0.0f);
-                } else if (s->pending_run >= s->wait_windows) {
+                } else if (s->pending_run >= s->delay_windows) {
                     // The classifier judged the turn unfinished and the
-                    // speaker never came back: the floor goes to the assistant
-                    // anyway, otherwise the conversation stalls. It waited
-                    // long enough: no grace on top.
-                    s2s_session_commit(s, 0.0f, true);
+                    // speaker did not come back within the delay: the answer
+                    // starts computing now and stays silent until the wait
+                    // is over, so the floor goes to the assistant by then
+                    // and the conversation never stalls.
+                    s2s_session_commit(s, 0.0f, s->wait_windows - s->delay_windows);
                 }
                 break;
             }

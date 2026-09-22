@@ -389,6 +389,7 @@ int main(int argc, char ** argv) {
         yyjson_mut_obj_add_int(doc, defaults, "min_speech_continuation_ms", turn.min_speech_continuation_ms);
         yyjson_mut_obj_add_int(doc, defaults, "speech_pad_ms", turn.speech_pad_ms);
         yyjson_mut_obj_add_real(doc, defaults, "turn_threshold", turn.turn_threshold);
+        yyjson_mut_obj_add_int(doc, defaults, "incomplete_delay_ms", turn.incomplete_delay_ms);
         yyjson_mut_obj_add_int(doc, defaults, "turn_max_wait_ms", turn.turn_max_wait_ms);
         yyjson_mut_obj_add_int(doc, defaults, "reopen_grace_ms", turn.reopen_grace_ms);
 

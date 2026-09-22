@@ -112,6 +112,7 @@ struct rt_session_patch {
     int                      min_speech_continuation_ms = -1;
     int                      speech_pad_ms              = -1;
     float                    turn_threshold             = -1.0f;
+    int                      incomplete_delay_ms        = -1;
     int                      turn_max_wait_ms           = -1;
     int                      reopen_grace_ms            = -1;
 
@@ -371,8 +372,9 @@ static rt_client_message rt_parse(const std::string & frame) {
         if (turn) {
             message.patch.turn_threshold =
                 (float) rt_json_value(turn, "threshold", -1.0, 0.0, 1.0, message.patch.invalid);
-            message.patch.turn_max_wait_ms = rt_json_ms(turn, "max_wait_ms", message.patch.invalid);
-            message.patch.reopen_grace_ms  = rt_json_ms(turn, "reopen_grace_ms", message.patch.invalid);
+            message.patch.incomplete_delay_ms = rt_json_ms(turn, "incomplete_delay_ms", message.patch.invalid);
+            message.patch.turn_max_wait_ms    = rt_json_ms(turn, "max_wait_ms", message.patch.invalid);
+            message.patch.reopen_grace_ms     = rt_json_ms(turn, "reopen_grace_ms", message.patch.invalid);
         }
     } else if (type == "input_audio_buffer.append") {
         message.type                = RT_CLIENT_AUDIO_APPEND;
