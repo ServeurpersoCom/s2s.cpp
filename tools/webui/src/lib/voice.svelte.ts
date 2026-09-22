@@ -239,9 +239,9 @@ export async function createVoice(): Promise<S2S> {
 	s2s.on('assistant_delta', (text) => {
 		openAssistant().draft += text;
 	});
-	// a finished answer shows its line, an empty one too
+	// a finished answer closes its line; one that wrote nothing has none, the
+	// way the conversation files it
 	s2s.on('assistant_done', () => {
-		openAssistant();
 		closeAssistant();
 	});
 	s2s.on('assistant_text', (text, textEnd) => {

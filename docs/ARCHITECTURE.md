@@ -52,7 +52,8 @@ Recognition and answer run apart on purpose: a request stuck on the
 network, an endpoint loading a model or a host nothing answers, holds the
 answer and never the next transcript, so the words of the user are
 recognized and revised live whatever the endpoint does. The connection to
-the endpoint is bounded by the timeout of the session, like its silences.
+the endpoint is bounded by the timeout of the session, like its silences:
+past it the answer fails with `The endpoint stayed silent past N s`.
 
 The reader keeps consuming audio while the responder talks, which is
 what makes the barge-in possible. The recognizer takes committed turns
@@ -200,7 +201,8 @@ turns.
 
 The voice hears every round, since the deltas of each stream go through
 the same splitter: a model that speaks before it calls is spoken as it
-writes. A barge-in cuts a round the way it cuts a plain answer, a tool
+writes, and a round that writes after it opens with a space, so the
+sentence before the calls and the one after them stay two. A barge-in cuts a round the way it cuts a plain answer, a tool
 in flight included, and the cap on the rounds ends a model that calls
 forever, the turn failing with the reason.
 

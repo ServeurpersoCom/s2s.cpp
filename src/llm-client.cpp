@@ -15,6 +15,7 @@
 #include "llm-client.h"
 
 #include "http-client.h"
+#include "timer.h"
 #include "yyjson.h"
 
 #include <cstring>
@@ -311,10 +312,11 @@ bool llm_client_stream(llm_client *                     c,
     std::string failure;  // the reason of an error frame inside the stream
     bool        cancelled = false;
     bool        done      = false;
-    std::string finish;              // the finish_reason of the generation, empty until a frame gives it
-    size_t      reasoning = 0;       // bytes of reasoning trace received and dropped
+    std::string finish;                // the finish_reason of the generation, empty until a frame gives it
+    size_t      reasoning = 0;         // bytes of reasoning trace received and dropped
 
-    std::vector<LlmToolCall> calls;  // the calls of this answer, filled fragment by fragment
+    std::vector<LlmToolCall> calls;    // the calls of this answer, filled fragment by fragment
+    Timer                    silence;  // since the request went out or the last bytes came in
 
     // [DONE] ends the answer, not the request: what follows it is left for
     // httplib to read to the end of the body, so the connection stays open
@@ -329,6 +331,7 @@ bool llm_client_stream(llm_client *                     c,
             return false;
         }
 
+        silence.reset();
         body.append(data, size);
         pending.append(data, size);
 
@@ -415,6 +418,10 @@ bool llm_client_stream(llm_client *                     c,
     };
     if (done) {
         return answered();
+    }
+    if (!result && silence.ms() + HTTP_TIMER_SLACK_MS >= c->params.timeout_sec * 1000.0) {
+        s2s_set_error("[LLM] The endpoint stayed silent past %d s", c->params.timeout_sec);
+        return false;
     }
     if (!result) {
         s2s_set_error("[LLM] %s", http_error(result).c_str());

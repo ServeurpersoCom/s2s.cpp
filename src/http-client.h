@@ -16,6 +16,7 @@
 #include <thread>
 
 #define HTTP_CANCEL_POLL_MS 10  // how often a request that receives nothing looks at the cancel flag
+#define HTTP_TIMER_SLACK_MS 50  // a socket wait may wake a clock tick before its timeout
 
 // Splits "http://host:port/v1" into the part httplib connects to and the
 // prefix every request hangs off. False on a URL without a scheme.

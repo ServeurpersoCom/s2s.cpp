@@ -7,15 +7,13 @@
 
 #include "llm-agent.h"
 
+#include "http-client.h"
 #include "s2s-error.h"
 #include "timer.h"
 #include "yyjson.h"
 
 #include <algorithm>
-
-// A call that fails this close to the tool timeout ran into it: the socket
-// wait may wake a clock tick before its deadline.
-#define LLM_AGENT_TIMER_SLACK_MS 50
+#include <cctype>
 
 // One tool the session may check, and the server that runs it: an MCP
 // client, or the endpoint when there is none.
@@ -164,6 +162,31 @@ static std::vector<LlmAgentCall> llm_agent_calls(const std::string & json) {
     return calls;
 }
 
+// The deltas of every round reach the caller through this tap. A round that
+// writes after the words of an earlier one opens with a space, so the
+// sentence the model ends before its calls and the one it starts after them
+// stay two sentences, for the splitter and in the text.
+struct LlmAgentTap {
+    llm_delta_cb cb       = nullptr;
+    void *       user     = nullptr;
+    bool         separate = false;  // the round follows words that end without a space
+    bool         spaced   = false;  // the round opened with that space
+};
+
+static bool llm_agent_tap(const char * delta, void * user) {
+    LlmAgentTap * tap = (LlmAgentTap *) user;
+    if (tap->separate && *delta) {
+        tap->separate = false;
+        if (!isspace((unsigned char) *delta)) {
+            tap->spaced = true;
+            if (!tap->cb(" ", tap->user)) {
+                return false;
+            }
+        }
+    }
+    return tap->cb(delta, tap->user);
+}
+
 bool llm_agent_tools(llm_agent *                    agent,
                      const llm_client_params &      params,
                      const std::atomic<bool> *      cancel,
@@ -215,12 +238,18 @@ bool llm_agent_run(llm_agent *                      agent,
 
     text.clear();
 
+    LlmAgentTap tap;
+    tap.cb   = cb;
+    tap.user = user;
+
     for (int round = 0; round < max_rounds; round++) {
+        tap.separate = !text.empty() && !isspace((unsigned char) text.back());
+        tap.spaced   = false;
         std::string answer;
-        if (!llm_client_stream(c, messages, cb, user, cancel, answer)) {
+        if (!llm_client_stream(c, messages, llm_agent_tap, &tap, cancel, answer)) {
             return false;
         }
-        text += answer;
+        text += tap.spaced ? " " + answer : answer;
 
         const std::vector<LlmAgentCall> calls = llm_agent_calls(llm_client_tool_calls(c));
         if (calls.empty()) {
@@ -241,7 +270,7 @@ bool llm_agent_run(llm_agent *                      agent,
                 const double ms = timer.ms();
                 s2s_log(S2S_LOG_WARN, "[Agent] Round %d, %s failed after %.1f s: %s", round + 1, call.name.c_str(),
                         ms / 1000.0, s2s_last_error());
-                const bool timed_out = ms + LLM_AGENT_TIMER_SLACK_MS >= params.tool_timeout_sec * 1000.0;
+                const bool timed_out = ms + HTTP_TIMER_SLACK_MS >= params.tool_timeout_sec * 1000.0;
                 result               = timed_out ? "Error: " + call.name + " did not answer within " +
                                          std::to_string(params.tool_timeout_sec) + " s" :
                                                    std::string("Error: ") + s2s_last_error();
