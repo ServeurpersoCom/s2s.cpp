@@ -72,10 +72,10 @@ struct llm_client_params {
     std::string  api_key;
     llm_sampling sampling;
 
-    // Longest the endpoint may stay silent, in seconds: a real time voice has
-    // no use for a model that keeps it waiting. A tool at work, a search or a
-    // fetch, is given its own and longer bound.
-    int timeout_sec      = 5;
+    // Longest the endpoint may stay silent, in seconds: long enough for a
+    // model it loads, short enough that a real time voice is not kept
+    // waiting. A tool at work, a search or a fetch, is given its own bound.
+    int timeout_sec      = 10;
     int tool_timeout_sec = 10;
 
     // The tools every request offers the model, as a JSON array of OpenAI

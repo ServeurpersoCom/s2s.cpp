@@ -31,7 +31,8 @@
 // Its route picks its behavior: v1 answers, broken fails with an HTTP 500,
 // midstream reports a failure inside the stream, empty thinks and then ends
 // the generation without a word, agent calls the clock tool of the mock MCP
-// server and then speaks its result.
+// server and then speaks its result, or says the clock did not answer when
+// the call comes back as an error.
 
 #include "audio-resample.h"
 #include "httplib.h"
@@ -81,6 +82,8 @@ static void print_usage(const char * prog) {
             "  --llm <route>          runs the mock endpoint and names it: v1, broken, midstream, empty,\n"
             "                         agent, which calls the clock tool once before it answers\n"
             "  --mcp                  names the mock MCP server, which runs the clock tool\n"
+            "  --mcp-delay-ms <N>     mock delay before the clock answers (default: 0)\n"
+            "  --tool-timeout <s>     the session timeout of one tool call\n"
             "  --llm-first-ms <N>     mock delay before the first word (default: 100)\n"
             "  --llm-token-ms <N>     mock delay between words (default: 20)\n"
             "  --llm-url <url>        names this endpoint instead of the mock\n"
@@ -161,8 +164,8 @@ static std::string mock_frame(const std::string & content) {
 // SDK answers, a session id given at initialize and demanded after it, the
 // tool list as an event stream and the call as plain JSON, a bearer key on
 // every request.
-static void mock_mcp(httplib::Server & mock, Timer & timer) {
-    mock.Post("/mcp", [&timer](const httplib::Request & req, httplib::Response & res) {
+static void mock_mcp(httplib::Server & mock, Timer & timer, int delay_ms) {
+    mock.Post("/mcp", [&timer, delay_ms](const httplib::Request & req, httplib::Response & res) {
         yyjson_doc *  doc    = yyjson_read(req.body.c_str(), req.body.size(), 0);
         yyjson_val *  root   = doc ? yyjson_doc_get_root(doc) : nullptr;
         std::string   method = rt_json_str(root, "method");
@@ -206,6 +209,7 @@ static void mock_mcp(httplib::Server & mock, Timer & timer) {
             return;
         }
         if (method == "tools/call") {
+            std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
             res.set_content(
                 "{\"jsonrpc\":\"2.0\",\"id\":" + std::to_string(id) +
                     ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"It is noon.\"}],\"isError\":false}}",
@@ -220,15 +224,18 @@ static void mock_mcp(httplib::Server & mock, Timer & timer) {
 }
 
 // One round of the mock model: does the conversation already carry the
-// result of a tool.
-static bool mock_has_tool_result(const std::string & body) {
+// result of a tool, and what it says.
+static bool mock_tool_result(const std::string & body, std::string & content) {
     yyjson_doc * doc      = yyjson_read(body.c_str(), body.size(), 0);
     yyjson_val * messages = doc ? yyjson_obj_get(yyjson_doc_get_root(doc), "messages") : nullptr;
     size_t       idx, max;
     yyjson_val * message;
     bool         found = false;
     yyjson_arr_foreach(messages, idx, max, message) {
-        found = found || rt_json_str(message, "role") == "tool";
+        if (rt_json_str(message, "role") == "tool") {
+            found   = true;
+            content = rt_json_str(message, "content");
+        }
     }
     yyjson_doc_free(doc);
     return found;
@@ -239,12 +246,14 @@ int main(int argc, char ** argv) {
     std::string       echo = "off";
     std::string       route;
     std::string       named;
-    int               timeout  = -1;
-    bool              room     = false;
-    bool              other    = false;
-    bool              mcp      = false;
-    int               first_ms = 100;
-    int               token_ms = 20;
+    int               timeout      = -1;
+    int               tool_timeout = -1;
+    int               mcp_delay_ms = 0;
+    bool              room         = false;
+    bool              other        = false;
+    bool              mcp          = false;
+    int               first_ms     = 100;
+    int               token_ms     = 20;
     std::vector<Step> script;
 
     std::vector<const char *> args;
@@ -272,6 +281,10 @@ int main(int argc, char ** argv) {
             other = true;
         } else if (arg == "--mcp") {
             mcp = true;
+        } else if (arg == "--mcp-delay-ms" && has_value) {
+            mcp_delay_ms = atoi(argv[++i]);
+        } else if (arg == "--tool-timeout" && has_value) {
+            tool_timeout = atoi(argv[++i]);
         } else if (args.size() < 2) {
             args.push_back(argv[i]);
         } else if (parse_step(argv[i], step)) {
@@ -409,11 +422,15 @@ int main(int argc, char ** argv) {
         // The agent: a call of the clock first, the words once its result is
         // in the conversation.
         mock.Post("/agent/chat/completions", [&](const httplib::Request & req, httplib::Response & res) {
-            if (mock_has_tool_result(req.body)) {
-                printf("[Mock] %7.2fs  request  with the result of the clock\n", timer.ms() / 1000.0);
+            std::string result;
+            if (mock_tool_result(req.body, result)) {
+                const bool failed = result.rfind("Error:", 0) == 0;
+                printf("[Mock] %7.2fs  request  with %s\n", timer.ms() / 1000.0,
+                       failed ? "the error of the clock" : "the result of the clock");
                 fflush(stdout);
                 std::string frames;
-                for (const std::string & word : mock_words("It is noon, the clock said. ")) {
+                for (const std::string & word :
+                     mock_words(failed ? "The clock did not answer, sorry. " : "It is noon, the clock said. ")) {
                     frames += mock_frame(word);
                 }
                 res.set_content(frames + "data: [DONE]\n\n", "text/event-stream");
@@ -430,7 +447,7 @@ int main(int argc, char ** argv) {
                 "data: [DONE]\n\n",
                 "text/event-stream");
         });
-        mock_mcp(mock, timer);
+        mock_mcp(mock, timer, mcp_delay_ms);
         mock.Post("/empty/chat/completions", [](const httplib::Request &, httplib::Response & res) {
             res.set_content(
                 "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"Nothing to add.\"}}]}\n\n"
@@ -543,6 +560,9 @@ int main(int argc, char ** argv) {
     }
     if (timeout > 0) {
         yyjson_mut_obj_add_int(update.doc, session, "llm_timeout_sec", timeout);
+    }
+    if (tool_timeout > 0) {
+        yyjson_mut_obj_add_int(update.doc, session, "tool_timeout_sec", tool_timeout);
     }
     if (mcp && !route.empty()) {
         // The mock MCP server lives on the mock endpoint, and the session

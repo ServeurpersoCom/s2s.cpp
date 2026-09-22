@@ -204,6 +204,13 @@ writes. A barge-in cuts a round the way it cuts a plain answer, a tool
 in flight included, and the cap on the rounds ends a model that calls
 forever, the turn failing with the reason.
 
+A call that fails does not fail the turn: its error becomes its result,
+and the model reads it in the next round like any other. One that runs
+past `tool_timeout_sec` reads `Error: <tool> did not answer within N s`,
+any other failure its reason, a tool name nobody offered included. The
+bound is per call: a turn has no budget of its own, since nothing tells
+how many calls the model will make.
+
 Only the `/tools` routes leave the OpenAI dialect: they belong to
 llama.cpp, and the tools of the MCP servers it spawns come out of the
 same list as its own.
@@ -327,8 +334,8 @@ naming the field, which keeps its default.
 `session.update` carries `tools`, the names of the tools an agentic
 session lets the model use, `mcp`, the MCP servers it names as a list
 of `{url, key}`, `max_rounds`, its cap on the rounds of calls, and
-`tool_timeout_sec`, how long one call may run, 10 s by default against
-the 5 s of `llm_timeout_sec`: a tool goes out to the network. An
+`tool_timeout_sec`, how long one call may run, 10 s by default like
+`llm_timeout_sec`, the longest silence of the endpoint. An
 absent list and an empty one read the same: the model is offered none.
 A server started with `--mcp` owns its MCP servers the way `--llm-url`
 owns the endpoint: a session that names any is refused. The hosts of
@@ -438,6 +445,7 @@ one of three brackets:
 | empty answer | a model that thinks and writes nothing: the answer closes as done, silent, the client gets the error and the log says why |
 | unreachable endpoint | a connection nothing answers, which no cancel reaches: the revisions are recognized as fast as ever, the answer fails within the timeout |
 | mcp tool | the agentic mode over MCP: the model calls the tool of a mock MCP server behind its key and its session id, and its result is spoken |
+| mcp tool timeout | the same tool slower than the timeout of the call: the model reads that it did not answer and speaks, the turn does not fail |
 | room | the echo canceller keeps the assistant out of what is heard, the playback flushed |
 | owned endpoint | nothing of the endpoint published or logged, another endpoint refused |
 

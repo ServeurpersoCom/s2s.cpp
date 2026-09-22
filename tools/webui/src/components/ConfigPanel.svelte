@@ -510,7 +510,7 @@
 							/></label
 						>
 						<label
-							title="Longest a tool may work, in seconds, before its call fails: the endpoint runs it, a search or a fetch, and answers once it is done. Longer than the model timeout, a tool goes out to the network."
+							title="Longest one tool call may work, in seconds: a search or a fetch, run by the endpoint or an MCP server. Past it the model is told the tool did not answer and goes on from there. Each call has its own."
 							>Timeout <input
 								type="text"
 								placeholder={ph(d?.tool_timeout_sec)}

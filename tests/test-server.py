@@ -14,8 +14,9 @@
 #     answer heard   after the answer started playing: a new turn, a barge-in
 #
 # Around it: a push to talk, a broken endpoint, an endpoint that answers
-# nothing, an endpoint nothing answers at all, a tool call over MCP, a room
-# whose echo the server cancels, and a server that owns its endpoint.
+# nothing, an endpoint nothing answers at all, a tool call over MCP and one
+# that runs past its timeout, a room whose echo the server cancels, and a
+# server that owns its endpoint.
 #
 # The passages of examples/freeman.wav, cut on their speech:
 #     A  0.0 to 5.9 s    "If you go into different cultures, ... concepts of creation."
@@ -223,6 +224,17 @@ def check_mcp(label, run):
     return check("%s error" % label, not run.errors(), "no error") and ok
 
 
+# The same call, the clock slower than the timeout of the call: the model is
+# told the tool did not answer and speaks, the turn does not fail.
+def check_mcp_timeout(label, run):
+    spoken = " ".join(rest for _, rest in run.at("Event", "response.output_audio_transcript.delta")).lower()
+    ok = check("%s spoken" % label, "did not answer" in spoken, "the answer speaks the timeout of the tool")
+    ok = check("%s error" % label, not run.errors(), "no error") and ok
+    with open(TMP + "/server.log", errors="replace") as f:
+        logged = re.search(r"-Agent\] Round 1, clock failed after", f.read())
+    return check("%s log" % label, logged is not None, "the log says the call failed") and ok
+
+
 def check_broken(label, run):
     errors = run.errors()
     return check("%s error" % label, bool(errors) and all("model not loaded" in e for e in errors),
@@ -249,6 +261,8 @@ CASES = [
     ("broken endpoint", ["--mode", "conversation", "--llm", "broken", "say:" + A, "pause:3"], check_broken),
     ("empty answer", ["--mode", "conversation", "--llm", "empty", "say:" + A, "pause:3"], check_empty),
     ("mcp tool", ["--mode", "agentic", "--llm", "agent", "--mcp", "say:" + A, "pause:3"], check_mcp),
+    ("mcp tool timeout", ["--mode", "agentic", "--llm", "agent", "--mcp", "--mcp-delay-ms", "3000",
+                          "--tool-timeout", "1", "say:" + A, "pause:4"], check_mcp_timeout),
     ("unreachable endpoint", ["--mode", "conversation", "--llm-url", UNREACHABLE, "--llm-timeout", "3", "say:" + A,
                               "pause:1.5", "say:" + B, "pause:3"], check_unreachable),
     ("room", ["--mode", "loopback", "--echo", "server", "--room", "say:" + A, "heard:1000", "say:" + C, "pause:3"],

@@ -43,9 +43,11 @@ bool llm_agent_tools(llm_agent *                    agent,
                      std::vector<llm_agent_group> & groups);
 
 // Answers one turn, growing messages with the calls and their results. Text
-// receives the words of every round, deltas included. Returns false on a
-// transport error, on a tool that fails, on cancellation, or when the rounds
-// run out, with the reason in llm_client_last_error().
+// receives the words of every round, deltas included. A call that fails, a
+// timeout included, is answered with its error as the tool result, and the
+// model goes on from there. Returns false on a transport error of the
+// endpoint, on cancellation, or when the rounds run out, with the reason in
+// llm_client_last_error().
 bool llm_agent_run(llm_agent *                      agent,
                    llm_client *                     c,
                    const llm_client_params &        params,

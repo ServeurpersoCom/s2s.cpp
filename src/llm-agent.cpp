@@ -8,9 +8,14 @@
 #include "llm-agent.h"
 
 #include "s2s-error.h"
+#include "timer.h"
 #include "yyjson.h"
 
 #include <algorithm>
+
+// A call that fails this close to the tool timeout ran into it: the socket
+// wait may wake a clock tick before its deadline.
+#define LLM_AGENT_TIMER_SLACK_MS 50
 
 // One tool the session may check, and the server that runs it: an MCP
 // client, or the endpoint when there is none.
@@ -226,8 +231,22 @@ bool llm_agent_run(llm_agent *                      agent,
 
         for (const LlmAgentCall & call : calls) {
             std::string result;
+            const Timer timer;
             if (!llm_agent_call(available, c, call.name, call.arguments, cancel, result)) {
-                return false;
+                if (cancel && cancel->load()) {
+                    return false;
+                }
+                // The model reads why its call failed and decides what comes
+                // next: another call, another tool, or words.
+                const double ms = timer.ms();
+                s2s_log(S2S_LOG_WARN, "[Agent] Round %d, %s failed after %.1f s: %s", round + 1, call.name.c_str(),
+                        ms / 1000.0, s2s_last_error());
+                const bool timed_out = ms + LLM_AGENT_TIMER_SLACK_MS >= params.tool_timeout_sec * 1000.0;
+                result               = timed_out ? "Error: " + call.name + " did not answer within " +
+                                         std::to_string(params.tool_timeout_sec) + " s" :
+                                                   std::string("Error: ") + s2s_last_error();
+                messages.push_back({ "tool", result, "", call.id });
+                continue;
             }
             s2s_log(S2S_LOG_INFO, "[Agent] Round %d, %s returned %zu bytes", round + 1, call.name.c_str(),
                     result.size());
