@@ -621,6 +621,12 @@ static void conn_answer(Connection * conn, const AnswerJob & job) {
 
             if (!streamed && !conn->cancel.load()) {
                 conn_error(conn, llm_client_last_error());
+            } else if (streamed && answer.empty()) {
+                // A model that ends on its first token: the client hears
+                // nothing and would not know why, and the turn stays
+                // unanswered so the next request does not carry a silence
+                // for the model to imitate.
+                conn_error(conn, "[LLM] The model answered nothing");
             }
         }
     }

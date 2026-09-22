@@ -185,11 +185,14 @@ def check_push_to_talk(label, run):
 
 
 # The model thinks and ends without a word: the answer closes as done, with
-# no sound and no error, and the log says what came back.
+# no sound, the client is told the model answered nothing, and the log says
+# what came back.
 def check_empty(label, run):
     done = run.at("Event", "response.done")
-    ok = check("%s done" % label, bool(done) and not run.at("Event", "response.cancelled") and not run.errors(),
-               "%d answers closed as done, none cancelled, no error" % len(done))
+    ok = check("%s done" % label, bool(done) and not run.at("Event", "response.cancelled"),
+               "%d answers closed as done, none cancelled" % len(done))
+    ok = check("%s error" % label, any("answered nothing" in e for e in run.errors()),
+               "the error names the empty answer") and ok
     ok = check("%s silent" % label, run.first("Event", "response.output_audio.delta") is None, "no audio") and ok
     with open(TMP + "/server.log", errors="replace") as f:
         logged = re.findall(r"-LLM\] Answer of 0 bytes, (\d+) bytes of reasoning dropped, finish_reason stop", f.read())

@@ -154,12 +154,14 @@ answer closes with the units whose audio started:
   synthesis and aborts the LLM request, and sends `response.cancelled`;
   the client flushes its playback and keeps what was heard.
 
-An answer the model finished is filed even when nothing was heard of it,
-an empty answer included: the conversation shows `[Assistant]` and
-nothing, and the model reads the same. One cancelled before a word was
-heard is not filed, and the turn it answered reaches the next request
-joined to the following one. Every answer that ends logs what came back:
-its length, the length of the reasoning dropped, and its `finish_reason`.
+An answer of which nothing was heard is not filed, whether the model
+wrote nothing or a barge-in cut it before a word: the turn it answered
+reaches the next request joined to the following one. A silence filed as
+an answer is one the model imitates, turn after turn. A model that ends
+without a word is reported as an error, `The model answered nothing`, on
+top of the `response.done` that closes the answer, so the client hears
+why nothing came. Every answer that ends logs what came back: its length,
+the length of the reasoning dropped, and its `finish_reason`.
 
 ## Agentic rounds
 
@@ -405,7 +407,7 @@ one of three brackets:
 | answer heard | the second sentence talks over the answer: a new turn, response and endpoint request stopped |
 | push to talk | a commit mid sentence and a microphone cut still get an answer, with no grace |
 | broken endpoint | the error reaches the client, the response still closes |
-| empty answer | a model that thinks and writes nothing: the answer closes as done, silent, and the log says why |
+| empty answer | a model that thinks and writes nothing: the answer closes as done, silent, the client gets the error and the log says why |
 | unreachable endpoint | a connection nothing answers, which no cancel reaches: the revisions are recognized as fast as ever, the answer fails within the timeout |
 | room | the echo canceller keeps the assistant out of what is heard, the playback flushed |
 | owned endpoint | nothing of the endpoint published or logged, another endpoint refused |

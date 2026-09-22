@@ -172,7 +172,7 @@ export interface S2SEvents {
 	// assistant_delta text was written and not spoken
 	assistant_text: (text: string, textEnd: number) => void;
 	// an answer the model finished, closed with what was heard of it, even
-	// when that is nothing: an empty answer is still an answer
+	// when that is nothing: the server reports an empty one as an error
 	assistant_done: () => void;
 	// the conversation, every time it changes: persist it, or ignore it
 	history: (messages: S2SMessage[]) => void;
@@ -653,9 +653,10 @@ export class S2S {
 	// Closes the answer in flight with what was actually heard. A unit counts
 	// once its audio started playing: a barge-in keeps the sentence it cut and
 	// drops the ones still queued, so the model never believes it said more.
-	// An answer the model finished is filed even empty, the way it is shown;
-	// one cancelled before a word was heard is not, and the turn it answered
-	// reaches the server joined to the next one. Every close pushes the list.
+	// An answer with nothing heard is not filed, empty or cut before a word,
+	// and the turn it answered reaches the server joined to the next one: a
+	// silence filed as an answer is one the model imitates. Every close
+	// pushes the list.
 	private closeAnswer() {
 		if (!this.answering) {
 			return;
@@ -669,7 +670,7 @@ export class S2S {
 		this.units = [];
 		this.answerDone = false;
 		this.answering = false;
-		if (content || finished) {
+		if (content) {
 			this.history.push({ role: 'assistant', content });
 		}
 		if (finished) {
