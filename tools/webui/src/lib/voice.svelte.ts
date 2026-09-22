@@ -1,5 +1,4 @@
 import type { S2S, S2SMcpServer, S2SMessage, S2SOptions, S2SState } from './s2s.js';
-import { postLog } from './api.js';
 import { num } from './fields.js';
 import { app, settings, toast } from './state.svelte.js';
 
@@ -253,11 +252,6 @@ export async function createVoice(): Promise<S2S> {
 		turn.spokenEnd = textEnd;
 	});
 	s2s.on('history', saveHistory);
-	// the log of the component goes to the server log, so the card on the right
-	// tells the whole story, and an error pops the toast
-	s2s.on('log', (line) => {
-		postLog(line);
-	});
 	s2s.on('error', (message) => {
 		toast(message);
 	});

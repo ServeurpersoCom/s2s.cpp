@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { settings } from '../lib/state.svelte.js';
+	import { settings, toast } from '../lib/state.svelte.js';
 	import { SSE_RECONNECT_MS, LOG_MAX_LINES, NEWLINE } from '../lib/config.js';
 	import { ChevronDown, ChevronRight } from '@lucide/svelte';
 
@@ -18,8 +18,7 @@
 			es.onerror = () => {
 				es?.close();
 				es = null;
-				lines.push('[Browser] Server unavailable');
-				if (lines.length > LOG_MAX_LINES) lines.splice(0, lines.length - LOG_MAX_LINES);
+				toast('Server unavailable');
 				timer = setTimeout(connect, SSE_RECONNECT_MS) as unknown as number;
 			};
 		}

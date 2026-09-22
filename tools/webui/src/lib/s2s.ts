@@ -548,9 +548,11 @@ export class S2S {
 		track
 			?.applyConstraints(micConstraints(this.echo()))
 			.then(() => this.log(`Microphone switched, ${this.micApplied()}`))
-			.catch((e) =>
-				this.log(`Microphone switch refused, ${e instanceof Error ? e.message : String(e)}`)
-			);
+			.catch((e) => {
+				const message = `Microphone switch refused, ${e instanceof Error ? e.message : String(e)}`;
+				this.log(message);
+				this.handlers.error?.(message);
+			});
 	}
 
 	// What really runs on the microphone: the server canceller, and what the

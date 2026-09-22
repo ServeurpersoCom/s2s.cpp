@@ -32,7 +32,7 @@ loaded are logged at startup and published on `/props`.
 | Thread | Log name | Owns |
 | --- | --- | --- |
 | main | `Main` | loading, then the listening socket |
-| HTTP pool | `HTTP` | the page, `/props`, `/v1/models`, `/v1/tools`, `/log` |
+| HTTP pool | `HTTP` | the page, `/props`, `/v1/models`, `/v1/tools` |
 | reader, one per connection | `Reader-N` | the socket, frame decode, 24 to 16 kHz resampling, the echo canceller, the turn session, incoming events |
 | recognizer, one per connection | `Recognizer-N` | recognition of every committed turn and revision, as soon as it is committed |
 | responder, one per connection | `Responder-N` | the LLM stream, its tool rounds, the sentence splitter, synthesis |
@@ -345,12 +345,12 @@ MCP servers pass the same allowlist as the endpoint's.
 
 HTTP routes: `/` the page, `/s2s.js` the component, `/props` the session
 defaults and the loaded models, `/health`, `/logs` the server log as SSE,
-`/log` where the page posts its own lines, `POST /v1/models` which lists
-the models of the endpoint a client names, and `POST /v1/tools` which
-lists the tools of the MCP servers and the endpoint it names. Both are
-proxies: the browser only ever talks to
-s2s-server, so an endpoint on a loopback address or without CORS headers
-still fills the page, and the API key stays on this machine.
+read only, `POST /v1/models` which lists the models of the endpoint a
+client names, and `POST /v1/tools` which lists the tools of the MCP
+servers and the endpoint it names. Both are proxies: the browser only
+ever talks to s2s-server, so an endpoint on a loopback address or
+without CORS headers still fills the page, and the API key stays on
+this machine.
 
 ## Security
 

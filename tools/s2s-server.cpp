@@ -426,24 +426,6 @@ int main(int argc, char ** argv) {
         });
     }
 
-    // Browser log: the page posts what happens on its side, so the microphone
-    // permission, the socket and the audio context show up in the same stream
-    // as the server stages instead of dying in a console nobody reads.
-    server.Post("/log", [&](const httplib::Request & req, httplib::Response & res) {
-        if (!origin_allowed(origins, req)) {
-            res.status = 403;
-            return;
-        }
-        std::string line = req.body.substr(0, 512);
-        for (char & c : line) {
-            if (c == '\n' || c == '\r') {
-                c = ' ';
-            }
-        }
-        s2s_log(S2S_LOG_INFO, "[Browser] %s", line.c_str());
-        res.set_content("{\"status\":\"ok\"}", "application/json");
-    });
-
     // Model list proxy: the browser asks s2s-server, s2s-server asks the
     // endpoint. No CORS to negotiate, no endpoint reachable from the client
     // side, and the API key stays on this machine. The body overrides the
