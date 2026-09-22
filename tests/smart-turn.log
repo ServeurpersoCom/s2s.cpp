@@ -12,5 +12,5 @@ load_backend: loaded CPU backend from /mnt/workspace/git/s2s.cpp/build/libggml-c
 [WeightCtx] Loaded 0 tensors, 0.0 MB into backend
 [SmartTurn] 16000 Hz, 8.0s window, 800 frames, 4 layers, 6 heads, d_model 384
 [Turn] Scored 17 candidates over 17.26s of audio
-[Perf] Turn 188.9 ms (11.1 ms/candidate)
+[Perf] Turn 188.3 ms (11.1 ms/candidate)
 [Parity] turn: cossim 1.000000000 max abs 2.146e-06 decisions 17/17 OK

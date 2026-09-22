@@ -11,5 +11,5 @@ load_backend: loaded CPU backend from /mnt/workspace/git/s2s.cpp/build/libggml-c
 [WeightCtx] Loaded 14 tensors, 1.2 MB into backend
 [Silero] 16000 Hz, window 512, context 64, hidden 128
 [Silero] Scored 539 windows over 17.26s of audio
-[Perf] VAD 18.3 ms (0.034 ms/window, RTF 0.00106)
+[Perf] VAD 18.0 ms (0.033 ms/window, RTF 0.00104)
 [Parity] vad: cossim 1.000000000 max abs 1.132e-06 decisions 539/539 OK

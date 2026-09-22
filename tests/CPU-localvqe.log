@@ -9,7 +9,7 @@
 [Load] LocalVQE backend: CPU (CPU threads: 16)
 [WeightCtx] Loaded 137 tensors, 18.4 MB into backend
 [LocalVQE] 16000 Hz, hop 256, dmax 64, 29 states of 2336.8 KB per stream, 957 graph nodes
-[LocalVQE] 500 hops of 1 streams in 1265.9 ms, 2.532 ms per hop, 6.3x real time
+[LocalVQE] 500 hops of 1 streams in 1322.0 ms, 2.644 ms per hop, 6.1x real time
 [GGUF] ../models/localvqe-v1.3-F32.gguf: 137 tensors, data at offset 8352
 [GGML] ggml_cuda_init: found 1 CUDA devices (Total VRAM: 97249 MiB):
 [GGML]   Device 0: NVIDIA RTX PRO 6000 Blackwell Workstation Edition, compute capability 12.0, VMM: yes, VRAM: 97249 MiB
@@ -29,7 +29,7 @@
 [LocalVQE] Capacity 7 streams
 [LocalVQE] Capacity 8 streams
 [LocalVQE] Capacity 9 streams
-[LocalVQE] 500 hops of 4 streams in 12091.6 ms, 24.183 ms per hop, 0.7x real time
+[LocalVQE] 500 hops of 4 streams in 11802.0 ms, 23.604 ms per hop, 0.7x real time
 [Parity] output: cossim 1.000000000 max abs 3.063e-05 OK
 [Check] echo removed where the far end plays alone: 56.2 dB OK
 [Check] same output among 4 streams sharing the batch: cossim 1.000000000 max abs 0.000e+00 OK

@@ -10,7 +10,7 @@
 [WeightCtx] Loaded 137 tensors, 18.4 MB into backend
 [LocalVQE] 16000 Hz, hop 256, dmax 64, 29 states of 2336.8 KB per stream, 957 graph nodes
 [AEC-GGML] ggml_backend_cuda_graph_compute: CUDA graph warmup complete
-[LocalVQE] 500 hops of 1 streams in 385.4 ms, 0.771 ms per hop, 20.8x real time
+[LocalVQE] 500 hops of 1 streams in 604.6 ms, 1.209 ms per hop, 13.2x real time
 [GGUF] ../models/localvqe-v1.3-F32.gguf: 137 tensors, data at offset 8352
 [GGML] ggml_cuda_init: found 1 CUDA devices (Total VRAM: 97249 MiB):
 [GGML]   Device 0: NVIDIA RTX PRO 6000 Blackwell Workstation Edition, compute capability 12.0, VMM: yes, VRAM: 97249 MiB
@@ -33,7 +33,7 @@
 [LocalVQE] Capacity 9 streams
 [AEC-GGML] ggml_backend_cuda_graph_compute: CUDA graph warmup reset
 [AEC-GGML] ggml_backend_cuda_graph_compute: CUDA graph warmup complete
-[LocalVQE] 500 hops of 4 streams in 1176.3 ms, 2.353 ms per hop, 6.8x real time
+[LocalVQE] 500 hops of 4 streams in 1114.1 ms, 2.228 ms per hop, 7.2x real time
 [Parity] output: cossim 0.999999737 max abs 7.488e-04 OK
 [Check] echo removed where the far end plays alone: 56.1 dB OK
 [Check] same output among 4 streams sharing the batch: cossim 0.999995293 max abs 2.569e-03 OK
