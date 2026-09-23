@@ -104,8 +104,8 @@ gives the timbre; with the `.rvq` and `.txt` of a recording next to it,
 the voice also keeps its pace and accent, and is offered both ways:
 
 ```
-freeman.{spk,rvq,txt} reference speech
-freeman.spk speaker embedding only
+freeman (original accent)
+freeman (timbre only)
 ```
 
 The language id only weighs on a lone word, a few words are read in the
@@ -129,7 +129,9 @@ The endpoint is any OpenAI compatible server: llama-server, Ollama,
 LM Studio, a cloud API. The voice reads the text in the language it is
 written in, so the system prompt decides the language of the answers.
 
-The agentic mode takes its tools from MCP servers, any that speak
+The agentic mode takes its tools from the server itself, under
+built-in: `set_voice` lets the model change the voice it speaks with,
+one of the voices above. Then from MCP servers, any that speak
 Streamable HTTP, a web search for instance, named in the playground one
 per line with the key each takes, and from the endpoint itself when it
 is a llama.cpp server started with `--tools`, or `--tools all`. Reload

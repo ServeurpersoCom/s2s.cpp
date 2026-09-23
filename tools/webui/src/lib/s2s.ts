@@ -190,6 +190,9 @@ export interface S2SEvents {
 	assistant_done: () => void;
 	// the conversation, every time it changes: persist it, or ignore it
 	history: (messages: S2SMessage[]) => void;
+	// the voice the model switched to with set_voice: the session keeps it
+	// until the page reloads, persist it, or ignore it
+	voice: (voice: string) => void;
 	// every step of a start, a stop or a failure, so a host can show what
 	// happened instead of guessing
 	log: (line: string) => void;
@@ -745,6 +748,20 @@ export class S2S {
 		}
 
 		switch (message.type) {
+			case 'session.updated':
+				{
+					// The model changed its voice: the next session.update
+					// carries it, a restart included.
+					const session = message.session as { tts?: { voice?: unknown } } | undefined;
+					const voice = session?.tts?.voice;
+					if (typeof voice === 'string') {
+						this.options.tts = { ...this.options.tts, voice };
+						this.log(`Voice set to ${voice}`);
+						this.handlers.voice?.(voice);
+					}
+				}
+				break;
+
 			case 'input_audio_buffer.speech_started':
 				// The user speaks: whatever is still playing is over, and the
 				// answer keeps only what was heard.

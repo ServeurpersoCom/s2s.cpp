@@ -7,11 +7,11 @@
 // The voices are latent references read once from the voices directory: a
 // <name>.spk speaker embedding alone conditions the timbre, and a <name>.rvq
 // with its <name>.txt transcript next to it is reference speech, which the
-// talker continues on every unit. A voice with all three files is offered
-// both ways, the reference speech first:
+// talker continues on every unit, accent and pace included. A voice with all
+// three files is offered both ways, the reference speech first:
 //
-//   freeman.{spk,rvq,txt} reference speech
-//   freeman.spk speaker embedding only
+//   freeman (original accent)
+//   freeman (timbre only)
 //
 // The frame budget of a synthesis is derived from the length of the text, so
 // a talker that misses its end of speech stops within a few seconds of the
@@ -188,9 +188,9 @@ static bool tts_bridge_load_voices(tts_bridge * b, const std::string & dir) {
             s2s_log(S2S_LOG_INFO,
                     "[TTS] Voice %s.{spk,rvq,txt}: speaker embedding of %zu values, reference speech of %d frames",
                     voice.name.c_str(), voice.spk.size(), voice.n_frames);
-            b->entries.push_back({ voice.name + ".{spk,rvq,txt} reference speech", index, true });
+            b->entries.push_back({ voice.name + " (original accent)", index, true });
         }
-        b->entries.push_back({ voice.name + ".spk speaker embedding only", index, false });
+        b->entries.push_back({ voice.name + " (timbre only)", index, false });
         b->voices.push_back(std::move(voice));
     }
     for (const TtsVoiceEntry & entry : b->entries) {

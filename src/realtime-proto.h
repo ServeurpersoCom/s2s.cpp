@@ -16,6 +16,8 @@
 //
 // Server to client:
 //   session.created, session.updated
+//                                    with session.tts.voice when the model
+//                                    changes its voice with set_voice
 //   input_audio_buffer.speech_started, input_audio_buffer.speech_stopped
 //   conversation.item.input_audio_transcription.completed
 //                                    with the item_id of its turn: a later
@@ -459,6 +461,16 @@ static std::string rt_frame_end(rt_frame & frame) {
 
 static std::string rt_event(const char * type) {
     rt_frame frame = rt_frame_begin(type);
+    return rt_frame_end(frame);
+}
+
+// The voice the model switched to: a session.updated carrying the one field
+// of the session the server changed on its own.
+static std::string rt_event_voice(const std::string & voice) {
+    rt_frame         frame   = rt_frame_begin("session.updated");
+    yyjson_mut_val * session = yyjson_mut_obj_add_obj(frame.doc, frame.root, "session");
+    yyjson_mut_val * tts     = yyjson_mut_obj_add_obj(frame.doc, session, "tts");
+    yyjson_mut_obj_add_strn(frame.doc, tts, "voice", voice.c_str(), voice.size());
     return rt_frame_end(frame);
 }
 

@@ -252,6 +252,10 @@ export async function createVoice(): Promise<S2S> {
 		turn.spokenEnd = textEnd;
 	});
 	s2s.on('history', saveHistory);
+	// the voice the model picked is the one the panel shows and keeps
+	s2s.on('voice', (label) => {
+		settings.voice = label;
+	});
 	s2s.on('error', (message) => {
 		toast(message);
 	});

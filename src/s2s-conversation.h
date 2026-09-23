@@ -86,6 +86,11 @@ bool conn_stopped(const Connection * conn);
 // Stops the talking half, frees the conversation, and logs its end.
 void conn_close(Connection * conn);
 
+// The definition of set_voice, the built-in tool that lets the model change
+// the voice it speaks with: every label the bridge lists, and the one it
+// speaks with now, empty for the default.
+llm_tool conn_voice_tool(const tts_bridge * tts, const std::string & voice);
+
 // Host of an endpoint URL, with its port when it carries one: what an
 // allowlist entry is compared against.
 std::string url_host(const std::string & url);

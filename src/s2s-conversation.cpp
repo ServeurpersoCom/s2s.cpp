@@ -32,6 +32,7 @@
 #include "sentence-split.h"
 #include "timer.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <condition_variable>
@@ -59,6 +60,43 @@ bool host_allowed(const std::vector<std::string> & hosts, const std::string & ur
         }
     }
     return false;
+}
+
+#define VOICE_TOOL "set_voice"  // the name the model calls the built-in voice tool by
+
+llm_tool conn_voice_tool(const tts_bridge * tts, const std::string & voice) {
+    const std::string current = voice.empty() ? tts_bridge_defaults_request(tts).voice : voice;
+    const std::string about =
+        "Changes the voice you speak with, for the rest of the conversation: what you write after the call is "
+        "spoken with it. You speak with " +
+        current +
+        " now. An original accent voice continues a recording, with its accent and pace; a timbre only voice "
+        "keeps the timbre alone.";
+
+    yyjson_mut_doc * doc  = yyjson_mut_doc_new(nullptr);
+    yyjson_mut_val * root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "type", "function");
+    yyjson_mut_val * function = yyjson_mut_obj_add_obj(doc, root, "function");
+    yyjson_mut_obj_add_str(doc, function, "name", VOICE_TOOL);
+    yyjson_mut_obj_add_strn(doc, function, "description", about.c_str(), about.size());
+    yyjson_mut_val * parameters = yyjson_mut_obj_add_obj(doc, function, "parameters");
+    yyjson_mut_obj_add_str(doc, parameters, "type", "object");
+    yyjson_mut_val * properties = yyjson_mut_obj_add_obj(doc, parameters, "properties");
+    yyjson_mut_val * name       = yyjson_mut_obj_add_obj(doc, properties, "voice");
+    yyjson_mut_obj_add_str(doc, name, "type", "string");
+    yyjson_mut_val * labels = yyjson_mut_obj_add_arr(doc, name, "enum");
+    for (const std::string & label : tts_bridge_voices(tts)) {
+        yyjson_mut_arr_add_strn(doc, labels, label.c_str(), label.size());
+    }
+    yyjson_mut_val * required = yyjson_mut_obj_add_arr(doc, parameters, "required");
+    yyjson_mut_arr_add_str(doc, required, "voice");
+
+    char *   json = yyjson_mut_write(doc, 0, nullptr);
+    llm_tool tool = { VOICE_TOOL, json ? json : "{}" };
+    free(json);
+    yyjson_mut_doc_free(doc);
+    return tool;
 }
 
 // A committed turn, with the identity the session gave it.
@@ -414,6 +452,43 @@ static bool conn_speak(Connection * conn, const SentenceUnit & unit, const tts_r
     return spoke;
 }
 
+// What set_voice changes: the voice of the answer in flight, which its next
+// unit speaks with, and the one of the connection, which every later turn
+// takes.
+struct VoiceSwitch {
+    Connection *  conn = nullptr;
+    tts_request * tts  = nullptr;
+};
+
+// The session belongs to the client, so the client hears of the change: the
+// next session.update it sends carries the new voice instead of the old one.
+static bool conn_set_voice(const std::string & arguments, void * user, std::string & result) {
+    VoiceSwitch * self = (VoiceSwitch *) user;
+
+    std::string  voice;
+    yyjson_doc * doc = yyjson_read(arguments.c_str(), arguments.size(), 0);
+    if (doc) {
+        voice = rt_json_str(yyjson_doc_get_root(doc), "voice");
+        yyjson_doc_free(doc);
+    }
+    const std::vector<std::string> & voices = tts_bridge_voices(self->conn->setup->models.tts);
+    if (std::find(voices.begin(), voices.end(), voice) == voices.end()) {
+        s2s_set_error("[Agent] " VOICE_TOOL " knows no voice named \"%s\"", voice.c_str());
+        return false;
+    }
+
+    self->tts->voice = voice;
+    {
+        std::lock_guard<std::mutex> lock(self->conn->client_mutex);
+        self->conn->client.tts.voice = voice;
+    }
+    conn_send(self->conn, rt_event_voice(voice));
+    s2s_log(S2S_LOG_INFO, "[Agent] Voice set to %s", voice.c_str());
+
+    result = "Voice set to " + voice;
+    return true;
+}
+
 // The endpoint client of the connection, created on its first turn and
 // pointed at the settings of every turn after.
 static llm_client * conn_llm(Connection * conn, const llm_client_params & params) {
@@ -618,11 +693,18 @@ static void conn_answer(Connection * conn, const AnswerJob & job) {
                 }
             }
 
+            // The built-in tools act on this answer and this connection.
+            VoiceSwitch                          voice_switch = { conn, &client.tts };
+            const std::vector<llm_agent_builtin> builtins     = {
+                { conn_voice_tool(conn->setup->models.tts, client.tts.voice), conn_set_voice, &voice_switch }
+            };
+
             Timer      t_llm;
-            const bool streamed = client.mode == "agentic" ?
-                                      llm_agent_run(conn->agent, llm, client.llm, client.tools, client.max_rounds,
-                                                    messages, on_delta, &stream_tap, &conn->cancel, answer) :
-                                      llm_client_stream(llm, messages, on_delta, &stream_tap, &conn->cancel, answer);
+            const bool streamed =
+                client.mode == "agentic" ?
+                    llm_agent_run(conn->agent, builtins, llm, client.llm, client.tools, client.max_rounds, messages,
+                                  on_delta, &stream_tap, &conn->cancel, answer) :
+                    llm_client_stream(llm, messages, on_delta, &stream_tap, &conn->cancel, answer);
 
             // The tail is a unit like the others: a one sentence answer has
             // no other, and its time is the time to the first unit.

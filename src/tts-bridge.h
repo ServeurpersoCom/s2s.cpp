@@ -98,8 +98,9 @@ void         tts_bridge_free(tts_bridge * b);
 const std::vector<std::string> & tts_bridge_languages(const tts_bridge * b);
 
 // Every way to speak with the loaded voices, one label each, voices sorted
-// by name: freeman.{spk,rvq,txt} reference speech, then freeman.spk speaker
-// embedding only. The first label is the default.
+// by name: freeman (original accent) with its reference speech, then
+// freeman (timbre only) with its speaker embedding alone. The first label is
+// the default.
 const std::vector<std::string> & tts_bridge_voices(const tts_bridge * b);
 
 // The submodule defaults, so a caller can publish them instead of guessing.

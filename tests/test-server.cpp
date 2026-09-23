@@ -32,7 +32,8 @@
 // midstream reports a failure inside the stream, empty thinks and then ends
 // the generation without a word, agent calls the clock tool of the mock MCP
 // server and then speaks its result, or says the clock did not answer when
-// the call comes back as an error.
+// the call comes back as an error, and voice calls the built-in set_voice
+// before it speaks with the voice it picked.
 
 #include "audio-resample.h"
 #include "httplib.h"
@@ -68,6 +69,10 @@ static const char * MOCK_ANSWER =
     "Sure, here is a short answer. It has a few sentences, so the voice speaks for a while. "
     "Each sentence is a unit of its own. That is all for now.";
 
+// The voice the voice route asks set_voice for: the timbre only way of the
+// default voice, which speaks with its reference speech.
+#define MOCK_VOICE "freeman (timbre only)"
+
 static void print_usage(const char * prog) {
     fprintf(stderr, "s2s.cpp %s\n\n", S2S_VERSION);
     fprintf(stderr,
@@ -80,7 +85,8 @@ static void print_usage(const char * prog) {
             "  --echo <method>        both, server, client or off (default: off)\n"
             "  --room                 the playback reaches the microphone through a room\n"
             "  --llm <route>          runs the mock endpoint and names it: v1, broken, midstream, empty,\n"
-            "                         agent, which calls the clock tool once before it answers\n"
+            "                         agent, which calls the clock tool once before it answers,\n"
+            "                         voice, which calls set_voice once before it answers\n"
             "  --mcp                  names the mock MCP server, which runs the clock tool\n"
             "  --mcp-delay-ms <N>     mock delay before the clock answers (default: 0)\n"
             "  --tool-timeout <s>     the session timeout of one tool call\n"
@@ -447,6 +453,33 @@ int main(int argc, char ** argv) {
                 "data: [DONE]\n\n",
                 "text/event-stream");
         });
+        // The voice: a call of set_voice first, the words once its result is
+        // in the conversation.
+        mock.Post("/voice/chat/completions", [&](const httplib::Request & req, httplib::Response & res) {
+            std::string result;
+            if (mock_tool_result(req.body, result)) {
+                printf("[Mock] %7.2fs  request  with \"%s\"\n", timer.ms() / 1000.0, result.c_str());
+                fflush(stdout);
+                std::string frames;
+                for (const std::string & word : mock_words("This is my new voice. ")) {
+                    frames += mock_frame(word);
+                }
+                res.set_content(frames + "data: [DONE]\n\n", "text/event-stream");
+                return;
+            }
+            printf("[Mock] %7.2fs  request  %s\n", timer.ms() / 1000.0,
+                   req.body.find("\"set_voice\"") != std::string::npos ? "offered set_voice, calling it" :
+                                                                         "without set_voice");
+            fflush(stdout);
+            res.set_content(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\","
+                "\"type\":\"function\",\"function\":{\"name\":\"set_voice\","
+                "\"arguments\":\"{\\\"voice\\\":\\\"" MOCK_VOICE
+                "\\\"}\"}}]}}]}\n\n"
+                "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
+                "data: [DONE]\n\n",
+                "text/event-stream");
+        });
         mock_mcp(mock, timer, mcp_delay_ms);
         mock.Post("/empty/chat/completions", [](const httplib::Request &, httplib::Response & res) {
             res.set_content(
@@ -523,6 +556,10 @@ int main(int argc, char ** argv) {
                        rt_json_str(root, "transcript").c_str());
             } else if (type == "response.output_audio_transcript.delta") {
                 printf("[Event] %7.2fs  %-46s \"%s\"\n", now, type.c_str(), rt_json_str(root, "delta").c_str());
+            } else if (type == "session.updated") {
+                yyjson_val * session = yyjson_obj_get(root, "session");
+                yyjson_val * tts     = session ? yyjson_obj_get(session, "tts") : nullptr;
+                printf("[Event] %7.2fs  %-46s %s\n", now, type.c_str(), tts ? rt_json_str(tts, "voice").c_str() : "");
             } else if (type == "error") {
                 yyjson_val * error = yyjson_obj_get(root, "error");
                 printf("[Event] %7.2fs  %-46s %s\n", now, type.c_str(),
@@ -574,6 +611,10 @@ int main(int argc, char ** argv) {
         yyjson_mut_obj_add_str(update.doc, server, "key", "mock-key");
         yyjson_mut_val * tools = yyjson_mut_obj_add_arr(update.doc, session, "tools");
         yyjson_mut_arr_add_str(update.doc, tools, "clock");
+    }
+    if (route == "voice") {
+        yyjson_mut_val * tools = yyjson_mut_obj_add_arr(update.doc, session, "tools");
+        yyjson_mut_arr_add_str(update.doc, tools, "set_voice");
     }
     if (other) {
         yyjson_mut_obj_add_str(update.doc, session, "llm_url", "http://127.0.0.1:9/v1");

@@ -68,6 +68,8 @@ FAST = ["--mode", "conversation", "--llm", "v1"]
 
 BOOT_TIMEOUT_S = 120
 
+VOICE = "freeman (timbre only)"  # the voice the mock asks set_voice for
+
 LINE = re.compile(r"\[(Event|Client|Mock)\]\s+([\d.]+)s\s+(\S+)(.*)")
 
 
@@ -235,6 +237,22 @@ def check_mcp_timeout(label, run):
     return check("%s log" % label, logged is not None, "the log says the call failed") and ok
 
 
+# The built-in set_voice: the model changes its voice, the client hears of it
+# in a session.updated, the model reads the result, and the rest of the
+# answer is spoken. The passage pauses mid sentence, so a revision may answer
+# again and call again, with the same voice.
+def check_voice(label, run):
+    updated = [rest for _, rest in run.at("Event", "session.updated") if rest]
+    ok = check("%s updated" % label, updated and all(voice == VOICE for voice in updated),
+               "%d session.updated with %s" % (len(updated), VOICE))
+    result = [rest for _, rest in run.at("Mock", "request") if rest.startswith("with")]
+    ok = check("%s result" % label, result and all(line == 'with "Voice set to %s"' % VOICE for line in result),
+               "the model reads the result of %d calls" % len(result)) and ok
+    spoken = " ".join(rest for _, rest in run.at("Event", "response.output_audio_transcript.delta")).lower()
+    ok = check("%s spoken" % label, "new voice" in spoken, "the answer is spoken after the call") and ok
+    return check("%s error" % label, not run.errors(), "no error") and ok
+
+
 def check_broken(label, run):
     errors = run.errors()
     return check("%s error" % label, bool(errors) and all("model not loaded" in e for e in errors),
@@ -263,6 +281,7 @@ CASES = [
     ("mcp tool", ["--mode", "agentic", "--llm", "agent", "--mcp", "say:" + A, "pause:3"], check_mcp),
     ("mcp tool timeout", ["--mode", "agentic", "--llm", "agent", "--mcp", "--mcp-delay-ms", "3000",
                           "--tool-timeout", "1", "say:" + A, "pause:4"], check_mcp_timeout),
+    ("set voice", ["--mode", "agentic", "--llm", "voice", "say:" + A, "pause:3"], check_voice),
     ("unreachable endpoint", ["--mode", "conversation", "--llm-url", UNREACHABLE, "--llm-timeout", "3", "say:" + A,
                               "pause:1.5", "say:" + B, "pause:3"], check_unreachable),
     ("room", ["--mode", "loopback", "--echo", "server", "--room", "say:" + A, "heard:1000", "say:" + C, "pause:3"],

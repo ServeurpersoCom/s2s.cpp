@@ -553,7 +553,7 @@
 		<div class="details-body">
 			<div
 				class="model-row"
-				title="The voice every sentence is cloned from, read from voices/ at startup. reference speech continues a recording: timbre, pace and accent. speaker embedding only keeps the timbre, and starts faster."
+				title="The voice every sentence is cloned from, read from voices/ at startup. original accent continues a recording: timbre, pace and accent. timbre only keeps the timbre, and starts faster. In the agentic mode the model may change it with the set_voice tool."
 			>
 				<span class="model-label">Voice</span>
 				<select class="model-select" value={sessionVoice() || d?.voice || ''} onchange={onVoice}>

@@ -481,9 +481,9 @@ int main(int argc, char ** argv) {
         res.set_content(json_write(body, 0), "application/json");
     });
 
-    // Tool list proxy: the same path as the model list, for the tools of the
-    // MCP servers the page names and of the endpoint when it is a llama.cpp
-    // server. It fails only when no server lists any.
+    // Tool list proxy: the same path as the model list, for the built-in tools,
+    // the tools of the MCP servers the page names and of the endpoint when it
+    // is a llama.cpp server. It fails only when nothing lists any.
     server.Post("/v1/tools", [&](const httplib::Request & req, httplib::Response & res) {
         if (!origin_allowed(origins, req)) {
             res.status = 403;
@@ -534,10 +534,12 @@ int main(int argc, char ** argv) {
 
         s2s_log(S2S_LOG_INFO, "[HTTP] Tool list");
 
-        // A list is one visit: the MCP sessions it opens end with it.
-        llm_agent *                  agent = llm_agent_new(servers);
-        std::vector<llm_agent_group> groups;
-        const bool                   listed = llm_agent_tools(agent, params, nullptr, groups);
+        // A list is one visit: the MCP sessions it opens end with it. The
+        // built-in tools are only shown, with the default voice.
+        llm_agent *                          agent    = llm_agent_new(servers);
+        const std::vector<llm_agent_builtin> builtins = { { conn_voice_tool(setup.models.tts, "") } };
+        std::vector<llm_agent_group>         groups;
+        const bool                           listed = llm_agent_tools(agent, builtins, params, nullptr, groups);
         llm_agent_free(agent);
         if (!listed) {
             s2s_log(S2S_LOG_WARN, "[Agent] Tool list failed: %s", llm_client_last_error());
@@ -549,7 +551,7 @@ int main(int argc, char ** argv) {
 
         // One entry per server: the URL the page named as its title, or the
         // name the server gave itself when the URL is the server's own to
-        // keep, like the endpoint, and the tools under it.
+        // keep, like the endpoint, or built-in, and the tools under it.
         yyjson_mut_doc * body = yyjson_mut_doc_new(nullptr);
         yyjson_mut_val * root = yyjson_mut_obj(body);
         yyjson_mut_doc_set_root(body, root);

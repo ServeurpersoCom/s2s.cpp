@@ -15,11 +15,12 @@
 #include <algorithm>
 #include <cctype>
 
-// One tool the session may check, and the server that runs it: an MCP
-// client, or the endpoint when there is none.
+// One tool the session may check, and what runs it: the process, an MCP
+// client, or the endpoint when there is neither.
 struct LlmAgentTool {
-    llm_tool     tool;
-    mcp_client * mcp = nullptr;
+    llm_tool                  tool;
+    mcp_client *              mcp     = nullptr;
+    const llm_agent_builtin * builtin = nullptr;
 };
 
 struct llm_agent {
@@ -50,20 +51,24 @@ void llm_agent_free(llm_agent * agent) {
 
 // Every tool the session may check, each with its server. A name that comes
 // up twice keeps its first server.
-static bool llm_agent_gather(llm_agent *                 agent,
-                             const llm_client_params &   params,
-                             const std::atomic<bool> *   cancel,
-                             std::vector<LlmAgentTool> & tools) {
+static bool llm_agent_gather(llm_agent *                            agent,
+                             const std::vector<llm_agent_builtin> & builtins,
+                             const llm_client_params &              params,
+                             const std::atomic<bool> *              cancel,
+                             std::vector<LlmAgentTool> &            tools) {
     tools.clear();
-    const auto add = [&tools](const llm_tool & tool, mcp_client * mcp) {
+    const auto add = [&tools](const llm_tool & tool, mcp_client * mcp, const llm_agent_builtin * builtin) {
         for (const LlmAgentTool & known : tools) {
             if (known.tool.name == tool.name) {
                 s2s_log(S2S_LOG_WARN, "[Agent] Tool %s is offered twice, the first server keeps it", tool.name.c_str());
                 return;
             }
         }
-        tools.push_back({ tool, mcp });
+        tools.push_back({ tool, mcp, builtin });
     };
+    for (const llm_agent_builtin & builtin : builtins) {
+        add(builtin.tool, nullptr, &builtin);
+    }
     for (mcp_client * client : agent->clients) {
         std::vector<llm_tool> listed;
         if (!client || !mcp_client_tools(client, cancel, listed)) {
@@ -74,15 +79,15 @@ static bool llm_agent_gather(llm_agent *                 agent,
             continue;
         }
         for (const llm_tool & tool : listed) {
-            add(tool, client);
+            add(tool, client, nullptr);
         }
     }
     std::vector<llm_tool> own;
     if (llm_client_tools(params, own)) {
         for (const llm_tool & tool : own) {
-            add(tool, nullptr);
+            add(tool, nullptr, nullptr);
         }
-    } else if (agent->clients.empty()) {
+    } else if (agent->clients.empty() && builtins.empty()) {
         return false;
     } else {
         s2s_log(S2S_LOG_INFO, "[Agent] The endpoint runs no tools of its own: %s", llm_client_last_error());
@@ -115,10 +120,14 @@ static bool llm_agent_call(const std::vector<LlmAgentTool> & tools,
                            const std::atomic<bool> *         cancel,
                            std::string &                     result) {
     for (const LlmAgentTool & entry : tools) {
-        if (entry.tool.name == name) {
-            return entry.mcp ? mcp_client_call(entry.mcp, name, arguments, cancel, result) :
-                               llm_client_tool_call(c, name, arguments, cancel, result);
+        if (entry.tool.name != name) {
+            continue;
         }
+        if (entry.builtin) {
+            return entry.builtin->fn(arguments, entry.builtin->user, result);
+        }
+        return entry.mcp ? mcp_client_call(entry.mcp, name, arguments, cancel, result) :
+                           llm_client_tool_call(c, name, arguments, cancel, result);
     }
     s2s_set_error("[Agent] The model called %s, a tool nobody offered", name.c_str());
     return false;
@@ -187,40 +196,45 @@ static bool llm_agent_tap(const char * delta, void * user) {
     return tap->cb(delta, tap->user);
 }
 
-bool llm_agent_tools(llm_agent *                    agent,
-                     const llm_client_params &      params,
-                     const std::atomic<bool> *      cancel,
-                     std::vector<llm_agent_group> & groups) {
+bool llm_agent_tools(llm_agent *                            agent,
+                     const std::vector<llm_agent_builtin> & builtins,
+                     const llm_client_params &              params,
+                     const std::atomic<bool> *              cancel,
+                     std::vector<llm_agent_group> &         groups) {
     std::vector<LlmAgentTool> tools;
-    if (!llm_agent_gather(agent, params, cancel, tools)) {
+    if (!llm_agent_gather(agent, builtins, params, cancel, tools)) {
         return false;
     }
 
     // The servers in the order gather listed them, one group each: the tools
-    // of a server come in a row, the endpoint's last.
+    // of a server come in a row, the built-in ones first, the endpoint's last.
     groups.clear();
     for (const LlmAgentTool & entry : tools) {
-        const std::string url = entry.mcp ? mcp_client_url(entry.mcp) : "";
-        if (groups.empty() || groups.back().url != url) {
-            groups.push_back({ url, entry.mcp ? mcp_client_server_name(entry.mcp) : "llama.cpp", {} });
+        const std::string url  = entry.mcp ? mcp_client_url(entry.mcp) : "";
+        const std::string name = entry.builtin ? LLM_AGENT_BUILTIN :
+                                 entry.mcp     ? mcp_client_server_name(entry.mcp) :
+                                                 "llama.cpp";
+        if (groups.empty() || groups.back().url != url || groups.back().name != name) {
+            groups.push_back({ url, name, {} });
         }
         groups.back().tools.push_back(entry.tool.name);
     }
     return true;
 }
 
-bool llm_agent_run(llm_agent *                      agent,
-                   llm_client *                     c,
-                   const llm_client_params &        params,
-                   const std::vector<std::string> & enabled,
-                   int                              max_rounds,
-                   std::vector<llm_message> &       messages,
-                   llm_delta_cb                     cb,
-                   void *                           user,
-                   const std::atomic<bool> *        cancel,
-                   std::string &                    text) {
+bool llm_agent_run(llm_agent *                            agent,
+                   const std::vector<llm_agent_builtin> & builtins,
+                   llm_client *                           c,
+                   const llm_client_params &              params,
+                   const std::vector<std::string> &       enabled,
+                   int                                    max_rounds,
+                   std::vector<llm_message> &             messages,
+                   llm_delta_cb                           cb,
+                   void *                                 user,
+                   const std::atomic<bool> *              cancel,
+                   std::string &                          text) {
     std::vector<LlmAgentTool> available;
-    if (!llm_agent_gather(agent, params, cancel, available)) {
+    if (!llm_agent_gather(agent, builtins, params, cancel, available)) {
         return false;
     }
 

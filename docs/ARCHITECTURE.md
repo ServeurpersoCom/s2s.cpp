@@ -182,16 +182,23 @@ calls, or both, and every call is run by the server that offered the
 tool. The results come back as `tool` messages, one per call, and the
 next round starts.
 
-The tools come from two kinds of server. The MCP servers the session
-names, any number, reached by JSON-RPC over Streamable HTTP the way the
-official SDK does it: `initialize` and `notifications/initialized`
-open a session, `tools/list` gives the tools page by page, `tools/call`
-runs one, the session id and the protocol version travel in the headers
-of every request, and `DELETE` ends the session when the connection
-closes. And the endpoint itself when it is a llama.cpp server, through
-its own routes: `GET /tools` lists them, `POST /tools` runs one. The
-MCP servers come first, the endpoint after them, a name listed once.
-With an MCP server the endpoint can be any OpenAI compatible server.
+The tools come from three places. The server itself runs the built-in
+ones, listed first under `built-in`: `set_voice` takes one of the labels
+of `tts_voices` and its description names the voice in use. The rest of
+the answer in flight speaks with the new voice, every later turn of the
+connection too, and the server tells the client with a `session.updated`
+carrying `session.tts.voice`, since the session is the client's: its
+next `session.update` carries the new voice instead of the old one. The
+MCP servers the session names, any number, reached by JSON-RPC over
+Streamable HTTP the way the official SDK does it: `initialize` and
+`notifications/initialized` open a session, `tools/list` gives the tools
+page by page, `tools/call` runs one, the session id and the protocol
+version travel in the headers of every request, and `DELETE` ends the
+session when the connection closes. And the endpoint itself when it is a
+llama.cpp server, through its own routes: `GET /tools` lists them,
+`POST /tools` runs one. The built-in tools come first, the MCP servers after
+them, the endpoint last, a name listed once. With an MCP server or a
+built-in tool the endpoint can be any OpenAI compatible server.
 
 The loop lives in the client because the servers run the tools but
 drive nothing: the chat endpoint keeps no state between rounds, so the
@@ -266,9 +273,9 @@ browser by preference, named as the talker names them: under `auto` the
 first one the talker speaks gives the id, so the lone words of a French
 visitor are French, and the talker keeps its English default only when
 it speaks none of them. `/props` lists in `tts_voices` every way to speak with the voices, a voice with
-reference speech twice, `freeman.{spk,rvq,txt} reference speech` then
-`freeman.spk speaker embedding only`; the first label is the default, and
-a session picks one with `tts.voice`. The files come from `qwen-codec
+reference speech twice, `freeman (original accent)` then
+`freeman (timbre only)`; the first label is the default, and a session
+picks one with `tts.voice`. The files come from `qwen-codec
 --talker` of the qwentts.cpp submodule, and the embedding has the hidden
 size of the talker that extracted it: a voice made with the 1.7B talker
 only speaks through the 1.7B talker.
@@ -318,7 +325,8 @@ when the echo cancellation runs on the server and something played.
 Client to server: `session.update`, `input_audio_buffer.append`,
 `input_audio_buffer.commit`, `response.cancel`, `conversation.history`.
 
-Server to client: `session.created`, `session.updated`,
+Server to client: `session.created`, `session.updated`, which carries
+`session.tts.voice` when the model changed its voice with `set_voice`,
 `input_audio_buffer.speech_started`, `input_audio_buffer.speech_stopped`,
 `conversation.item.input_audio_transcription.completed`,
 `response.created`, `response.output_text.delta`,
@@ -355,13 +363,13 @@ owns the endpoint: a session that names any is refused. The hosts of
 MCP servers pass the same allowlist as the endpoint's.
 
 HTTP routes: `/` the page, `/s2s.js` the component, `/props` the session
-defaults and the loaded models, `/health`, `/logs` the server log as SSE,
-read only, `POST /v1/models` which lists the models of the endpoint a
-client names, and `POST /v1/tools` which lists the tools of the MCP
-servers and the endpoint it names. Both are proxies: the browser only
-ever talks to s2s-server, so an endpoint on a loopback address or
-without CORS headers still fills the page, and the API key stays on
-this machine.
+defaults and the loaded models, `/health`, `/logs` the server log as
+SSE, read only, `POST /v1/models` which lists the models of the endpoint
+a client names, and `POST /v1/tools` which lists the built-in tools and
+the tools of the MCP servers and the endpoint it names. Both are
+proxies: the browser only ever talks to s2s-server, so an endpoint on a
+loopback address or without CORS headers still fills the page, and the
+API key stays on this machine.
 
 ## Security
 
@@ -459,6 +467,7 @@ one of three brackets:
 | unreachable endpoint | a connection nothing answers, which no cancel reaches: the revisions are recognized as fast as ever, the answer fails within the timeout |
 | mcp tool | the agentic mode over MCP: the model calls the tool of a mock MCP server behind its key and its session id, and its result is spoken |
 | mcp tool timeout | the same tool slower than the timeout of the call: the model reads that it did not answer and speaks, the turn does not fail |
+| set voice | the model calls the built-in set_voice: the client gets the voice in a session.updated, the model reads the result, and the rest of the answer is spoken |
 | room | the echo canceller keeps the assistant out of what is heard, the playback flushed |
 | room both | the same with the default method: the server canceller runs and the reference travels |
 | owned endpoint | nothing of the endpoint published or logged, another endpoint refused |
