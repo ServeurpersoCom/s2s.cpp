@@ -19,7 +19,7 @@ import onnxruntime as ort
 BIN = "../build/test-silero"
 GGUF = "../models/silero-vad-F32.gguf"
 ONNX = "../checkpoints/silero-vad/onnx/model.onnx"
-WAV = "../examples/freeman.wav"
+WAV = "../qwentts.cpp/examples/freeman.wav"
 TMP = "tmp"
 
 WINDOW = 512

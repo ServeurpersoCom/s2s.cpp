@@ -19,7 +19,7 @@ import onnxruntime as ort
 BIN = "../build/test-smart-turn"
 GGUF = "../models/smart-turn-v3.2-F32.gguf"
 ONNX = "../checkpoints/smart-turn/smart-turn-v3.2-gpu.onnx"
-WAV = "../examples/freeman.wav"
+WAV = "../qwentts.cpp/examples/freeman.wav"
 TMP = "tmp"
 
 RATE = 16000

@@ -18,7 +18,7 @@
 # that runs past its timeout, a room whose echo the server cancels, and a
 # server that owns its endpoint.
 #
-# The passages of examples/freeman.wav, cut on their speech:
+# The passages of qwentts.cpp/examples/freeman.wav, cut on their speech:
 #     A  0.0 to 5.9 s    "If you go into different cultures, ... concepts of creation."
 #     B  6.0 to 11.5 s   "They have their own creation story ... afterlife is."
 #     C  11.9 to 16.0 s  "Um where you go, what you do, who you're gonna be with, you know."
@@ -46,7 +46,7 @@ SERVER = "../build/s2s-server"
 CLIENT = "../build/test-server"
 MODELS = "../models"
 VOICES = "../voices"
-WAV = "../examples/freeman.wav"
+WAV = "../qwentts.cpp/examples/freeman.wav"
 PORT = 18088
 OWNED_PORT = 18087
 OWNED_URL = "http://127.0.0.1:18086/v1"

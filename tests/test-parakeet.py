@@ -36,7 +36,7 @@ def _arg(name, default):
 
 GGUF = _arg("--model", "../models/parakeet-tdt-0.6b-v3-F32.gguf")
 CKPT = "../checkpoints/parakeet"
-WAV = "../examples/freeman.wav"
+WAV = "../qwentts.cpp/examples/freeman.wav"
 TMP = "tmp"
 
 RATE = 16000

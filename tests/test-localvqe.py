@@ -31,7 +31,7 @@ from localvqe.model import LocalVQE  # noqa: E402
 BIN = "../build/test-localvqe"
 GGUF = "../models/localvqe-v1.3-F32.gguf"
 CKPT = "../checkpoints/localvqe/localvqe-v1.3-4.8M.pt"
-WAV = "../examples/freeman.wav"
+WAV = "../qwentts.cpp/examples/freeman.wav"
 TMP = "tmp"
 
 RATE = 16000
