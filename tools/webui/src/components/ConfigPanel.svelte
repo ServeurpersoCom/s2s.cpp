@@ -50,8 +50,9 @@
 	}
 
 	const ECHO_LABELS: Record<S2SEcho, string> = {
+		auto: 'Auto, per browser',
 		server: 'Server, every browser',
-		native: 'Native, Chrome only',
+		native: 'Native, Chrome and Safari',
 		off: 'Off, use headphones'
 	};
 
