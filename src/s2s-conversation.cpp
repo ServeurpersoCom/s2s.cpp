@@ -94,10 +94,11 @@ struct Connection {
     s2s_session *      session = nullptr;
     s2s_session_params params;
 
-    // Only server runs a canceller here: native and off leave the microphone
-    // as the client captured it. The default method is the component's, which
-    // picks its microphone constraints before the server is even reached.
-    std::string echo = "native";
+    // server and both run a canceller here: client and off leave the
+    // microphone as the client captured it. The default method is the
+    // component's, which picks its microphone constraints before the server
+    // is even reached.
+    std::string echo = "client";
 
     // Written by the reader, copied whole by the responder when it answers a
     // turn: a change lands on the next answer, never under a running one.
@@ -838,7 +839,7 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
             s2s_log(S2S_LOG_INFO, "[AEC] Canceller off");
         }
         lv_state_free(conn->aec);
-        conn->aec = conn->echo == "server" ? lv_state_new(conn->setup->models.aec) : nullptr;
+        conn->aec = conn->echo == "server" || conn->echo == "both" ? lv_state_new(conn->setup->models.aec) : nullptr;
         if (conn->aec) {
             s2s_log(S2S_LOG_INFO, "[AEC] Canceller on, fresh echo path");
         }

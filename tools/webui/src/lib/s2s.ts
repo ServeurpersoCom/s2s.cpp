@@ -32,24 +32,24 @@
 const SAMPLE_RATE = 24000;
 const FRAME_SAMPLES = 480; // 20 ms
 
-// Who removes the assistant voice from the microphone. auto takes native
-// where the browser cancels its own playback and server everywhere else,
-// native asks the browser to cancel everything the system plays, this page
-// included, server hands the raw microphone and the played reference to
-// s2s-server, off cancels nothing and leaves the echo to headphones, the
-// browser still suppressing noise and levelling the gain.
-export const ECHO_MODES = ['auto', 'server', 'native', 'off'] as const;
-export const ECHO_DEFAULT: S2SEcho = 'auto';
+// Who removes the assistant voice from the microphone. both asks the
+// browser for its canceller and runs the server one behind it, server hands
+// the raw microphone and the played reference to s2s-server, client asks the
+// browser to cancel everything the system plays, this page included, off
+// cancels nothing and leaves the echo to headphones, the browser still
+// suppressing noise and levelling the gain.
+//
+// both is the default: no page can tell whether the browser cancels its own
+// playback, and taking the browser canceller away turns an iPhone into a
+// call on the earpiece.
+export const ECHO_MODES = ['both', 'server', 'client', 'off'] as const;
+export const ECHO_DEFAULT: S2SEcho = 'both';
 export type S2SEcho = (typeof ECHO_MODES)[number];
-
-// What really runs, auto resolved: the only method the server ever sees.
-type S2SEchoMethod = Exclude<S2SEcho, 'auto'>;
 
 // Plain true only covers WebRTC remote tracks, which this component never
 // plays through. lib.dom still types the constraint as a boolean, hence the
 // cast.
-const ECHO_ALL = 'all';
-const ECHO_CANCELLATION_ALL = ECHO_ALL as unknown as ConstrainBoolean;
+const ECHO_CANCELLATION_ALL = 'all' as unknown as ConstrainBoolean;
 
 export type S2SState = 'idle' | 'listening' | 'thinking' | 'speaking';
 
@@ -284,30 +284,20 @@ function realtimeUrl(url?: string): string {
 
 // Echo cancellation matters more than anything else here: on laptop speakers
 // the assistant would otherwise hear itself and barge in on its own voice.
-// The server canceller wants the raw microphone, since a browser processing in
-// front of it would bend the echo path it models.
-function micConstraints(echo: S2SEchoMethod): MediaTrackConstraints {
-	const raw = echo === 'server';
+// The server canceller wants a steady microphone, so wherever it runs the
+// browser neither suppresses noise nor levels the gain in front of it.
+function micConstraints(echo: S2SEcho): MediaTrackConstraints {
+	const steady = serverCancels(echo);
 	return {
-		echoCancellation: echo === 'native' ? ECHO_CANCELLATION_ALL : false,
-		noiseSuppression: !raw,
-		autoGainControl: !raw,
+		echoCancellation: echo === 'client' || echo === 'both' ? ECHO_CANCELLATION_ALL : false,
+		noiseSuppression: !steady,
+		autoGainControl: !steady,
 		channelCount: 1
 	};
 }
 
-// auto resolves once the microphone is granted. A browser that lists "all"
-// among the track capabilities cancels its own playback. WebKit does too
-// without saying so: its voice processing takes the whole system output as
-// reference, and on iOS a raw microphone turns the audio session into a
-// call on the earpiece. navigator.audioSession exists only there.
-function isWebKit(): boolean {
-	return 'audioSession' in navigator;
-}
-
-function cancelsAll(track: MediaStreamTrack): boolean {
-	const modes = track.getCapabilities?.().echoCancellation as (boolean | string)[] | undefined;
-	return modes?.includes(ECHO_ALL) ?? false;
+function serverCancels(echo: S2SEcho): boolean {
+	return echo === 'server' || echo === 'both';
 }
 
 function workletUrl(source: string): string {
@@ -351,7 +341,6 @@ export class S2S {
 	private stream: MediaStream | null = null;
 	private duplex: AudioWorkletNode | null = null;
 	private volume = 1;
-	private native = false; // where auto resolves, known from open()
 
 	private state: S2SState = 'idle';
 
@@ -435,10 +424,6 @@ export class S2S {
 
 		this.log(`Audio context at ${context.sampleRate} Hz`);
 
-		// WebKit is known before the microphone opens, the capabilities of a
-		// track only once it is granted: auto opens raw anywhere else, then
-		// switches to native when the track can cancel everything.
-		this.native = isWebKit();
 		const stream = await navigator.mediaDevices.getUserMedia({
 			audio: micConstraints(this.echo())
 		});
@@ -447,15 +432,6 @@ export class S2S {
 			return;
 		}
 		this.stream = stream;
-		const track = stream.getAudioTracks()[0];
-		const echo = this.echo();
-		this.native ||= cancelsAll(track);
-		if (this.echo() !== echo) {
-			await track.applyConstraints(micConstraints(this.echo()));
-			if (run !== this.run) {
-				return;
-			}
-		}
 		this.log(`Microphone granted, ${this.micApplied()}`);
 
 		this.duplex = new AudioWorkletNode(context, 's2s-duplex', {
@@ -592,7 +568,7 @@ export class S2S {
 	// browser applies, which is not always what was asked.
 	private micApplied(): string {
 		const settings = this.stream?.getAudioTracks()[0]?.getSettings();
-		return `server echo cancellation ${this.echo() === 'server'}, browser echo cancellation ${settings?.echoCancellation}, noise suppression ${settings?.noiseSuppression}, gain control ${settings?.autoGainControl}`;
+		return `server echo cancellation ${serverCancels(this.echo())}, browser echo cancellation ${settings?.echoCancellation}, noise suppression ${settings?.noiseSuppression}, gain control ${settings?.autoGainControl}`;
 	}
 
 	private setState(state: S2SState) {
@@ -611,7 +587,7 @@ export class S2S {
 	// The reference only travels to a server canceller, and only when the
 	// frame played something: silence is what its absence means.
 	private sendAudio(mic: Float32Array, ref: Float32Array) {
-		const reference = this.echo() === 'server' && ref.some((sample) => sample !== 0);
+		const reference = serverCancels(this.echo()) && ref.some((sample) => sample !== 0);
 		this.send({
 			type: 'input_audio_buffer.append',
 			audio: toBase64(mic),
@@ -619,12 +595,8 @@ export class S2S {
 		});
 	}
 
-	private echo(): S2SEchoMethod {
-		const echo = this.options.echo ?? ECHO_DEFAULT;
-		if (echo !== 'auto') {
-			return echo;
-		}
-		return this.native ? 'native' : 'server';
+	private echo(): S2SEcho {
+		return this.options.echo ?? ECHO_DEFAULT;
 	}
 
 	private sendSessionUpdate() {

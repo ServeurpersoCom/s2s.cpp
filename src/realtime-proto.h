@@ -69,7 +69,7 @@ struct rt_message {
 // refused, read as absent and named in invalid.
 struct rt_session_patch {
     std::string mode;  // conversation, loopback or agentic
-    std::string echo;  // native, server or off
+    std::string echo;  // both, server, client or off
     std::string llm_url;
     std::string llm_model;
     std::string llm_key;

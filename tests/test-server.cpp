@@ -77,7 +77,7 @@ static void print_usage(const char * prog) {
             "\n"
             "Options:\n"
             "  --mode <mode>          loopback or conversation (default: loopback)\n"
-            "  --echo <method>        server, native or off (default: off)\n"
+            "  --echo <method>        both, server, client or off (default: off)\n"
             "  --room                 the playback reaches the microphone through a room\n"
             "  --llm <route>          runs the mock endpoint and names it: v1, broken, midstream, empty,\n"
             "                         agent, which calls the clock tool once before it answers\n"
@@ -672,7 +672,7 @@ int main(int argc, char ** argv) {
         if (!mute) {
             const std::string audio = rt_float_to_pcm16_base64(mic.data(), frame);
             const std::string reference =
-                any && echo == "server" ? rt_float_to_pcm16_base64(playback.data(), frame) : "";
+                any && (echo == "server" || echo == "both") ? rt_float_to_pcm16_base64(playback.data(), frame) : "";
             rt_frame append = rt_frame_begin("input_audio_buffer.append");
             rt_frame_str(append, "audio", audio);
             if (!reference.empty()) {

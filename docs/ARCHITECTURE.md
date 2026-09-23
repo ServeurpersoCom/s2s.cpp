@@ -275,15 +275,17 @@ only speaks through the 1.7B talker.
 
 ## Echo cancellation
 
-The client picks it with `echo`, `auto` by default.
+The client picks it with `echo`, `both` by default.
 
-`auto` resolves in the client once the microphone is granted: `native`
-where the browser cancels its own playback, `server` everywhere else.
-Chrome says so by listing `"all"` in the track capabilities; WebKit,
-recognized by `navigator.audioSession`, runs a voice processing that
-cancels the whole system output, and on iOS a raw microphone turns the
-audio session into a call on the earpiece. The server only sees the
-resolved method.
+No page can reliably tell whether the browser cancels its own playback:
+most browsers take `echoCancellation` without cancelling what the page
+plays itself, and the ones that do may not say so. Taking the browser
+canceller away is not safe either, since on iOS a raw microphone turns the
+audio session into a call on the earpiece. `both` covers every case: it
+asks the browser for its canceller, which keeps the iPhone on the
+loudspeaker, and runs LocalVQE behind it, which removes whatever echo the
+browser leaves. Wherever LocalVQE runs, the browser neither suppresses
+noise nor levels the gain in front of it.
 
 `server` works on every browser. The client plays and captures through one
 duplex AudioWorklet, so each 20 ms microphone frame leaves with the samples
@@ -298,8 +300,9 @@ in the same pass. It costs 16 to 32 ms of latency before the VAD, and each
 connection carries 2.3 MB of layer history. A log line closes every run of
 playback with the level of the microphone above the cleaned signal.
 
-`native` asks the browser for `echoCancellation: "all"`: Chrome honors it,
-WebKit takes it as `true` and runs its voice processing. `off` cancels no
+`client` asks the browser for `echoCancellation: "all"` alone: WebKit
+takes it as `true` and runs its voice processing, Chrome honors it only
+where the platform provides a system wide canceller. `off` cancels no
 echo, headphones do: the browser still suppresses noise and levels the
 gain.
 
@@ -457,6 +460,7 @@ one of three brackets:
 | mcp tool | the agentic mode over MCP: the model calls the tool of a mock MCP server behind its key and its session id, and its result is spoken |
 | mcp tool timeout | the same tool slower than the timeout of the call: the model reads that it did not answer and speaks, the turn does not fail |
 | room | the echo canceller keeps the assistant out of what is heard, the playback flushed |
+| room both | the same with the default method: the server canceller runs and the reference travels |
 | owned endpoint | nothing of the endpoint published or logged, another endpoint refused |
 
 Every case also checks that each response closes exactly once and that

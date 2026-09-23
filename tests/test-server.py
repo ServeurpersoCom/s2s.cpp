@@ -267,6 +267,8 @@ CASES = [
                               "pause:1.5", "say:" + B, "pause:3"], check_unreachable),
     ("room", ["--mode", "loopback", "--echo", "server", "--room", "say:" + A, "heard:1000", "say:" + C, "pause:3"],
      check_room),
+    ("room both", ["--mode", "loopback", "--echo", "both", "--room", "say:" + A, "heard:1000", "say:" + C, "pause:3"],
+     check_room),
 ]
 
 

@@ -1,48 +1,48 @@
-[Check] grace 0.2 terminals: 5 responses, each closed exactly once OK
-[Check] grace 0.2 items: 5 transcripts of 1 turns, revisions in a row OK
-[Check] grace 0.2 one turn: 5 transcripts, turns ['turn_1'] OK
+[Check] grace 0.2 terminals: 4 responses, each closed exactly once OK
+[Check] grace 0.2 items: 4 transcripts of 1 turns, revisions in a row OK
+[Check] grace 0.2 one turn: 4 transcripts, turns ['turn_1'] OK
 [Check] grace 0.2 one message: last request: 1 user messages, last "If you go into different cultures, they have different concepts of creation. They have their own creation story and uh of what an afterlife is." OK
 [Check] grace 0.2 aborted: the request of A aborted OK
-[Check] grace 0.2 silent: first audio 4.44s after B ended OK
-[Check] grace 0.4 terminals: 4 responses, each closed exactly once OK
-[Check] grace 0.4 items: 4 transcripts of 1 turns, revisions in a row OK
-[Check] grace 0.4 one turn: 4 transcripts, turns ['turn_1'] OK
+[Check] grace 0.2 silent: first audio 4.70s after B ended OK
+[Check] grace 0.4 terminals: 3 responses, each closed exactly once OK
+[Check] grace 0.4 items: 3 transcripts of 1 turns, revisions in a row OK
+[Check] grace 0.4 one turn: 3 transcripts, turns ['turn_1'] OK
 [Check] grace 0.4 one message: last request: 1 user messages, last "If you go into different cultures, they have different concepts of creation. They have their own creation story and uh of what an afterlife is." OK
 [Check] grace 0.4 aborted: the request of A aborted OK
-[Check] grace 0.4 silent: first audio 4.44s after B ended OK
-[Check] before answer 1.0 terminals: 4 responses, each closed exactly once OK
-[Check] before answer 1.0 items: 4 transcripts of 1 turns, revisions in a row OK
-[Check] before answer 1.0 one turn: 4 transcripts, turns ['turn_1'] OK
+[Check] grace 0.4 silent: first audio 4.56s after B ended OK
+[Check] before answer 1.0 terminals: 2 responses, each closed exactly once OK
+[Check] before answer 1.0 items: 2 transcripts of 1 turns, revisions in a row OK
+[Check] before answer 1.0 one turn: 2 transcripts, turns ['turn_1'] OK
 [Check] before answer 1.0 one message: last request: 1 user messages, last "If you go into different cultures, they have different concepts of creation. They have their own creation story and uh of what an afterlife is." OK
-[Check] before answer 1.0 aborted: the request of A aborted OK
-[Check] before answer 1.0 silent: first audio 4.56s after B ended OK
+[Check] before answer 1.0 aborted: the request of A aborted FAIL
+[Check] before answer 1.0 silent: first audio 5.08s after B ended OK
 [Check] before answer 2.5 terminals: 3 responses, each closed exactly once OK
 [Check] before answer 2.5 items: 3 transcripts of 1 turns, revisions in a row OK
 [Check] before answer 2.5 one turn: 3 transcripts, turns ['turn_1'] OK
 [Check] before answer 2.5 one message: last request: 1 user messages, last "If you go into different cultures, they have different concepts of creation. They have their own creation story and uh of what an afterlife is." OK
 [Check] before answer 2.5 aborted: the request of A aborted OK
-[Check] before answer 2.5 silent: first audio 5.16s after B ended OK
+[Check] before answer 2.5 silent: first audio 5.04s after B ended OK
 [Check] heard 1000 terminals: 4 responses, each closed exactly once OK
 [Check] heard 1000 items: 4 transcripts of 2 turns, revisions in a row OK
 [Check] heard 1000 new turn: turns ['turn_1', 'turn_2'] OK
-[Check] heard 1000 response: response cancelled 0.65s after the talk over OK
+[Check] heard 1000 response: response cancelled 0.56s after the talk over OK
 [Check] heard 1000 request: the endpoint request aborted OK
 [Check] heard 1000 transcript: the talk over heard: They have their own creation story. OK
 [Check] heard 2000 terminals: 4 responses, each closed exactly once OK
 [Check] heard 2000 items: 4 transcripts of 2 turns, revisions in a row OK
 [Check] heard 2000 new turn: turns ['turn_1', 'turn_2'] OK
-[Check] heard 2000 response: response cancelled 0.53s after the talk over OK
+[Check] heard 2000 response: response cancelled 0.60s after the talk over OK
 [Check] heard 2000 request: the endpoint request aborted OK
 [Check] heard 2000 transcript: the talk over heard: They have their own creation story. OK
 [Check] push to talk terminals: 1 responses, each closed exactly once OK
 [Check] push to talk items: 1 transcripts of 1 turns, revisions in a row OK
-[Check] push to talk answer: first audio 9.35s after the commit, no grace FAIL
+[Check] push to talk answer: first audio 12.05s after the commit, no grace FAIL
 [Check] broken endpoint terminals: 2 responses, each closed exactly once OK
 [Check] broken endpoint items: 2 transcripts of 1 turns, revisions in a row OK
-[Check] broken endpoint error: 2 answers told: [LLM] HTTP 500, model not loaded OK
+[Check] broken endpoint error: 1 answers told: [LLM] HTTP 500, model not loaded OK
 [Check] empty answer terminals: 2 responses, each closed exactly once OK
 [Check] empty answer items: 2 transcripts of 1 turns, revisions in a row OK
-[Check] empty answer done: 2 answers closed as done, none cancelled OK
+[Check] empty answer done: 1 answers closed as done, none cancelled FAIL
 [Check] empty answer error: the error names the empty answer OK
 [Check] empty answer silent: no audio OK
 [Check] empty answer log: the log says the answer was empty after its reasoning OK
@@ -50,22 +50,33 @@
 [Check] mcp tool items: 2 transcripts of 1 turns, revisions in a row OK
 [Check] mcp tool spoken: the answer speaks the result of the tool OK
 [Check] mcp tool error: no error OK
+[Check] mcp tool timeout terminals: 2 responses, each closed exactly once OK
+[Check] mcp tool timeout items: 2 transcripts of 1 turns, revisions in a row OK
+[Check] mcp tool timeout spoken: the answer speaks the timeout of the tool OK
+[Check] mcp tool timeout error: no error OK
+[Check] mcp tool timeout log: the log says the call failed OK
 [Check] unreachable endpoint terminals: 4 responses, each closed exactly once OK
 [Check] unreachable endpoint items: 4 transcripts of 1 turns, revisions in a row OK
 [Check] unreachable endpoint live: revision 0.18s after B ended, the endpoint stuck OK
 [Check] unreachable endpoint whole: last transcript: if you go into different cultures, they have different concepts of creation. they have their own creation story and uh of what an afterlife is. OK
-[Check] unreachable endpoint error: the answer failed: [LLM] Connection timed out OK
+[Check] unreachable endpoint error: the answer failed: [LLM] The endpoint stayed silent past 3 s OK
 [Check] room terminals: 3 responses, each closed exactly once OK
 [Check] room items: 3 transcripts of 2 turns, revisions in a row OK
 [Check] room new turn: turns ['turn_1', 'turn_2'] OK
-[Check] room playback: playback flushed 0.76s after the talk over OK
-[Check] room transcript: the talk over heard: Um, where you go, what you do, who you're gonna be with, you know. OK
+[Check] room playback: playback flushed 1.28s after the talk over OK
+[Check] room transcript: the talk over heard: Where you go, what you do, who you're gonna be with, you know. OK
 [Check] room echo: no word of the assistant in what was heard OK
+[Check] room both terminals: 3 responses, each closed exactly once OK
+[Check] room both items: 3 transcripts of 2 turns, revisions in a row OK
+[Check] room both new turn: turns ['turn_1', 'turn_2'] OK
+[Check] room both playback: playback flushed 0.76s after the talk over OK
+[Check] room both transcript: the talk over heard: Um, where you go, what you do, who you gonna be with, you know. OK
+[Check] room both echo: no word of the assistant in what was heard OK
 [Check] owned terminals: 2 responses, each closed exactly once OK
 [Check] owned items: 2 transcripts of 1 turns, revisions in a row OK
 [Check] owned props: the endpoint is the server's, its URL, model and key unpublished OK
 [Check] owned models: model list closed with 403 OK
 [Check] owned log: the endpoint URL, model and key never logged OK
 [Check] owned endpoint: another endpoint refused: [Realtime] The endpoint is set by the server OK
-[Check] grace log: 14 answers held for the grace of their commit OK
+[Check] grace log: 17 answers held for the grace of their commit OK
 [Check] mcp log: handshake, list and call of the mock MCP server OK
