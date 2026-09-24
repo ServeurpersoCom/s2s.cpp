@@ -475,7 +475,7 @@ int main(int argc, char ** argv) {
                 "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\","
                 "\"type\":\"function\",\"function\":{\"name\":\"set_voice\","
                 "\"arguments\":\"{\\\"voice\\\":\\\"" MOCK_VOICE
-                "\\\"}\"}}]}}]}\n\n"
+                "\\\",\\\"effect\\\":\\\"jarvis\\\"}\"}}]}}]}\n\n"
                 "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
                 "data: [DONE]\n\n",
                 "text/event-stream");
@@ -559,7 +559,9 @@ int main(int argc, char ** argv) {
             } else if (type == "session.updated") {
                 yyjson_val * session = yyjson_obj_get(root, "session");
                 yyjson_val * tts     = session ? yyjson_obj_get(session, "tts") : nullptr;
-                printf("[Event] %7.2fs  %-46s %s\n", now, type.c_str(), tts ? rt_json_str(tts, "voice").c_str() : "");
+                printf("[Event] %7.2fs  %-46s %s%s%s\n", now, type.c_str(),
+                       tts ? rt_json_str(tts, "voice").c_str() : "", tts ? ", effect " : "",
+                       tts ? rt_json_str(tts, "effect").c_str() : "");
             } else if (type == "error") {
                 yyjson_val * error = yyjson_obj_get(root, "error");
                 printf("[Event] %7.2fs  %-46s %s\n", now, type.c_str(),

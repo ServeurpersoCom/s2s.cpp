@@ -237,16 +237,18 @@ def check_mcp_timeout(label, run):
     return check("%s log" % label, logged is not None, "the log says the call failed") and ok
 
 
-# The built-in set_voice: the model changes its voice, the client hears of it
-# in a session.updated, the model reads the result, and the rest of the
-# answer is spoken. The passage pauses mid sentence, so a revision may answer
-# again and call again, with the same voice.
+# The built-in set_voice: the model changes its voice and picks the jarvis
+# effect, the client hears of both in a session.updated, the model reads
+# the result, and the rest of the answer is spoken. The passage pauses mid
+# sentence, so a revision may answer again and call again, with the same
+# voice.
 def check_voice(label, run):
     updated = [rest for _, rest in run.at("Event", "session.updated") if rest]
-    ok = check("%s updated" % label, updated and all(voice == VOICE for voice in updated),
-               "%d session.updated with %s" % (len(updated), VOICE))
+    ok = check("%s updated" % label, updated and all(voice == VOICE + ", effect jarvis" for voice in updated),
+               "%d session.updated with %s and the jarvis effect" % (len(updated), VOICE))
     result = [rest for _, rest in run.at("Mock", "request") if rest.startswith("with")]
-    ok = check("%s result" % label, result and all(line == 'with "Voice set to %s"' % VOICE for line in result),
+    expected = 'with "Voice set to %s, effect jarvis"' % VOICE
+    ok = check("%s result" % label, result and all(line == expected for line in result),
                "the model reads the result of %d calls" % len(result)) and ok
     spoken = " ".join(rest for _, rest in run.at("Event", "response.output_audio_transcript.delta")).lower()
     ok = check("%s spoken" % label, "new voice" in spoken, "the answer is spoken after the call") and ok

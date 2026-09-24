@@ -26,6 +26,7 @@
 
 #include "s2s-conversation.h"
 
+#include "jarvis-fx.h"
 #include "llm-agent.h"
 #include "s2s-error.h"
 #include "s2s-session.h"
@@ -64,14 +65,46 @@ bool host_allowed(const std::vector<std::string> & hosts, const std::string & ur
 
 #define VOICE_TOOL "set_voice"  // the name the model calls the built-in voice tool by
 
-llm_tool conn_voice_tool(const tts_bridge * tts, const std::string & voice) {
+// Every effect and what it does, in the words the model reads.
+struct VoiceEffect {
+    const char * name;
+    const char * about;
+};
+
+static const VoiceEffect EFFECTS[] = {
+    { "off",    "the voice as it is"   },
+    { "jarvis", "an echo and a chorus" },
+};
+
+const std::vector<std::string> & conn_effects() {
+    static const std::vector<std::string> names = []() {
+        std::vector<std::string> out;
+        for (const VoiceEffect & effect : EFFECTS) {
+            out.push_back(effect.name);
+        }
+        return out;
+    }();
+    return names;
+}
+
+static bool conn_effect_known(const std::string & effect) {
+    const std::vector<std::string> & names = conn_effects();
+    return std::find(names.begin(), names.end(), effect) != names.end();
+}
+
+llm_tool conn_voice_tool(const tts_bridge * tts, const std::string & voice, const std::string & effect) {
     const std::string current = voice.empty() ? tts_bridge_defaults_request(tts).voice : voice;
+    std::string       effects;
+    for (const VoiceEffect & e : EFFECTS) {
+        effects += std::string(effects.empty() ? "" : ", ") + e.name + " for " + e.about;
+    }
     const std::string about =
         "Changes the voice you speak with, for the rest of the conversation: what you write after the call is "
         "spoken with it. You speak with " +
-        current +
-        " now. An original accent voice continues a recording, with its accent and pace; a timbre only voice "
-        "keeps the timbre alone.";
+        current + ", effect " + effect +
+        ", now. An original accent voice continues a recording, with its accent and pace; a timbre only voice "
+        "keeps the timbre alone. effect runs over any voice: " +
+        effects + "; left out, it stays as it is.";
 
     yyjson_mut_doc * doc  = yyjson_mut_doc_new(nullptr);
     yyjson_mut_val * root = yyjson_mut_obj(doc);
@@ -88,6 +121,12 @@ llm_tool conn_voice_tool(const tts_bridge * tts, const std::string & voice) {
     yyjson_mut_val * labels = yyjson_mut_obj_add_arr(doc, name, "enum");
     for (const std::string & label : tts_bridge_voices(tts)) {
         yyjson_mut_arr_add_strn(doc, labels, label.c_str(), label.size());
+    }
+    yyjson_mut_val * fx = yyjson_mut_obj_add_obj(doc, properties, "effect");
+    yyjson_mut_obj_add_str(doc, fx, "type", "string");
+    yyjson_mut_val * names = yyjson_mut_obj_add_arr(doc, fx, "enum");
+    for (const VoiceEffect & e : EFFECTS) {
+        yyjson_mut_arr_add_str(doc, names, e.name);
     }
     yyjson_mut_val * required = yyjson_mut_obj_add_arr(doc, parameters, "required");
     yyjson_mut_arr_add_str(doc, required, "voice");
@@ -195,6 +234,12 @@ struct Connection {
     // Whether the assistant holds the floor: set by the responder, handed to
     // the session by the reader with every push.
     std::atomic<bool> speaking{ false };
+
+    // The Jarvis effect over the voice, one stream per answer. Only the
+    // synthesis callbacks of the answer in flight touch it, and the responder
+    // between two answers, never both at once.
+    jarvis_fx *        fx = nullptr;
+    std::vector<float> fx_pcm;
 
     // The protocol carries 24 kHz, the models want 16 kHz: the microphone and
     // the reference go through the same Hann-windowed sinc, the one of
@@ -425,11 +470,13 @@ static bool conn_speak(Connection * conn, const SentenceUnit & unit, const tts_r
     struct SpeakTap {
         Connection *         conn    = nullptr;
         const SentenceUnit * unit    = nullptr;
+        bool                 jarvis  = false;
         size_t               samples = 0;
     } speak_tap;
 
-    speak_tap.conn = conn;
-    speak_tap.unit = &unit;
+    speak_tap.conn   = conn;
+    speak_tap.unit   = &unit;
+    speak_tap.jarvis = tts.effect == "jarvis";
 
     const bool spoke = tts_bridge_speak(
         conn->setup->models.tts, unit.text, tts,
@@ -439,6 +486,12 @@ static bool conn_speak(Connection * conn, const SentenceUnit & unit, const tts_r
                 conn_send(self->conn, rt_event_spoken(self->unit->text, self->unit->end));
             }
             self->samples += n_samples;
+            if (self->jarvis) {
+                std::vector<float> & out = self->conn->fx_pcm;
+                out.assign(pcm, pcm + n_samples);
+                jarvis_fx_process(self->conn->fx, out.data(), n_samples);
+                pcm = out.data();
+            }
             conn_send(self->conn, rt_event_audio(pcm, n_samples));
             return !self->conn->cancel.load();
         },
@@ -462,13 +515,16 @@ struct VoiceSwitch {
 
 // The session belongs to the client, so the client hears of the change: the
 // next session.update it sends carries the new voice instead of the old one.
+// A call without effect leaves the effect as it is.
 static bool conn_set_voice(const std::string & arguments, void * user, std::string & result) {
     VoiceSwitch * self = (VoiceSwitch *) user;
 
     std::string  voice;
+    std::string  effect;
     yyjson_doc * doc = yyjson_read(arguments.c_str(), arguments.size(), 0);
     if (doc) {
-        voice = rt_json_str(yyjson_doc_get_root(doc), "voice");
+        voice  = rt_json_str(yyjson_doc_get_root(doc), "voice");
+        effect = rt_json_str(yyjson_doc_get_root(doc), "effect");
         yyjson_doc_free(doc);
     }
     const std::vector<std::string> & voices = tts_bridge_voices(self->conn->setup->models.tts);
@@ -477,15 +533,24 @@ static bool conn_set_voice(const std::string & arguments, void * user, std::stri
         return false;
     }
 
+    if (!effect.empty() && !conn_effect_known(effect)) {
+        s2s_set_error("[Agent] " VOICE_TOOL " knows no effect named \"%s\"", effect.c_str());
+        return false;
+    }
+
     self->tts->voice = voice;
+    if (!effect.empty()) {
+        self->tts->effect = effect;
+    }
     {
         std::lock_guard<std::mutex> lock(self->conn->client_mutex);
-        self->conn->client.tts.voice = voice;
+        self->conn->client.tts.voice  = voice;
+        self->conn->client.tts.effect = self->tts->effect;
     }
-    conn_send(self->conn, rt_event_voice(voice));
-    s2s_log(S2S_LOG_INFO, "[Agent] Voice set to %s", voice.c_str());
+    conn_send(self->conn, rt_event_voice(voice, self->tts->effect));
+    s2s_log(S2S_LOG_INFO, "[Agent] Voice set to %s, effect %s", voice.c_str(), self->tts->effect.c_str());
 
-    result = "Voice set to " + voice;
+    result = "Voice set to " + voice + ", effect " + self->tts->effect;
     return true;
 }
 
@@ -579,8 +644,10 @@ static void conn_answer(Connection * conn, const AnswerJob & job) {
         return;
     }
 
-    // A cancel raised from here on belongs to this answer.
+    // A cancel raised from here on belongs to this answer, and its effect
+    // starts from silence: nothing of a cut answer echoes into it.
     conn->cancel.store(false);
+    jarvis_fx_reset(conn->fx);
 
     // The settings and the list as they stand now: a change that arrives
     // later belongs to the next turn, not to this one.
@@ -696,7 +763,8 @@ static void conn_answer(Connection * conn, const AnswerJob & job) {
             // The built-in tools act on this answer and this connection.
             VoiceSwitch                          voice_switch = { conn, &client.tts };
             const std::vector<llm_agent_builtin> builtins     = {
-                { conn_voice_tool(conn->setup->models.tts, client.tts.voice), conn_set_voice, &voice_switch }
+                { conn_voice_tool(conn->setup->models.tts, client.tts.voice, client.tts.effect), conn_set_voice,
+                 &voice_switch }
             };
 
             Timer      t_llm;
@@ -733,6 +801,13 @@ static void conn_answer(Connection * conn, const AnswerJob & job) {
                 conn_error(conn, "[LLM] The model answered nothing");
             }
         }
+    }
+
+    // The echo of the last syllable, heard when the answer ends on its own.
+    if (client.tts.effect == "jarvis" && conn->answer_released && !conn->cancel.load()) {
+        std::vector<float> tail(jarvis_fx_tail(conn->fx), 0.0f);
+        jarvis_fx_process(conn->fx, tail.data(), tail.size());
+        conn_send(conn, rt_event_audio(tail.data(), tail.size()));
     }
 
     s2s_log(S2S_LOG_INFO, "[Turn] Answered %zu characters%s", answer.size(), conn->cancel.load() ? ", cut short" : "");
@@ -996,6 +1071,11 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     if (!patch.tts_voice.empty()) {
         conn->client.tts.voice = patch.tts_voice;
     }
+    if (conn_effect_known(patch.tts_effect)) {
+        conn->client.tts.effect = patch.tts_effect;
+    } else if (!patch.tts_effect.empty()) {
+        conn_error(conn, ("[Realtime] Unknown effect " + patch.tts_effect + ", the voice keeps none").c_str());
+    }
     if (!patch.tts_language.empty()) {
         conn->client.tts.language = patch.tts_language;
     }
@@ -1095,10 +1175,12 @@ Connection * conn_open(const ConversationSetup * setup, int id, conn_send_fn sen
     audio_resample_stream_init(&conn->mic_resample, S2S_INPUT_RATE, S2S_MODEL_RATE);
     audio_resample_stream_init(&conn->ref_resample, S2S_INPUT_RATE, S2S_MODEL_RATE);
     conn->client  = setup->defaults;
+    conn->fx      = jarvis_fx_new(S2S_INPUT_RATE);
     conn->session = s2s_session_new(setup->models.vad, setup->models.turn, conn->params, conn_on_session_event, conn);
     if (!conn->session) {
         s2s_log(S2S_LOG_WARN, "%s", sv_last_error());
         send(rt_event_error(sv_last_error()), send_user);
+        jarvis_fx_free(conn->fx);
         delete conn;
         return nullptr;
     }
@@ -1200,6 +1282,7 @@ void conn_close(Connection * conn) {
     conn->writer.join();
     s2s_session_free(conn->session);
     lv_state_free(conn->aec);
+    jarvis_fx_free(conn->fx);
     s2s_log(S2S_LOG_INFO, "[Server] Connection closed");
     delete conn;
 }

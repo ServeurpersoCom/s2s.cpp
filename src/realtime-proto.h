@@ -16,7 +16,8 @@
 //
 // Server to client:
 //   session.created, session.updated
-//                                    with session.tts.voice when the model
+//                                    with session.tts.voice and
+//                                    session.tts.effect when the model
 //                                    changes its voice with set_voice
 //   input_audio_buffer.speech_started, input_audio_buffer.speech_stopped
 //   conversation.item.input_audio_transcription.completed
@@ -94,6 +95,7 @@ struct rt_session_patch {
     int64_t                        seed              = -1;
     std::string                    reasoning_effort;
     std::string                    tts_voice;
+    std::string                    tts_effect;
     std::string                    tts_language;
     std::vector<std::string>       tts_browser_languages;
     float                          tts_temperature            = -1.0f;
@@ -344,6 +346,7 @@ static rt_client_message rt_parse(const std::string & frame) {
         yyjson_val * tts = yyjson_obj_get(fields, "tts");
         if (tts) {
             message.patch.tts_voice             = rt_json_str(tts, "voice");
+            message.patch.tts_effect            = rt_json_str(tts, "effect");
             message.patch.tts_language          = rt_json_str(tts, "language");
             message.patch.tts_browser_languages = rt_json_strs(tts, "browser_languages");
             message.patch.tts_min_chars         = rt_json_count(tts, "min_chars", message.patch.invalid);
@@ -464,13 +467,14 @@ static std::string rt_event(const char * type) {
     return rt_frame_end(frame);
 }
 
-// The voice the model switched to: a session.updated carrying the one field
-// of the session the server changed on its own.
-static std::string rt_event_voice(const std::string & voice) {
+// The voice the model switched to: a session.updated carrying the fields of
+// the session the server changed on its own.
+static std::string rt_event_voice(const std::string & voice, const std::string & effect) {
     rt_frame         frame   = rt_frame_begin("session.updated");
     yyjson_mut_val * session = yyjson_mut_obj_add_obj(frame.doc, frame.root, "session");
     yyjson_mut_val * tts     = yyjson_mut_obj_add_obj(frame.doc, session, "tts");
     yyjson_mut_obj_add_strn(frame.doc, tts, "voice", voice.c_str(), voice.size());
+    yyjson_mut_obj_add_strn(frame.doc, tts, "effect", effect.c_str(), effect.size());
     return rt_frame_end(frame);
 }
 

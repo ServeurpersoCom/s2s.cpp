@@ -79,6 +79,10 @@ struct tts_bridge_params {
 struct tts_request {
     std::string              voice;     // one of the labels tts_bridge_voices lists, empty keeps the default
     std::string              language;  // auto or one of tts_bridge_languages, empty keeps the default
+    // The effect over the voice, one of conn_effects in s2s-conversation.h.
+    // The bridge never reads it: the caller runs the effect on the audio the
+    // bridge hands it.
+    std::string              effect = "off";
     // The languages of the browser, by preference: under auto the first one
     // the talker knows gives the id, English stays when it knows none.
     std::vector<std::string> browser_languages;

@@ -86,10 +86,14 @@ bool conn_stopped(const Connection * conn);
 // Stops the talking half, frees the conversation, and logs its end.
 void conn_close(Connection * conn);
 
+// The effects a voice can run through, off first: the default.
+const std::vector<std::string> & conn_effects();
+
 // The definition of set_voice, the built-in tool that lets the model change
-// the voice it speaks with: every label the bridge lists, and the one it
-// speaks with now, empty for the default.
-llm_tool conn_voice_tool(const tts_bridge * tts, const std::string & voice);
+// the voice it speaks with and the effect over it: every label the bridge
+// lists, every effect, and the voice and effect in use, an empty voice for
+// the default.
+llm_tool conn_voice_tool(const tts_bridge * tts, const std::string & voice, const std::string & effect);
 
 // Host of an endpoint URL, with its port when it carries one: what an
 // allowlist entry is compared against.

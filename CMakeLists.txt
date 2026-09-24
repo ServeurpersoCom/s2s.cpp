@@ -194,6 +194,7 @@ add_executable(s2s-server tools/s2s-server.cpp
     src/mcp-client.cpp
     src/tts-bridge.cpp
     src/localvqe.cpp
+    src/jarvis-fx.cpp
     ${WEBUI_OUTPUT}
     ${WEBUI_LIB_OUTPUT})
 target_include_directories(s2s-server PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

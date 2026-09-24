@@ -11,6 +11,7 @@
 		clearContext,
 		getClient,
 		mcpServers,
+		sessionEffect,
 		sessionLanguage,
 		sessionVoice,
 		voice
@@ -72,6 +73,10 @@
 
 	function onLanguage(e: Event) {
 		settings.language = (e.target as HTMLSelectElement).value;
+	}
+
+	function onEffect(e: Event) {
+		settings.ttsEffect = (e.target as HTMLSelectElement).value;
 	}
 
 	// an endpoint that answers fills the selector, one that does not empties it
@@ -154,6 +159,7 @@
 
 	function clearTts() {
 		settings.voice = '';
+		settings.ttsEffect = '';
 		settings.language = '';
 		settings.ttsTemperature = '';
 		settings.ttsTopK = '';
@@ -575,6 +581,22 @@
 				>
 					<option value="auto">auto</option>
 					{#each d?.tts_languages ?? [] as name (name)}
+						<option value={name}>{name}</option>
+					{/each}
+				</select>
+			</div>
+
+			<div
+				class="model-row"
+				title="The effect over the voice, any voice: off, or jarvis for an echo and a chorus. In the agentic mode the model may change it with the set_voice tool."
+			>
+				<span class="model-label">Effect</span>
+				<select
+					class="model-select"
+					value={sessionEffect() || d?.tts_effect || ''}
+					onchange={onEffect}
+				>
+					{#each d?.tts_effects ?? [] as name (name)}
 						<option value={name}>{name}</option>
 					{/each}
 				</select>

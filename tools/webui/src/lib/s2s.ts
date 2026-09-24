@@ -127,6 +127,9 @@ export interface S2STtsSampling {
 export interface S2STts {
 	// name of a voice the server loaded, one of tts_voices on /props
 	voice?: string;
+	// the effect over the voice: off, the default, or one of tts_effects on
+	// /props, jarvis for an echo and a chorus
+	effect?: string;
 	// auto, the default, or one of tts_languages on /props. The language id
 	// only weighs on a lone word, a few words are read in their own language;
 	// auto is the language of the browser when the talker speaks it, English
@@ -190,9 +193,10 @@ export interface S2SEvents {
 	assistant_done: () => void;
 	// the conversation, every time it changes: persist it, or ignore it
 	history: (messages: S2SMessage[]) => void;
-	// the voice the model switched to with set_voice: the session keeps it
-	// until the page reloads, persist it, or ignore it
-	voice: (voice: string) => void;
+	// the voice and the effect the model switched to with set_voice:
+	// the session keeps them until the page reloads, persist them, or ignore
+	// them
+	voice: (voice: string, effect: string) => void;
 	// every step of a start, a stop or a failure, so a host can show what
 	// happened instead of guessing
 	log: (line: string) => void;
@@ -630,6 +634,7 @@ export class S2S {
 				},
 				tts: {
 					voice: this.options.tts?.voice,
+					effect: this.options.tts?.effect,
 					language: this.options.tts?.language,
 					browser_languages: browserLanguages(),
 					min_chars: this.options.tts?.minChars,
@@ -752,12 +757,14 @@ export class S2S {
 				{
 					// The model changed its voice: the next session.update
 					// carries it, a restart included.
-					const session = message.session as { tts?: { voice?: unknown } } | undefined;
+					const session = message.session as
+						{ tts?: { voice?: unknown; effect?: unknown } } | undefined;
 					const voice = session?.tts?.voice;
-					if (typeof voice === 'string') {
-						this.options.tts = { ...this.options.tts, voice };
-						this.log(`Voice set to ${voice}`);
-						this.handlers.voice?.(voice);
+					const effect = session?.tts?.effect;
+					if (typeof voice === 'string' && typeof effect === 'string') {
+						this.options.tts = { ...this.options.tts, voice, effect };
+						this.log(`Voice set to ${voice}, effect ${effect}`);
+						this.handlers.voice?.(voice, effect);
 					}
 				}
 				break;

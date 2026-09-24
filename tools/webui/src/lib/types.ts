@@ -6,6 +6,8 @@ interface S2SDefaults {
 	instructions: string;
 	voice: string;
 	language: string;
+	tts_effect: string;
+	tts_effects: string[];
 	tts_voices: string[];
 	tts_languages: string[];
 	tts_temperature: number;

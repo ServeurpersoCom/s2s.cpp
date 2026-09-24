@@ -13,6 +13,10 @@ export function sessionVoice(): string | undefined {
 	return served(settings.voice, app.props?.defaults.tts_voices);
 }
 
+export function sessionEffect(): string | undefined {
+	return served(settings.ttsEffect, app.props?.defaults.tts_effects);
+}
+
 // auto is not in the list, and every server takes it
 export function sessionLanguage(): string | undefined {
 	const list = app.props?.defaults.tts_languages;
@@ -71,6 +75,7 @@ export function toOptions(): S2SOptions {
 		llmTimeoutSec: model ? num(settings.llmTimeoutSec) : undefined,
 		tts: {
 			voice: sessionVoice(),
+			effect: sessionEffect(),
 			language: sessionLanguage(),
 			minChars: num(settings.ttsMinChars),
 			charsPerSecond: num(settings.ttsCharsPerSecond),
@@ -252,9 +257,11 @@ export async function createVoice(): Promise<S2S> {
 		turn.spokenEnd = textEnd;
 	});
 	s2s.on('history', saveHistory);
-	// the voice the model picked is the one the panel shows and keeps
-	s2s.on('voice', (label) => {
+	// the voice and the effect the model picked are the ones the panel shows
+	// and keeps
+	s2s.on('voice', (label, effect) => {
 		settings.voice = label;
+		settings.ttsEffect = effect;
 	});
 	s2s.on('error', (message) => {
 		toast(message);

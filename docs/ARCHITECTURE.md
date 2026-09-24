@@ -184,11 +184,13 @@ next round starts.
 
 The tools come from three places. The server itself runs the built-in
 ones, listed first under `built-in`: `set_voice` takes one of the labels
-of `tts_voices` and its description names the voice in use. The rest of
+of `tts_voices`, and optionally one of `tts_effects`, and its
+description names the voice and effect in use. The rest of
 the answer in flight speaks with the new voice, every later turn of the
 connection too, and the server tells the client with a `session.updated`
-carrying `session.tts.voice`, since the session is the client's: its
-next `session.update` carries the new voice instead of the old one. The
+carrying `session.tts.voice` and `session.tts.effect`, since the session
+is the client's: its next `session.update` carries them instead of the
+old ones. The
 MCP servers the session names, any number, reached by JSON-RPC over
 Streamable HTTP the way the official SDK does it: `initialize` and
 `notifications/initialized` open a session, `tools/list` gives the tools
@@ -280,6 +282,10 @@ picks one with `tts.voice`. The files come from `qwen-codec
 size of the talker that extracted it: a voice made with the 1.7B talker
 only speaks through the 1.7B talker.
 
+`tts.effect` runs an effect over any voice, on the audio of the
+synthesis: `/props` lists them in `tts_effects`, `off` first and the
+default, then `jarvis`, an echo and a chorus, `src/jarvis-fx.h`.
+
 ## Echo cancellation
 
 The client picks it with `echo`, `both` by default.
@@ -326,7 +332,8 @@ Client to server: `session.update`, `input_audio_buffer.append`,
 `input_audio_buffer.commit`, `response.cancel`, `conversation.history`.
 
 Server to client: `session.created`, `session.updated`, which carries
-`session.tts.voice` when the model changed its voice with `set_voice`,
+`session.tts.voice` and `session.tts.effect` when the model changed its
+voice with `set_voice`,
 `input_audio_buffer.speech_started`, `input_audio_buffer.speech_stopped`,
 `conversation.item.input_audio_transcription.completed`,
 `response.created`, `response.output_text.delta`,
@@ -413,6 +420,7 @@ the same for the MCP servers.
 | `src/llm-agent.h` | the tool servers of one session and the rounds of tool calls of one agentic turn |
 | `src/sentence-split.h`, `src/emoji.h` | streaming text to synthesis units |
 | `src/tts-bridge.h` | qwentts.cpp calls, per request voice, sampling and guards |
+| `src/jarvis-fx.h` | the Jarvis voice effect, streaming |
 | `src/realtime-proto.h` | Realtime event encode and decode |
 | `src/s2s-conversation.h` | one conversation: its threads, turns, answers, from Realtime frames in to frames out |
 | `src/log-capture.h` | stderr captured into the ring streamed on `/logs`, crash handlers |
@@ -467,7 +475,7 @@ one of three brackets:
 | unreachable endpoint | a connection nothing answers, which no cancel reaches: the revisions are recognized as fast as ever, the answer fails within the timeout |
 | mcp tool | the agentic mode over MCP: the model calls the tool of a mock MCP server behind its key and its session id, and its result is spoken |
 | mcp tool timeout | the same tool slower than the timeout of the call: the model reads that it did not answer and speaks, the turn does not fail |
-| set voice | the model calls the built-in set_voice: the client gets the voice in a session.updated, the model reads the result, and the rest of the answer is spoken |
+| set voice | the model calls the built-in set_voice with the jarvis effect: the client gets the voice and the effect in a session.updated, the model reads the result, and the rest of the answer is spoken |
 | room | the echo canceller keeps the assistant out of what is heard, the playback flushed |
 | room both | the same with the default method: the server canceller runs and the reference travels |
 | owned endpoint | nothing of the endpoint published or logged, another endpoint refused |

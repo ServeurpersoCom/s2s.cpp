@@ -19,6 +19,7 @@ export interface Settings {
 	toolTimeoutSec: string;
 	systemPrompt: string;
 	voice: string;
+	ttsEffect: string;
 	language: string;
 	ttsTemperature: string;
 	ttsTopK: string;
@@ -73,6 +74,7 @@ function defaults(): Settings {
 		toolTimeoutSec: '',
 		systemPrompt: '',
 		voice: '',
+		ttsEffect: '',
 		language: '',
 		ttsTemperature: '',
 		ttsTopK: '',
@@ -163,6 +165,7 @@ $effect.root(() => {
 			toolTimeoutSec: settings.toolTimeoutSec,
 			systemPrompt: settings.systemPrompt,
 			voice: settings.voice,
+			ttsEffect: settings.ttsEffect,
 			language: settings.language,
 			ttsTemperature: settings.ttsTemperature,
 			ttsTopK: settings.ttsTopK,

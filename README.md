@@ -131,7 +131,8 @@ written in, so the system prompt decides the language of the answers.
 
 The agentic mode takes its tools from the server itself, under
 built-in: `set_voice` lets the model change the voice it speaks with,
-one of the voices above. Then from MCP servers, any that speak
+one of the voices above, and the effect over it, `off` or `jarvis`, an
+echo and a chorus. Then from MCP servers, any that speak
 Streamable HTTP, a web search for instance, named in the playground one
 per line with the key each takes, and from the endpoint itself when it
 is a llama.cpp server started with `--tools`, or `--tools all`. Reload

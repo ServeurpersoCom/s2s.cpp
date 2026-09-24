@@ -375,6 +375,8 @@ int main(int argc, char ** argv) {
         yyjson_mut_obj_add_bool(doc, defaults, "mcp_fixed", setup.mcp_fixed);
         str("instructions", system_prompt);
         str("voice", voice.voice);
+        str("tts_effect", voice.effect);
+        strs("tts_effects", conn_effects());
         str("language", voice.language);
         strs("tts_voices", tts_bridge_voices(setup.models.tts));
         strs("tts_languages", tts_bridge_languages(setup.models.tts));
@@ -535,9 +537,10 @@ int main(int argc, char ** argv) {
         s2s_log(S2S_LOG_INFO, "[HTTP] Tool list");
 
         // A list is one visit: the MCP sessions it opens end with it. The
-        // built-in tools are only shown, with the default voice.
+        // built-in tools are only shown, with the default voice and effect.
         llm_agent *                          agent    = llm_agent_new(servers);
-        const std::vector<llm_agent_builtin> builtins = { { conn_voice_tool(setup.models.tts, "") } };
+        const std::vector<llm_agent_builtin> builtins = { { conn_voice_tool(setup.models.tts, "",
+                                                                            conn_effects().front()) } };
         std::vector<llm_agent_group>         groups;
         const bool                           listed = llm_agent_tools(agent, builtins, params, nullptr, groups);
         llm_agent_free(agent);
