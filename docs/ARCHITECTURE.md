@@ -288,24 +288,25 @@ default, then `jarvis`, an echo and a chorus, `src/jarvis-fx.h`.
 
 ## Echo cancellation
 
-The client picks it with `echo`, `both` by default.
+The client picks it with `echo`, `client` by default: the browser
+cancels the voice itself, since the page plays in the audio graph its
+canceller takes the reference from, and on iOS the browser canceller keeps
+the audio session on the loudspeaker. `server` runs LocalVQE on the raw
+microphone, for a client with no canceller of its own, an embedded device.
+`both` runs the two, LocalVQE removing whatever echo the browser leaves.
+Wherever LocalVQE runs, the browser neither suppresses noise nor levels
+the gain in front of it.
 
-No page can reliably tell whether the browser cancels its own playback:
-most browsers take `echoCancellation` without cancelling what the page
-plays itself, and the ones that do may not say so. Taking the browser
-canceller away is not safe either, since on iOS a raw microphone turns the
-audio session into a call on the earpiece. `both` covers every case: it
-asks the browser for its canceller, which keeps the iPhone on the
-loudspeaker, and runs LocalVQE behind it, which removes whatever echo the
-browser leaves. Wherever LocalVQE runs, the browser neither suppresses
-noise nor levels the gain in front of it.
+The client plays and captures through one duplex AudioWorklet that runs
+at the rate of the device and converts to and from 24 kHz itself. The page
+playback and the microphone live in the same audio graph, the one the
+browser canceller takes its reference from, and each 20 ms microphone
+frame leaves with the samples played during the same render quanta.
 
-`server` works on every browser. The client plays and captures through one
-duplex AudioWorklet, so each 20 ms microphone frame leaves with the samples
-played during the same render quanta: the exact echo reference, with only
-the loudspeaker to microphone path left to estimate. The microphone is
-taken raw, no browser echo cancellation, noise suppression or gain control
-bending the path. The server resamples the reference beside the
+`server` works on every browser. The frame carries the exact echo
+reference, with only the loudspeaker to microphone path left to estimate.
+The microphone is taken raw, no browser echo cancellation, noise
+suppression or gain control bending the path. The server resamples the reference beside the
 microphone and runs LocalVQE v1.3 on hops of 256 samples before the VAD.
 The model estimates the echo delay itself by a soft cross-attention over
 the last 64 frames, about one second, and removes noise and reverberation

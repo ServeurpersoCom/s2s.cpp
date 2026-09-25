@@ -54,7 +54,7 @@
 	}
 
 	const ECHO_LABELS: Record<S2SEcho, string> = {
-		both: 'Both, every platform',
+		both: 'Both, maximum compatibility',
 		server: 'Server, client disabled',
 		client: 'Client, server disabled',
 		off: 'Off, use headphones'
@@ -443,7 +443,7 @@
 				>
 				<label
 					title="How long a pause judged unfinished stays free: going on within it costs nothing. After it the answer starts computing in silence, and going on then still continues the same turn, at the price of a wasted request. Shorter hides a slower endpoint; longer wastes less."
-					>Incomplete delay ms <input
+					>Incomplete delay <input
 						type="text"
 						placeholder={ph(d?.incomplete_delay_ms)}
 						bind:value={settings.turnIncompleteDelayMs}

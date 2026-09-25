@@ -32,18 +32,17 @@
 const SAMPLE_RATE = 24000;
 const FRAME_SAMPLES = 480; // 20 ms
 
-// Who removes the assistant voice from the microphone. both asks the
-// browser for its canceller and runs the server one behind it, server hands
-// the raw microphone and the played reference to s2s-server, client asks the
-// browser to cancel everything the system plays, this page included, off
+// Who removes the assistant voice from the microphone. client asks the
+// browser to cancel everything the system plays, this page included, server
+// hands the raw microphone and the played reference to s2s-server, both
+// asks the browser for its canceller and runs the server one behind it, off
 // cancels nothing and leaves the echo to headphones, the browser still
 // suppressing noise and levelling the gain.
 //
-// both is the default: no page can tell whether the browser cancels its own
-// playback, and taking the browser canceller away turns an iPhone into a
-// call on the earpiece.
-export const ECHO_MODES = ['both', 'server', 'client', 'off'] as const;
-export const ECHO_DEFAULT: S2SEcho = 'both';
+// client is the default: the page plays in the audio graph of the device,
+// where the browser canceller takes its reference.
+export const ECHO_MODES = ['client', 'server', 'both', 'off'] as const;
+export const ECHO_DEFAULT: S2SEcho = 'client';
 export type S2SEcho = (typeof ECHO_MODES)[number];
 
 // Plain true only covers WebRTC remote tracks, which this component never
@@ -206,7 +205,16 @@ export interface S2SEvents {
 	error: (message: string) => void;
 }
 
+// The worklet runs at the rate of the device, where the browser canceller
+// hears the page playback in the same graph as the microphone, and converts
+// to and from the protocol rate itself, by linear interpolation. Capture
+// averages two device samples first when the device runs faster, a zero at
+// its Nyquist frequency against aliasing. The microphone and the reference
+// share one conversion, so they stay in step to the sample.
 const DUPLEX_WORKLET = `
+const RATIO = sampleRate / ${SAMPLE_RATE}; // device samples per protocol sample
+const SMOOTH = RATIO > 1;
+
 class DuplexProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
@@ -219,6 +227,19 @@ class DuplexProcessor extends AudioWorkletProcessor {
 		this.offset = 0;
 		this.played = 0;
 		this.generation = 0;
+		// playback: the two protocol samples the output lies between, and how
+		// far past the first, in protocol samples
+		this.a = 0;
+		this.b = 0;
+		this.at = 1;
+		// capture: the last raw and the last smoothed device sample of each
+		// side, and where the next protocol sample falls past the smoothed
+		// one, in device samples
+		this.rawMic = 0;
+		this.rawRef = 0;
+		this.prevMic = 0;
+		this.prevRef = 0;
+		this.next = 1;
 		this.port.onmessage = (e) => {
 			const data = e.data;
 			if (data instanceof Float32Array) {
@@ -226,6 +247,8 @@ class DuplexProcessor extends AudioWorkletProcessor {
 			} else if (data.flush) {
 				this.queue = [];
 				this.offset = 0;
+				this.a = 0;
+				this.b = 0;
 			} else if (data.reset !== undefined) {
 				this.played = 0;
 				this.generation = data.reset;
@@ -236,36 +259,58 @@ class DuplexProcessor extends AudioWorkletProcessor {
 			}
 		};
 	}
-	process(inputs, outputs) {
-		const output = outputs[0][0];
-		let written = 0;
-		while (written < output.length && this.queue.length > 0) {
-			const chunk = this.queue[0];
-			const take = Math.min(chunk.length - this.offset, output.length - written);
-			for (let i = 0; i < take; i++) {
-				output[written + i] = chunk[this.offset + i] * this.volume;
-			}
-			this.offset += take;
-			written += take;
-			if (this.offset === chunk.length) {
-				this.queue.shift();
-				this.offset = 0;
-			}
+	// The next protocol sample of the answer, silence once the queue is dry.
+	pull() {
+		if (this.queue.length === 0) {
+			return 0;
 		}
-		output.fill(0, written);
-		if (written > 0) {
-			this.played += written;
-			this.port.postMessage({ played: this.played, generation: this.generation });
+		const chunk = this.queue[0];
+		const sample = chunk[this.offset++];
+		this.played++;
+		if (this.offset === chunk.length) {
+			this.queue.shift();
+			this.offset = 0;
 		}
-
-		const input = inputs[0] && inputs[0][0];
-		for (let i = 0; i < output.length; i++) {
-			this.mic[this.filled] = input && !this.muted ? input[i] : 0;
-			this.ref[this.filled] = output[i];
+		return sample;
+	}
+	capture(mic, ref) {
+		if (SMOOTH) {
+			const m = mic;
+			const r = ref;
+			mic = (mic + this.rawMic) * 0.5;
+			ref = (ref + this.rawRef) * 0.5;
+			this.rawMic = m;
+			this.rawRef = r;
+		}
+		while (this.next <= 1) {
+			this.mic[this.filled] = this.prevMic + (mic - this.prevMic) * this.next;
+			this.ref[this.filled] = this.prevRef + (ref - this.prevRef) * this.next;
 			if (++this.filled === this.mic.length) {
 				this.port.postMessage({ mic: this.mic.slice(), ref: this.ref.slice() });
 				this.filled = 0;
 			}
+			this.next += RATIO;
+		}
+		this.next -= 1;
+		this.prevMic = mic;
+		this.prevRef = ref;
+	}
+	process(inputs, outputs) {
+		const output = outputs[0][0];
+		const input = inputs[0] && inputs[0][0];
+		const played = this.played;
+		for (let i = 0; i < output.length; i++) {
+			while (this.at >= 1) {
+				this.a = this.b;
+				this.b = this.pull();
+				this.at -= 1;
+			}
+			output[i] = (this.a + (this.b - this.a) * this.at) * this.volume;
+			this.at += 1 / RATIO;
+			this.capture(input && !this.muted ? input[i] : 0, output[i]);
+		}
+		if (this.played !== played) {
+			this.port.postMessage({ played: this.played, generation: this.generation });
 		}
 		return true;
 	}
@@ -447,7 +492,7 @@ export class S2S {
 			throw error;
 		}
 
-		const context = new AudioContext({ sampleRate: SAMPLE_RATE });
+		const context = new AudioContext();
 		this.context = context;
 		await context.audioWorklet.addModule(workletUrl(DUPLEX_WORKLET));
 		if (run !== this.run) {
