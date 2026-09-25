@@ -22,8 +22,8 @@
 
 	let d = $derived(app.props?.defaults);
 
-	// the microphone in force: the one set when the browser still lists it
-	let mic = $derived(!app.mics || app.mics.some((m) => m.id === settings.mic) ? settings.mic : '');
+	// the microphone in force: the one set, once the browser lists it
+	let mic = $derived(app.mics?.some((m) => m.id === settings.mic) ? settings.mic : '');
 
 	// the mode in force: the field when set, the server default otherwise
 	let mode = $derived(settings.mode || d?.mode || '');
@@ -70,7 +70,7 @@
 
 	// The browser names its microphones only once the page holds the
 	// permission: before that the list stays unknown. Its own default
-	// entries are left out, Default below already means them.
+	// entries are left out, the empty entry below already means them.
 	async function loadMics() {
 		const devices = await navigator.mediaDevices?.enumerateDevices();
 		const mics = (devices ?? [])
@@ -295,9 +295,9 @@
 			<div class="model-row">
 				<span class="model-label">Input</span>
 				<select class="model-select" value={mic} onchange={onMic}>
-					<option value="">Default</option>
-					{#each app.mics ?? [] as mic (mic.id)}
-						<option value={mic.id}>{mic.label}</option>
+					<option value=""></option>
+					{#each app.mics ?? [] as device (device.id)}
+						<option value={device.id}>{device.label}</option>
 					{/each}
 				</select>
 			</div>
