@@ -294,6 +294,15 @@ function realtimeUrl(url?: string): string {
 
 // Echo cancellation matters more than anything else here: on laptop speakers
 // the assistant would otherwise hear itself and barge in on its own voice.
+// the largest sample of a block, in absolute value
+function peak(block: Float32Array): number {
+	let max = 0;
+	for (let i = 0; i < block.length; i++) {
+		max = Math.max(max, Math.abs(block[i]));
+	}
+	return max;
+}
+
 // The server canceller wants a steady microphone, so wherever it runs the
 // browser neither suppresses noise nor levels the gain in front of it.
 function micConstraints(echo: S2SEcho, mic?: string): MediaTrackConstraints {
@@ -353,6 +362,8 @@ export class S2S {
 	private source: MediaStreamAudioSourceNode | null = null;
 	private duplex: AudioWorkletNode | null = null;
 	private volume = 1;
+	private input = 0;
+	private output = 0;
 
 	private state: S2SState = 'idle';
 
@@ -385,6 +396,15 @@ export class S2S {
 
 	getState(): S2SState {
 		return this.state;
+	}
+
+	// The peaks of the last 20 ms, linear from 0 to 1: input is what the
+	// microphone sends, silent while muted, output is what plays, volume
+	// applied. Both read 0 while idle.
+	levels(): { input: number; output: number } {
+		return this.state === 'idle'
+			? { input: 0, output: 0 }
+			: { input: this.input, output: this.output };
 	}
 
 	// Must be called from a user gesture: browsers refuse both the microphone
@@ -454,6 +474,8 @@ export class S2S {
 		this.duplex.port.postMessage({ volume: this.volume });
 		this.duplex.port.onmessage = (e) => {
 			if (e.data.mic) {
+				this.input = peak(e.data.mic);
+				this.output = peak(e.data.ref);
 				this.sendAudio(e.data.mic as Float32Array, e.data.ref as Float32Array);
 				return;
 			}

@@ -232,6 +232,30 @@
 		loadMics();
 	});
 
+	// The meters read the peaks in dBFS over METER_FLOOR..0 with analog
+	// ballistics: a peak shows at once, the needle then falls back at
+	// METER_RELEASE dB per second, down to the silence an idle client reads.
+	const METER_FLOOR = -60;
+	const METER_RELEASE = 120;
+	let meter = $state({ input: 0, output: 0 });
+
+	$effect(() => {
+		const db = { input: METER_FLOOR, output: METER_FLOOR };
+		let last = performance.now();
+		let frame = requestAnimationFrame(function tick(now) {
+			const fall = (METER_RELEASE * (now - last)) / 1000;
+			const levels = getClient()?.levels() ?? { input: 0, output: 0 };
+			last = now;
+			for (const side of ['input', 'output'] as const) {
+				const peak = Math.max(20 * Math.log10(levels[side]), METER_FLOOR);
+				db[side] = Math.max(peak, db[side] - fall);
+				meter[side] = 1 - db[side] / METER_FLOOR;
+			}
+			frame = requestAnimationFrame(tick);
+		});
+		return () => cancelAnimationFrame(frame);
+	});
+
 	// The page lists the models once /props says the endpoint belongs to the
 	// session, in every mode but loopback. The effect follows this boolean alone:
 	// /props landing or a field being typed does not change it, so neither
@@ -288,6 +312,17 @@
 			</div>
 		</div>
 	</details>
+
+	<div class="meters">
+		<div class="model-row">
+			<span class="model-label">Input</span>
+			<div class="meter input"><div style:width="{meter.input * 100}%"></div></div>
+		</div>
+		<div class="model-row">
+			<span class="model-label">Output</span>
+			<div class="meter output"><div style:width="{meter.output * 100}%"></div></div>
+		</div>
+	</div>
 
 	<details>
 		<summary>Microphone and AEC</summary>
@@ -862,6 +897,28 @@
 		color: var(--fg);
 		font-weight: 600;
 		padding: 0.4rem 0;
+	}
+	.meters {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+	.meter {
+		flex: 1;
+		height: 0.75rem;
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		background: var(--bg-input);
+		overflow: hidden;
+	}
+	.meter div {
+		height: 100%;
+	}
+	.meter.input div {
+		background: var(--who-user);
+	}
+	.meter.output div {
+		background: var(--who-assistant);
 	}
 	.details-body {
 		display: flex;
