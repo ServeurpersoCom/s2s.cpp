@@ -175,6 +175,9 @@ export interface S2SOptions {
 	// ECHO_DEFAULT unless set. A change reaches a running session, the
 	// microphone constraints included.
 	echo?: S2SEcho;
+	// The microphone, as a deviceId of enumerateDevices. Empty, or absent, is
+	// the browser default. A change reaches a running session.
+	mic?: string;
 }
 
 export interface S2SEvents {
@@ -293,9 +296,10 @@ function realtimeUrl(url?: string): string {
 // the assistant would otherwise hear itself and barge in on its own voice.
 // The server canceller wants a steady microphone, so wherever it runs the
 // browser neither suppresses noise nor levels the gain in front of it.
-function micConstraints(echo: S2SEcho): MediaTrackConstraints {
+function micConstraints(echo: S2SEcho, mic?: string): MediaTrackConstraints {
 	const steady = serverCancels(echo);
 	return {
+		...(mic ? { deviceId: { exact: mic } } : {}),
 		echoCancellation: echo === 'client' || echo === 'both' ? ECHO_CANCELLATION_ALL : false,
 		noiseSuppression: !steady,
 		autoGainControl: !steady,
@@ -346,6 +350,7 @@ export class S2S {
 	private ws: WebSocket | null = null;
 	private context: AudioContext | null = null;
 	private stream: MediaStream | null = null;
+	private source: MediaStreamAudioSourceNode | null = null;
 	private duplex: AudioWorkletNode | null = null;
 	private volume = 1;
 
@@ -432,7 +437,7 @@ export class S2S {
 		this.log(`Audio context at ${context.sampleRate} Hz`);
 
 		const stream = await navigator.mediaDevices.getUserMedia({
-			audio: micConstraints(this.echo())
+			audio: micConstraints(this.echo(), this.options.mic)
 		});
 		if (run !== this.run) {
 			stream.getTracks().forEach((track) => track.stop());
@@ -461,7 +466,8 @@ export class S2S {
 				this.setState('listening');
 			}
 		};
-		context.createMediaStreamSource(stream).connect(this.duplex);
+		this.source = context.createMediaStreamSource(stream);
+		this.source.connect(this.duplex);
 		this.duplex.connect(context.destination);
 
 		await this.connect(run);
@@ -491,6 +497,7 @@ export class S2S {
 		ws?.close();
 		this.stream?.getTracks().forEach((track) => track.stop());
 		this.stream = null;
+		this.source = null;
 		this.context?.close();
 		this.context = null;
 		this.duplex = null;
@@ -550,10 +557,39 @@ export class S2S {
 	// whole session. A key left out of options keeps its value.
 	update(options: Partial<S2SOptions>) {
 		const echo = this.echo();
+		const mic = this.options.mic;
 		Object.assign(this.options, options);
 		this.sendSessionUpdate();
-		if (this.stream && this.echo() !== echo) {
+		if (this.stream && this.options.mic !== mic) {
+			this.applyMic();
+		} else if (this.stream && this.echo() !== echo) {
 			this.applyEcho();
+		}
+	}
+
+	// A track never changes device: another microphone is a new stream,
+	// opened with the constraints of the method in force, that takes the
+	// place of the previous one in front of the worklet.
+	private async applyMic() {
+		const run = this.run;
+		try {
+			const stream = await navigator.mediaDevices.getUserMedia({
+				audio: micConstraints(this.echo(), this.options.mic)
+			});
+			if (run !== this.run || !this.context || !this.duplex) {
+				stream.getTracks().forEach((track) => track.stop());
+				return;
+			}
+			this.stream?.getTracks().forEach((track) => track.stop());
+			this.source?.disconnect();
+			this.stream = stream;
+			this.source = this.context.createMediaStreamSource(stream);
+			this.source.connect(this.duplex);
+			this.log(`Microphone switched, ${this.micApplied()}`);
+		} catch (e) {
+			const message = `Microphone switch refused, ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`;
+			this.log(message);
+			this.handlers.error?.(message);
 		}
 	}
 
@@ -571,11 +607,12 @@ export class S2S {
 			});
 	}
 
-	// What really runs on the microphone: the server canceller, and what the
-	// browser applies, which is not always what was asked.
+	// What really runs on the microphone: the device, the server canceller,
+	// and what the browser applies, which is not always what was asked.
 	private micApplied(): string {
-		const settings = this.stream?.getAudioTracks()[0]?.getSettings();
-		return `server echo cancellation ${serverCancels(this.echo())}, browser echo cancellation ${settings?.echoCancellation}, noise suppression ${settings?.noiseSuppression}, gain control ${settings?.autoGainControl}`;
+		const track = this.stream?.getAudioTracks()[0];
+		const settings = track?.getSettings();
+		return `device ${track?.label}, server echo cancellation ${serverCancels(this.echo())}, browser echo cancellation ${settings?.echoCancellation}, noise suppression ${settings?.noiseSuppression}, gain control ${settings?.autoGainControl}`;
 	}
 
 	private setState(state: S2SState) {

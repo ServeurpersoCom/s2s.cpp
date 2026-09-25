@@ -55,6 +55,7 @@ export interface Settings {
 	turnMaxWaitMs: string;
 	turnGraceMs: string;
 	echo: S2SEcho | '';
+	mic: string; // a deviceId, empty for the browser default
 	volume: number;
 	chatOpen: boolean;
 	logsOpen: boolean;
@@ -110,6 +111,7 @@ function defaults(): Settings {
 		turnMaxWaitMs: '',
 		turnGraceMs: '',
 		echo: '',
+		mic: '',
 		volume: 1,
 		chatOpen: true,
 		logsOpen: true,
@@ -131,10 +133,12 @@ function load(): Settings {
 
 export const settings = $state(load());
 
-// server defaults, null until /props answers, plus the toast the page shows
-// when something the user did could not happen
+// server defaults, null until /props answers, the microphones of the
+// browser, null until it names them, plus the toast the page shows when
+// something the user did could not happen
 export const app = $state({
 	props: null as S2SProps | null,
+	mics: null as { id: string; label: string }[] | null,
 	toast: '' as string,
 	toastOk: false
 });
@@ -201,6 +205,7 @@ $effect.root(() => {
 			turnMaxWaitMs: settings.turnMaxWaitMs,
 			turnGraceMs: settings.turnGraceMs,
 			echo: settings.echo,
+			mic: settings.mic,
 			volume: settings.volume,
 			chatOpen: settings.chatOpen,
 			logsOpen: settings.logsOpen,

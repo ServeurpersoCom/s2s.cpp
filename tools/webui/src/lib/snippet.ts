@@ -70,7 +70,9 @@ export function snippet(): string {
 		llmUrl: undefined,
 		llmModel: undefined,
 		llmKey: undefined,
-		mcp: undefined
+		mcp: undefined,
+		// a deviceId only means something to the origin that got it
+		mic: undefined
 	}) ?? {}) as Record<string, unknown>;
 	// a server that owns its endpoint keeps it from the page: the command
 	// gets the examples, never what the browser kept from another server

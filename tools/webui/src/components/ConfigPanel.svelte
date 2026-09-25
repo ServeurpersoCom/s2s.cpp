@@ -22,6 +22,9 @@
 
 	let d = $derived(app.props?.defaults);
 
+	// the microphone in force: the one set when the browser still lists it
+	let mic = $derived(!app.mics || app.mics.some((m) => m.id === settings.mic) ? settings.mic : '');
+
 	// the mode in force: the field when set, the server default otherwise
 	let mode = $derived(settings.mode || d?.mode || '');
 
@@ -59,6 +62,24 @@
 
 	function onEcho(e: Event) {
 		settings.echo = (e.target as HTMLSelectElement).value as S2SEcho;
+	}
+
+	function onMic(e: Event) {
+		settings.mic = (e.target as HTMLSelectElement).value;
+	}
+
+	// The browser names its microphones only once the page holds the
+	// permission: before that the list stays unknown. Its own default
+	// entries are left out, Default below already means them.
+	async function loadMics() {
+		const devices = await navigator.mediaDevices?.enumerateDevices();
+		const mics = (devices ?? [])
+			.filter((device) => device.kind === 'audioinput' && device.label)
+			.filter((device) => device.deviceId !== 'default' && device.deviceId !== 'communications')
+			.map((device) => ({ id: device.deviceId, label: device.label }));
+		if (mics.length > 0) {
+			app.mics = mics;
+		}
 	}
 
 	function onModel(e: Event) {
@@ -198,6 +219,7 @@
 	function start() {
 		getClient()
 			?.start()
+			.then(loadMics)
 			.catch(() => {});
 	}
 
@@ -205,7 +227,10 @@
 		getClient()?.stop();
 	}
 
-	onMount(loadProps);
+	onMount(() => {
+		loadProps();
+		loadMics();
+	});
 
 	// The page lists the models once /props says the endpoint belongs to the
 	// session, in every mode but loopback. The effect follows this boolean alone:
@@ -265,10 +290,19 @@
 	</details>
 
 	<details>
-		<summary>Echo cancellation</summary>
+		<summary>Microphone and AEC</summary>
 		<div class="details-body">
 			<div class="model-row">
-				<span class="model-label">Method</span>
+				<span class="model-label">Input</span>
+				<select class="model-select" value={mic} onchange={onMic}>
+					<option value="">Default</option>
+					{#each app.mics ?? [] as mic (mic.id)}
+						<option value={mic.id}>{mic.label}</option>
+					{/each}
+				</select>
+			</div>
+			<div class="model-row">
+				<span class="model-label">AEC</span>
 				<select class="model-select" value={settings.echo || ECHO_DEFAULT} onchange={onEcho}>
 					{#each ECHO_MODES as echo (echo)}
 						<option value={echo}>{ECHO_LABELS[echo]}</option>

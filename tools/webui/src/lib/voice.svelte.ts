@@ -2,9 +2,10 @@ import type { S2S, S2SMcpServer, S2SMessage, S2SOptions, S2SState } from './s2s.
 import { num } from './fields.js';
 import { app, settings, toast } from './state.svelte.js';
 
-// A value the server does not serve is left out and its default applies: a
-// voice or a language kept from another server. Before /props answers there
-// is no list to judge by, and the value goes as it is.
+// A value the server or the browser does not serve is left out and its
+// default applies: a voice or a language kept from another server, a
+// microphone no longer plugged in. Before the list is known there is nothing
+// to judge by, and the value goes as it is.
 function served(value: string, list: string[] | undefined): string | undefined {
 	return value && (!list || list.includes(value)) ? value : undefined;
 }
@@ -107,7 +108,11 @@ export function toOptions(): S2SOptions {
 			maxWaitMs: num(settings.turnMaxWaitMs),
 			graceMs: num(settings.turnGraceMs)
 		},
-		echo: settings.echo || undefined
+		echo: settings.echo || undefined,
+		mic: served(
+			settings.mic,
+			app.mics?.map((mic) => mic.id)
+		)
 	};
 }
 
