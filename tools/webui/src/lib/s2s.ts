@@ -32,6 +32,8 @@
 const SAMPLE_RATE = 24000;
 const FRAME_SAMPLES = 480; // 20 ms
 
+const RECONNECT_MS = 1000; // between two tries after a dropped connection
+
 // Who removes the assistant voice from the microphone. client asks the
 // browser to cancel everything the system plays, this page included, server
 // hands the raw microphone and the played reference to s2s-server, both
@@ -431,6 +433,9 @@ export class S2S {
 	// or a socket of an earlier run, sees a different number and backs off.
 	private run = 0;
 
+	private established = false; // a connection of this run opened
+	private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+
 	constructor(options: S2SOptions) {
 		this.options = options;
 	}
@@ -556,8 +561,9 @@ export class S2S {
 	// so no line keeps the item of a turn that no longer exists.
 	private teardown() {
 		this.closeAnswer();
-		this.userItem = '';
-		this.history = this.history.map(({ role, content }) => ({ role, content }));
+		this.forgetTurns();
+		clearTimeout(this.reconnectTimer);
+		this.established = false;
 		this.run++;
 		const ws = this.ws;
 		this.ws = null;
@@ -569,6 +575,27 @@ export class S2S {
 		this.context = null;
 		this.duplex = null;
 		this.setState('idle');
+	}
+
+	private forgetTurns() {
+		this.userItem = '';
+		this.history = this.history.map(({ role, content }) => ({ role, content }));
+	}
+
+	// Keeps the microphone and the playback up and tries a new socket until
+	// one opens or the session stops.
+	private reconnect(run: number) {
+		this.ws = null;
+		this.flushPlayback();
+		this.closeAnswer();
+		this.forgetTurns();
+		this.setState('listening');
+		this.log(`Reconnecting in ${RECONNECT_MS} ms`);
+		this.reconnectTimer = setTimeout(() => {
+			if (run === this.run) {
+				this.connect(run).catch(() => {});
+			}
+		}, RECONNECT_MS);
 	}
 
 	setVolume(volume: number) {
@@ -821,8 +848,11 @@ export class S2S {
 
 			this.log(`Connecting to ${url}`);
 
+			let opened = false;
 			ws.onopen = () => {
-				this.log('Connected');
+				this.log(this.established ? 'Reconnected' : 'Connected');
+				opened = true;
+				this.established = true;
 				this.sendSessionUpdate();
 				this.pushHistory();
 				resolve();
@@ -836,13 +866,19 @@ export class S2S {
 					return;
 				}
 				this.log(`Connection closed, code ${event.code}`);
-				// A clean close follows the error event that explains it; one
-				// that is not, a server gone or a network cut, explains nothing
-				// on its own and is reported as such.
-				if (!event.wasClean) {
-					this.handlers.error?.(`Connection lost, code ${event.code}`);
+				// A clean close is the server ending the session, a drop after
+				// a connection opened reconnects.
+				if (event.wasClean || !this.established) {
+					if (!event.wasClean) {
+						this.handlers.error?.(`Connection lost, code ${event.code}`);
+					}
+					this.teardown();
+					return;
 				}
-				this.teardown();
+				if (opened) {
+					this.handlers.error?.(`Connection lost, code ${event.code}, reconnecting`);
+				}
+				this.reconnect(run);
 			};
 			ws.onmessage = (event) => this.onServerEvent(event.data as string);
 		});
