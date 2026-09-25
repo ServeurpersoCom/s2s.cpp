@@ -70,7 +70,7 @@
 
 	// The browser names its microphones only once the page holds the
 	// permission: before that the list stays unknown. Its own default
-	// entries are left out, the empty entry below already means them.
+	// entries are left out, Auto below already means them.
 	async function loadMics() {
 		const devices = await navigator.mediaDevices?.enumerateDevices();
 		const mics = (devices ?? [])
@@ -295,7 +295,7 @@
 			<div class="model-row">
 				<span class="model-label">Input</span>
 				<select class="model-select" value={mic} onchange={onMic}>
-					<option value=""></option>
+					<option value="">Auto</option>
 					{#each app.mics ?? [] as device (device.id)}
 						<option value={device.id}>{device.label}</option>
 					{/each}
