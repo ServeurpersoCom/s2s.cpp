@@ -31,7 +31,7 @@
 // incomplete_delay_ms with nothing running, the pauses of a breath, then
 // commits with the rest of turn_max_wait_ms as its grace: the answer is
 // computed while the silence lasts and heard at turn_max_wait_ms at the
-// latest. A commit the caller forces has no grace.
+// latest.
 //
 // The committed audio ends speech_pad_ms after the last speech: the silence
 // a turn keeps while it waits is not handed over, since a short word drowned
@@ -122,8 +122,3 @@ void s2s_session_set_speaking(s2s_session * s, bool speaking);
 // otherwise. A release that names another turn or an older revision does
 // nothing, so the caller may repeat it freely.
 void s2s_session_release(s2s_session * s, int turn_id, int revision);
-
-// Commits the turn in flight right now, whatever the classifier thinks. This
-// is what a push to talk button and the end of a stream need. No turn open
-// means nothing happens.
-void s2s_session_commit_now(s2s_session * s);

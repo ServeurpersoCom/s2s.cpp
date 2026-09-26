@@ -13,7 +13,7 @@
 #     before answer  after the grace, before any answer: still the same turn
 #     answer heard   after the answer started playing: a new turn, a barge-in
 #
-# Around it: a push to talk, a broken endpoint, an endpoint that answers
+# Around it: a broken endpoint, an endpoint that answers
 # nothing, an endpoint nothing answers at all, a tool call over MCP and one
 # that runs past its timeout, a room whose echo the server cancels, and a
 # server that owns its endpoint.
@@ -57,7 +57,6 @@ TMP = "tmp"
 
 A, B, C = "0-5.9", "6-11.5", "11.9-16"
 UNREACHABLE = "http://10.255.255.1:9/v1"  # a private address with nothing behind it: the connection hangs
-GRACE_S = 0.8     # reopen_grace_ms at its default
 REACTION_S = 1.5  # longest a talk over may take to stop the playback and the response
 ECHO_WORDS = ("different", "cultures", "creation", "afterlife")
 
@@ -178,15 +177,6 @@ def check_barge_in(label, run, passage=B, words="afterlife", writing=True):
                  "the talk over heard: %s" % (heard[0] if heard else "nothing")) and ok
 
 
-# A commit mid sentence and the microphone cut: the answer still comes, with
-# no grace.
-def check_push_to_talk(label, run):
-    committed = run.first("Client", "commit")
-    audio = run.first("Event", "response.output_audio.delta", committed or 0.0)
-    return check("%s answer" % label, committed is not None and audio is not None and audio - committed < GRACE_S,
-                 "first audio %.2fs after the commit, no grace" % ((audio or 0.0) - (committed or 0.0)))
-
-
 # The model thinks and ends without a word: the answer closes as done, with
 # no sound, the client is told the model answered nothing, and the log says
 # what came back.
@@ -277,7 +267,6 @@ CASES = [
     ("before answer 2.5", SLOW + ["say:" + A, "pause:2.5", "say:" + B, "pause:3"], check_same_turn),
     ("heard 1000", SLOW + ["say:" + A, "heard:1000", "say:" + B, "pause:3"], check_barge_in),
     ("heard 2000", SLOW + ["say:" + A, "heard:2000", "say:" + B, "pause:3"], check_barge_in),
-    ("push to talk", FAST + ["say:0-3", "commit", "mute:3"], check_push_to_talk),
     ("broken endpoint", ["--mode", "conversation", "--llm", "broken", "say:" + A, "pause:3"], check_broken),
     ("empty answer", ["--mode", "conversation", "--llm", "empty", "say:" + A, "pause:3"], check_empty),
     ("mcp tool", ["--mode", "agentic", "--llm", "agent", "--mcp", "say:" + A, "pause:3"], check_mcp),
@@ -383,8 +372,7 @@ def check_mcp_log(path):
 
 
 # From the server log, over every case: a turn turns final no sooner than the
-# grace its commit was given, which the log states. A commit the client forces
-# has none, which the push to talk shows with an answer sooner than the grace.
+# grace its commit was given, which the log states.
 def check_grace_log(path):
     commits, graced, ok = {}, 0, True
     for line in open(path, errors="replace"):

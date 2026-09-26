@@ -10,7 +10,6 @@
 //   input_audio_buffer.append        base64 PCM16 from the microphone, plus
 //                                    the reference the client played during
 //                                    the same samples when it is not silent
-//   input_audio_buffer.commit        push to talk release, commits the turn
 //   response.cancel                  barge-in raised by the client
 //   conversation.history             the conversation, owned by the client
 //
@@ -53,7 +52,6 @@ enum rt_client_event {
     RT_CLIENT_UNKNOWN = 0,
     RT_CLIENT_SESSION_UPDATE,
     RT_CLIENT_AUDIO_APPEND,
-    RT_CLIENT_AUDIO_COMMIT,
     RT_CLIENT_RESPONSE_CANCEL,
     RT_CLIENT_HISTORY,
 };
@@ -403,8 +401,6 @@ static rt_client_message rt_parse(const std::string & frame) {
         const std::string reference = rt_json_str(root, "reference");
         rt_pcm16_to_float(rt_base64_decode(audio.c_str(), audio.size()), message.audio);
         rt_pcm16_to_float(rt_base64_decode(reference.c_str(), reference.size()), message.reference);
-    } else if (type == "input_audio_buffer.commit") {
-        message.type = RT_CLIENT_AUDIO_COMMIT;
     } else if (type == "response.cancel") {
         message.type = RT_CLIENT_RESPONSE_CANCEL;
     } else if (type == "conversation.history") {

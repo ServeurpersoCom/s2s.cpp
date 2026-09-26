@@ -1235,14 +1235,6 @@ void conn_frame(Connection * conn, const std::string & frame) {
             }
             break;
 
-        case RT_CLIENT_AUDIO_COMMIT:
-            s2s_log(S2S_LOG_INFO, "[Realtime] Audio buffer commit");
-            {
-                std::lock_guard<std::mutex> lock(conn->session_mutex);
-                s2s_session_commit_now(conn->session);
-            }
-            break;
-
         case RT_CLIENT_RESPONSE_CANCEL:
             s2s_log(S2S_LOG_INFO, "[Realtime] Response cancel");
             conn->cancel.store(true);

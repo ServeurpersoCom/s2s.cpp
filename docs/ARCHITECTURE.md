@@ -104,7 +104,7 @@ silence, and heard at `turn_max_wait_ms` at the latest, or as soon as
 it is ready when the endpoint takes longer. The delay is the trade: a
 speaker who goes on within it costs nothing, one who goes on after it
 costs a request nobody hears, and the shorter it is the slower an
-endpoint the wait can hide. A commit the client forces has no grace.
+endpoint the wait can hide.
 The release: the
 responder tells the session, under the session lock it shares with the
 reader, when its first unit reaches the gate or when the turn ends with
@@ -330,7 +330,7 @@ an extra `reference` field, the audio played during the same samples,
 when the echo cancellation runs on the server and something played.
 
 Client to server: `session.update`, `input_audio_buffer.append`,
-`input_audio_buffer.commit`, `response.cancel`, `conversation.history`.
+`response.cancel`, `conversation.history`.
 
 Server to client: `session.created`, `session.updated`, which carries
 `session.tts.voice` and `session.tts.effect` when the model changed its
@@ -470,7 +470,6 @@ one of three brackets:
 | grace | the pause ends before the grace ran out: one turn, one message to the model, silent until the end |
 | before answer | the pause ends after the grace but before a slow endpoint answered: the same |
 | answer heard | the second sentence talks over the answer: a new turn, response and endpoint request stopped |
-| push to talk | a commit mid sentence and a microphone cut still get an answer, with no grace |
 | broken endpoint | the error reaches the client, the response still closes |
 | empty answer | a model that thinks and writes nothing: the answer closes as done, silent, the client gets the error and the log says why |
 | unreachable endpoint | a connection nothing answers, which no cancel reaches: the revisions are recognized as fast as ever, the answer fails within the timeout |

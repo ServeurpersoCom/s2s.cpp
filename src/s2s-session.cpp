@@ -197,13 +197,6 @@ void s2s_session_set_speaking(s2s_session * s, bool speaking) {
     }
 }
 
-void s2s_session_commit_now(s2s_session * s) {
-    if (!s || s->phase == S2S_SESSION_IDLE || s->turn_pcm.empty()) {
-        return;
-    }
-    s2s_session_commit(s, 0.0f, 0);
-}
-
 static void s2s_session_emit(s2s_session * s, s2s_session_event event, float score) {
     if (!s->cb) {
         return;

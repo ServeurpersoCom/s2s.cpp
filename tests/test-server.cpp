@@ -10,8 +10,6 @@
 //
 //   say:A-B    the passage of the WAV from A to B seconds
 //   pause:S    S seconds of silence
-//   commit     input_audio_buffer.commit, the end of a push to talk
-//   mute:S     S seconds without a frame, the microphone off
 //   heard:MS   silence until MS ms of the answer have played, 20 s at most
 //
 // Once the script is done, the client settles: it streams silence while a
@@ -78,7 +76,7 @@ static void print_usage(const char * prog) {
     fprintf(stderr,
             "Usage: %s <url> <wav> [options] <step>...\n"
             "\n"
-            "Steps: say:A-B, pause:S, commit, mute:S, heard:MS\n"
+            "Steps: say:A-B, pause:S, heard:MS\n"
             "\n"
             "Options:\n"
             "  --mode <mode>          loopback or conversation (default: loopback)\n"
@@ -108,9 +106,6 @@ struct Step {
 static bool parse_step(const char * arg, Step & step) {
     const char * colon = strchr(arg, ':');
     step.name          = colon ? std::string(arg, (size_t) (colon - arg)) : std::string(arg);
-    if (step.name == "commit") {
-        return colon == nullptr;
-    }
     if (!colon) {
         return false;
     }
@@ -118,7 +113,7 @@ static bool parse_step(const char * arg, Step & step) {
         return sscanf(colon + 1, "%lf-%lf", &step.a, &step.b) == 2 && step.b > step.a;
     }
     step.a = atof(colon + 1);
-    return step.name == "pause" || step.name == "mute" || step.name == "heard";
+    return step.name == "pause" || step.name == "heard";
 }
 
 // The loudspeaker: what the server sent and has not played yet, everything it
@@ -645,7 +640,7 @@ int main(int argc, char ** argv) {
             step_start = now;
             if (step.name == "say") {
                 printf("[Client] %7.2fs  say %.2f-%.2f\n", now, step.a, step.b);
-            } else if (step.name == "commit" || step.name == "settle") {
+            } else if (step.name == "settle") {
                 printf("[Client] %7.2fs  %s\n", now, step.name.c_str());
             } else {
                 printf("[Client] %7.2fs  %s %g\n", now, step.name.c_str(), step.a);
@@ -655,7 +650,6 @@ int main(int argc, char ** argv) {
 
         std::fill(voice.begin(), voice.end(), 0.0f);
         bool done = false;
-        bool mute = false;
         if (step.name == "say") {
             const size_t from = (size_t) (step.a * SAMPLE_RATE_24K) + said;
             const size_t to   = (size_t) (step.b * SAMPLE_RATE_24K);
@@ -664,9 +658,6 @@ int main(int argc, char ** argv) {
             said += n;
             done = from + n >= to;
         } else if (step.name == "pause") {
-            done = now - step_start >= step.a;
-        } else if (step.name == "mute") {
-            mute = true;
             done = now - step_start >= step.a;
         } else if (step.name == "heard") {
             std::lock_guard<std::mutex> lock(speaker.mutex);
@@ -677,9 +668,6 @@ int main(int argc, char ** argv) {
                 printf("[Client] %7.2fs  no answer heard\n", now);
                 done = true;
             }
-        } else if (step.name == "commit") {
-            sent = client.send(std::string("{\"type\":\"input_audio_buffer.commit\"}"));
-            done = true;
         } else if (step.name == "settle") {
             std::lock_guard<std::mutex> lock(speaker.mutex);
             const bool                  quiet = !speaker.open_response && speaker.queue.empty() &&
@@ -712,17 +700,15 @@ int main(int argc, char ** argv) {
             }
         }
 
-        if (!mute) {
-            const std::string audio = rt_float_to_pcm16_base64(mic.data(), frame);
-            const std::string reference =
-                any && (echo == "server" || echo == "both") ? rt_float_to_pcm16_base64(playback.data(), frame) : "";
-            rt_frame append = rt_frame_begin("input_audio_buffer.append");
-            rt_frame_str(append, "audio", audio);
-            if (!reference.empty()) {
-                rt_frame_str(append, "reference", reference);
-            }
-            sent = client.send(rt_frame_end(append));
+        const std::string audio = rt_float_to_pcm16_base64(mic.data(), frame);
+        const std::string reference =
+            any && (echo == "server" || echo == "both") ? rt_float_to_pcm16_base64(playback.data(), frame) : "";
+        rt_frame append = rt_frame_begin("input_audio_buffer.append");
+        rt_frame_str(append, "audio", audio);
+        if (!reference.empty()) {
+            rt_frame_str(append, "reference", reference);
         }
+        sent = client.send(rt_frame_end(append));
 
         if (done) {
             step_index++;
