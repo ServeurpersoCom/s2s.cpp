@@ -14,11 +14,11 @@
 //   conversation.history             the conversation, owned by the client
 //
 // Server to client:
-//   session.created, session.updated
+//   session.updated
 //                                    with session.tts.voice and
 //                                    session.tts.effect when the model
 //                                    changes its voice with set_voice
-//   input_audio_buffer.speech_started, input_audio_buffer.speech_stopped
+//   input_audio_buffer.speech_started
 //   conversation.item.input_audio_transcription.completed
 //                                    with the item_id of its turn: a later
 //                                    transcript of the same turn replaces it

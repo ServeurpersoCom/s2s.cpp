@@ -332,10 +332,10 @@ when the echo cancellation runs on the server and something played.
 Client to server: `session.update`, `input_audio_buffer.append`,
 `response.cancel`, `conversation.history`.
 
-Server to client: `session.created`, `session.updated`, which carries
+Server to client: `session.updated`, which carries
 `session.tts.voice` and `session.tts.effect` when the model changed its
 voice with `set_voice`,
-`input_audio_buffer.speech_started`, `input_audio_buffer.speech_stopped`,
+`input_audio_buffer.speech_started`,
 `conversation.item.input_audio_transcription.completed`,
 `response.created`, `response.output_text.delta`,
 `response.output_audio.delta`, `response.output_audio_transcript.delta`,

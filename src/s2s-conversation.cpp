@@ -909,7 +909,6 @@ static void conn_on_session_event(const s2s_session_report * report, void * user
         case S2S_EVENT_SPEECH_STOPPED:
             s2s_log(S2S_LOG_INFO, "[Session] Speech stopped at %.2fs (turn %d rev %d)", report->time_sec,
                     report->turn_id, report->revision);
-            conn_send(conn, rt_event("input_audio_buffer.speech_stopped"));
             break;
 
         case S2S_EVENT_TURN_REOPENED:
@@ -1188,7 +1187,6 @@ Connection * conn_open(const ConversationSetup * setup, int id, conn_send_fn sen
     conn->writer     = std::thread(conn_writer, conn);
     conn->recognizer = std::thread(conn_recognizer, conn);
     conn->responder  = std::thread(conn_responder, conn);
-    conn_send(conn, rt_event("session.created"));
     return conn;
 }
 

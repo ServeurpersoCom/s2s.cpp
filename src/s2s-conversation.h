@@ -71,9 +71,8 @@ typedef bool (*conn_send_fn)(const std::string & frame, void * user);
 
 struct Connection;
 
-// Opens conversation id and starts its talking half, then greets the client
-// with session.created. Returns nullptr when its session cannot start, after
-// telling the client why.
+// Opens conversation id and starts its talking half. Returns nullptr when its
+// session cannot start, after telling the client why.
 Connection * conn_open(const ConversationSetup * setup, int id, conn_send_fn send, void * send_user);
 
 // Handles one text frame the client sent, on the thread that reads them.
