@@ -358,10 +358,16 @@ static void print_usage(const char * prog) {
             "  --llm-url <url>        OpenAI compatible endpoint\n"
             "  --llm-model <name>     Model on that endpoint\n"
             "  --llm-key-file <path>  File holding its API key, read at startup\n"
+            "  --llm-timeout <s>      Longest the endpoint may stay silent, a prefill included\n"
+            "                         (default: 10)\n"
+            "  --reasoning-effort <e> How long a reasoning model thinks before it answers: none,\n"
+            "                         or a level of its chat template (default: none)\n"
             "  --tool <name>          Tool the agentic mode offers, repeatable: set_voice, a tool\n"
             "                         of an MCP server or of the endpoint\n"
             "  --mcp <url>            MCP server, repeatable, Streamable HTTP\n"
             "  --mcp-key-file <path>  File holding the key of the --mcp named before it\n"
+            "  --tool-timeout <s>     Longest a tool may work before its call fails (default: 10)\n"
+            "  --max-rounds <N>       Rounds of tool calls one turn may take (default: 10)\n"
             "  --voice <label>        Voice, one of the labels the log lists at startup\n"
             "  --effect <name>        Effect over the voice: off or jarvis (default: off)\n"
             "  --language <name>      Language of the voice (default: auto, English)\n"
@@ -415,8 +421,12 @@ int main(int argc, char ** argv) {
     std::string                    llm_url;
     std::string                    llm_model;
     std::string                    llm_key;
+    int                            llm_timeout = -1;
+    std::string                    reasoning_effort;
     std::vector<std::string>       tools;
     std::vector<mcp_server_params> mcp;
+    int                            tool_timeout = -1;
+    int                            max_rounds   = -1;
     std::string                    voice;
     std::string                    effect;
     std::string                    language;
@@ -449,6 +459,10 @@ int main(int argc, char ** argv) {
             if (!read_key(argv[++i], llm_key)) {
                 return 1;
             }
+        } else if (arg == "--llm-timeout" && has_value) {
+            llm_timeout = atoi(argv[++i]);
+        } else if (arg == "--reasoning-effort" && has_value) {
+            reasoning_effort = argv[++i];
         } else if (arg == "--tool" && has_value) {
             tools.push_back(argv[++i]);
         } else if (arg == "--mcp" && has_value) {
@@ -463,6 +477,10 @@ int main(int argc, char ** argv) {
             if (!read_key(argv[++i], mcp.back().api_key)) {
                 return 1;
             }
+        } else if (arg == "--tool-timeout" && has_value) {
+            tool_timeout = atoi(argv[++i]);
+        } else if (arg == "--max-rounds" && has_value) {
+            max_rounds = atoi(argv[++i]);
         } else if (arg == "--voice" && has_value) {
             voice = argv[++i];
         } else if (arg == "--effect" && has_value) {
@@ -583,6 +601,9 @@ int main(int argc, char ** argv) {
     str(session, "llm_url", llm_url);
     str(session, "llm_model", llm_model);
     str(session, "llm_key", llm_key);
+    if (llm_timeout > 0) {
+        yyjson_mut_obj_add_int(update.doc, session, "llm_timeout_sec", llm_timeout);
+    }
     yyjson_mut_val * tool_names = yyjson_mut_obj_add_arr(update.doc, session, "tools");
     for (const std::string & tool : tools) {
         yyjson_mut_arr_add_strn(update.doc, tool_names, tool.c_str(), tool.size());
@@ -592,6 +613,14 @@ int main(int argc, char ** argv) {
         yyjson_mut_val * entry = yyjson_mut_arr_add_obj(update.doc, servers);
         str(entry, "url", server.url);
         str(entry, "key", server.api_key);
+    }
+    yyjson_mut_val * sampling = yyjson_mut_obj_add_obj(update.doc, session, "sampling");
+    str(sampling, "reasoning_effort", reasoning_effort);
+    if (tool_timeout > 0) {
+        yyjson_mut_obj_add_int(update.doc, session, "tool_timeout_sec", tool_timeout);
+    }
+    if (max_rounds > 0) {
+        yyjson_mut_obj_add_int(update.doc, session, "max_rounds", max_rounds);
     }
     yyjson_mut_val * tts = yyjson_mut_obj_add_obj(update.doc, session, "tts");
     str(tts, "voice", voice);
