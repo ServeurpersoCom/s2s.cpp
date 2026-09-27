@@ -11,11 +11,11 @@
 #include "llm-client.h"
 #include "localvqe.h"
 #include "log-capture.h"
-#include "model-find.h"
 #include "parakeet.h"
 #include "realtime-proto.h"
 #include "s2s-conversation.h"
 #include "s2s-error.h"
+#include "s2s-models.h"
 #include "s2s-session.h"
 #include "s2s.js.gz.hpp"
 #include "silero.h"
@@ -34,11 +34,6 @@
 #include <fstream>
 #include <string>
 #include <vector>
-
-// Frame ceiling of one synthesis, the value the Python reference settles on.
-// The per utterance budget of the bridge sits well below it; this only bounds
-// the worst case.
-#define S2S_TTS_MAX_NEW_TOKENS 1536
 
 static httplib::Server * g_server = nullptr;
 
@@ -148,8 +143,6 @@ int main(int argc, char ** argv) {
     // endpoint is the exception: the server's own when the command line names
     // one, never published, never overridden.
     llm_client_params llm_defaults;
-    const std::string system_prompt = "You are a voice assistant. Answer in one or two short spoken sentences.";
-    const std::string mode          = "loopback";
 
     if (argc < 2) {
         print_usage(argv[0]);
@@ -214,63 +207,8 @@ int main(int argc, char ** argv) {
         }
     }
 
-    const std::string vad_path    = find_model(models_dir, "silero-vad", "");
-    const std::string turn_path   = find_model(models_dir, "smart-turn", "");
-    const std::string asr_path    = find_model(models_dir, "parakeet", "");
-    const std::string talker_path = find_model(models_dir, "qwen-talker", "-base-");
-    const std::string codec_path  = find_model(models_dir, "qwen-tokenizer", "");
-    const std::string aec_path    = find_model(models_dir, "localvqe", "");
-
-    if (vad_path.empty() || turn_path.empty() || asr_path.empty() || talker_path.empty() || codec_path.empty() ||
-        aec_path.empty()) {
-        s2s_log(S2S_LOG_ERROR, "[Server] FATAL: missing models in %s, run ./models.sh", models_dir.c_str());
-        return 1;
-    }
-
-    s2s_log(S2S_LOG_INFO, "[Load] VAD %s", vad_path.c_str());
-    s2s_log(S2S_LOG_INFO, "[Load] Turn %s", turn_path.c_str());
-    s2s_log(S2S_LOG_INFO, "[Load] ASR %s", asr_path.c_str());
-    s2s_log(S2S_LOG_INFO, "[Load] TTS %s + %s, voices from %s", talker_path.c_str(), codec_path.c_str(),
-            voices_dir.c_str());
-    s2s_log(S2S_LOG_INFO, "[Load] AEC %s", aec_path.c_str());
-
-    setup.models.vad = sv_init(vad_path.c_str());
-    if (!setup.models.vad) {
-        s2s_log(S2S_LOG_ERROR, "[Server] FATAL: %s", sv_last_error());
-        return 1;
-    }
-
-    setup.models.turn = st_init(turn_path.c_str());
-    if (!setup.models.turn) {
-        s2s_log(S2S_LOG_ERROR, "[Server] FATAL: %s", st_last_error());
-        return 1;
-    }
-
-    pk_init_params asr_init = pk_init_default_params();
-    asr_init.model_path     = asr_path.c_str();
-
-    setup.models.asr = pk_init(&asr_init);
-    if (!setup.models.asr) {
-        s2s_log(S2S_LOG_ERROR, "[Server] FATAL: %s", pk_last_error());
-        return 1;
-    }
-
-    tts_bridge_params tts_init;
-    tts_init.talker_path             = talker_path;
-    tts_init.codec_path              = codec_path;
-    tts_init.voices_dir              = voices_dir;
-    tts_init.sampling.max_new_tokens = S2S_TTS_MAX_NEW_TOKENS;
-    tts_init.engine                  = engine;
-
-    setup.models.tts = tts_bridge_load(tts_init);
-    if (!setup.models.tts) {
-        s2s_log(S2S_LOG_ERROR, "[Server] FATAL: %s", tts_bridge_last_error());
-        return 1;
-    }
-
-    setup.models.aec = lv_init(aec_path.c_str());
-    if (!setup.models.aec) {
-        s2s_log(S2S_LOG_ERROR, "[Server] FATAL: %s", lv_last_error());
+    ModelFiles files;
+    if (!models_load(models_dir, voices_dir, engine, files, setup)) {
         return 1;
     }
 
@@ -281,10 +219,7 @@ int main(int argc, char ** argv) {
 
     setup.llm_hosts = llm_hosts;
 
-    setup.defaults.mode          = mode;
-    setup.defaults.tts           = tts_bridge_defaults_request(setup.models.tts);
-    setup.defaults.llm           = llm_defaults;
-    setup.defaults.system_prompt = system_prompt;
+    setup.defaults.llm = llm_defaults;
 
     httplib::Server server;
     g_server = &server;
@@ -353,12 +288,12 @@ int main(int argc, char ** argv) {
             const std::string name = std::filesystem::u8path(path).filename().u8string();
             yyjson_mut_obj_add_strncpy(doc, models, key, name.c_str(), name.size());
         };
-        file("vad", vad_path);
-        file("turn", turn_path);
-        file("asr", asr_path);
-        file("talker", talker_path);
-        file("codec", codec_path);
-        file("aec", aec_path);
+        file("vad", files.vad);
+        file("turn", files.turn);
+        file("asr", files.asr);
+        file("talker", files.talker);
+        file("codec", files.codec);
+        file("aec", files.aec);
 
         yyjson_mut_val * defaults = yyjson_mut_obj_add_obj(doc, root, "defaults");
         const auto       str      = [doc, defaults](const char * key, const std::string & value) {
@@ -370,10 +305,10 @@ int main(int argc, char ** argv) {
                 yyjson_mut_arr_add_strn(doc, array, value.c_str(), value.size());
             }
         };
-        str("mode", mode);
+        str("mode", setup.defaults.mode);
         yyjson_mut_obj_add_bool(doc, defaults, "llm_fixed", setup.llm_fixed);
         yyjson_mut_obj_add_bool(doc, defaults, "mcp_fixed", setup.mcp_fixed);
-        str("instructions", system_prompt);
+        str("instructions", setup.defaults.system_prompt);
         str("voice", voice.voice);
         str("tts_effect", voice.effect);
         strs("tts_effects", conn_effects());
@@ -635,7 +570,7 @@ int main(int argc, char ** argv) {
     signal(SIGTERM, on_signal);
 
     s2s_log(S2S_LOG_INFO, "[Server] s2s-server %s", S2S_VERSION);
-    s2s_log(S2S_LOG_INFO, "[Server] Mode: %s, endpoint %s, %zu MCP servers", mode.c_str(),
+    s2s_log(S2S_LOG_INFO, "[Server] Mode: %s, endpoint %s, %zu MCP servers", setup.defaults.mode.c_str(),
             setup.llm_fixed ? "set by the command line" : "named by the session", setup.defaults.mcp.size());
     s2s_log(S2S_LOG_INFO, "[Server] Listening on http://%s:%d", host.c_str(), port);
 
@@ -644,10 +579,6 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    lv_free(setup.models.aec);
-    tts_bridge_free(setup.models.tts);
-    pk_free(setup.models.asr);
-    st_free(setup.models.turn);
-    sv_free(setup.models.vad);
+    models_free(setup.models);
     return 0;
 }

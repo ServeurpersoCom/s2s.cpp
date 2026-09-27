@@ -183,10 +183,12 @@ add_custom_command(
 )
 set_source_files_properties(${WEBUI_LIB_OUTPUT} PROPERTIES GENERATED TRUE)
 
-# s2s-server: the product, WebSocket voice loop plus the embedded webui
-add_executable(s2s-server tools/s2s-server.cpp
+# s2s-core: the conversation engine and its models, compiled once for every
+# host that runs the voice loop.
+add_library(s2s-core STATIC
     src/s2s-conversation.cpp
     src/s2s-session.cpp
+    src/s2s-models.cpp
     src/silero.cpp
     src/smart-turn.cpp
     src/llm-client.cpp
@@ -194,12 +196,23 @@ add_executable(s2s-server tools/s2s-server.cpp
     src/mcp-client.cpp
     src/tts-bridge.cpp
     src/localvqe.cpp
-    src/jarvis-fx.cpp
-    ${WEBUI_OUTPUT}
-    ${WEBUI_LIB_OUTPUT})
+    src/jarvis-fx.cpp)
+link_ggml_backends(s2s-core)
+target_link_libraries(s2s-core PUBLIC parakeet-core qwen-core httplib yyjson)
+
+# s2s-server: the product, WebSocket voice loop plus the embedded webui
+add_executable(s2s-server tools/s2s-server.cpp ${WEBUI_OUTPUT} ${WEBUI_LIB_OUTPUT})
 target_include_directories(s2s-server PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 link_ggml_backends(s2s-server)
-target_link_libraries(s2s-server PRIVATE parakeet-core qwen-core httplib yyjson)
+target_link_libraries(s2s-server PRIVATE s2s-core)
+
+# s2s-cli: the voice loop on the microphone and the loudspeaker of this
+# machine. miniaudio (public domain or MIT-0) is header only and loads the
+# audio backend of the system at runtime, hence the dl library on Linux.
+add_executable(s2s-cli tools/s2s-cli.cpp)
+link_ggml_backends(s2s-cli)
+target_include_directories(s2s-cli SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/vendor)
+target_link_libraries(s2s-cli PRIVATE s2s-core ${CMAKE_DL_LIBS})
 
 # quantize: GGUF requantizer (F32 -> K-quants)
 add_executable(quantize tools/quantize.cpp)

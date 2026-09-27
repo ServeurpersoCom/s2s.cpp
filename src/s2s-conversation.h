@@ -34,10 +34,10 @@ struct ServerModels {
 // the client's, pushed when it changes, and nothing survives here between two
 // turns.
 struct ClientSettings {
-    std::string             mode = "conversation";
+    std::string             mode = "loopback";
     tts_request             tts;
     llm_client_params       llm;
-    std::string             system_prompt;
+    std::string             system_prompt = "You are a voice assistant. Answer in one or two short spoken sentences.";
     std::vector<rt_message> history;
 
     // Tools the model is offered in the agentic mode, by name, the MCP
