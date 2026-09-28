@@ -381,7 +381,7 @@ static struct ggml_tensor * lv_mask(lv_context *          ctx,
         g, ggml_mul_mat(g, mr, ggml_reshape_2d(g, ctx->mask_im, LV_MASK_ROOTS, 1)), n_freq, LV_MASK_TAPS, n_b);
 
     struct ggml_tensor * win = lv_window(ctx, g, spec, LV_MASK_KT - 1);  // [F, 3, 2, B]
-    win                      = ggml_cont(g, ggml_pad_ext(g, win, 1, 1, 0, 0, 0, 0, 0, 0));
+    win                      = ggml_pad_ext(g, win, 1, 1, 0, 0, 0, 0, 0, 0);
 
     const int64_t        width = n_freq + 2;
     struct ggml_tensor * taps[2];

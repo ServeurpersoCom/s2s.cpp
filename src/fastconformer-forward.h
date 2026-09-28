@@ -219,9 +219,7 @@ static struct ggml_tensor * parakeet_rel_shift(struct ggml_context * ctx, struct
     const int64_t n_pos   = bd->ne[0];
     const int64_t n_heads = bd->ne[2];
 
-    struct ggml_tensor * zeros =
-        ggml_scale(ctx, ggml_cont(ctx, ggml_view_3d(ctx, bd, 1, n_tokens, n_heads, bd->nb[1], bd->nb[2], 0)), 0.0f);
-    struct ggml_tensor * padded = ggml_cont(ctx, ggml_concat(ctx, zeros, bd, 0));
+    struct ggml_tensor * padded = ggml_pad_ext(ctx, bd, 1, 0, 0, 0, 0, 0, 0, 0);
 
     return ggml_cont(ctx,
                      ggml_view_3d(ctx, padded, n_tokens, n_tokens, n_heads, n_pos * sizeof(float),
