@@ -186,15 +186,18 @@ export interface S2SEvents {
 	// revised: a later transcript of the same turn, which replaces the
 	// previous one along with any answer to it that was never heard
 	user_text: (text: string, revised: boolean) => void;
+	// an answer opens: every assistant_delta and assistant_text until its
+	// assistant_end belongs to it
+	assistant_start: () => void;
 	// what the model writes, as it writes it
 	assistant_delta: (text: string) => void;
 	// what the voice really speaks, one synthesis unit at a time, and how far
 	// into the written text it reaches: what lies past textEnd in the
 	// assistant_delta text was written and not spoken
 	assistant_text: (text: string, textEnd: number) => void;
-	// an answer the model finished, closed with what was heard of it, even
-	// when that is nothing: the server reports an empty one as an error
-	assistant_done: () => void;
+	// the answer closes, once: finished and played, cut by the user, or cut
+	// by a lost connection
+	assistant_end: () => void;
 	// the conversation, every time it changes: persist it, or ignore it
 	history: (messages: S2SMessage[]) => void;
 	// the voice and the effect the model switched to with set_voice:
@@ -631,8 +634,8 @@ export class S2S {
 	}
 
 	// Forgets the conversation. An answer in flight goes with it: the server
-	// stops it, the speaker falls silent, and nothing of it is filed or shown,
-	// so whatever the server still sends for it finds it closed.
+	// stops it, the speaker falls silent, and nothing of it is filed, so
+	// whatever the server still sends for it finds it closed.
 	clearHistory() {
 		this.log('History cleared');
 		if (this.answering) {
@@ -641,6 +644,7 @@ export class S2S {
 			this.units = [];
 			this.answerDone = false;
 			this.answering = false;
+			this.handlers.assistant_end?.();
 			this.setState('listening');
 		}
 		this.setHistory([]);
@@ -822,7 +826,6 @@ export class S2S {
 		if (!this.answering) {
 			return;
 		}
-		const finished = this.answerDone;
 		const content = this.units
 			.filter((unit) => unit.start < this.playedSamples)
 			.map((unit) => unit.text)
@@ -834,9 +837,7 @@ export class S2S {
 		if (content) {
 			this.history.push({ role: 'assistant', content });
 		}
-		if (finished) {
-			this.handlers.assistant_done?.();
-		}
+		this.handlers.assistant_end?.();
 		this.pushHistory();
 	}
 
@@ -945,6 +946,7 @@ export class S2S {
 				this.queuedSamples = 0;
 				this.playedSamples = 0;
 				this.duplex?.port.postMessage({ reset: this.generation });
+				this.handlers.assistant_start?.();
 				this.setState('thinking');
 				break;
 

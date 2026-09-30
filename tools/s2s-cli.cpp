@@ -11,15 +11,16 @@
 // the echo canceller, sample for sample. miniaudio converts to and from the
 // rates of the hardware.
 //
+// The client keeps three things apart: the audio the callback shares, the
+// context the model knows, and the display the user sees, the conversation
+// on stdout while the log of the engine goes to stderr.
+//
 // Three threads carry the conversation. The audio callback touches nothing
 // but two ring buffers and a few atomics. The main thread is the reader of
 // the connection: every frame reaches the engine from it, the microphone
 // and the frames of the client alike. The writer of the engine delivers the
-// frames going back, and the client state they change sits under one mutex.
-//
-// The console shows the conversation on stdout, one line per transcript of
-// the user, a revision included, and one line per answer, the units the
-// voice speaks joined as they come, and the log of the engine on stderr.
+// frames going back, and the context and the display they change sit under
+// one mutex.
 
 #include "realtime-proto.h"
 #include "s2s-conversation.h"
@@ -81,6 +82,16 @@ static void on_signal(int) {
     g_stop = true;
 }
 
+// The sound card, shared with the audio callback without a lock: the rings
+// have one producer and one consumer each.
+struct Audio {
+    ma_pcm_rb             capture;         // two channels: the microphone and what played meanwhile
+    ma_pcm_rb             playback;        // the answer, waiting for the loudspeaker
+    std::atomic<bool>     flush{ false };  // raised by the client, lowered by the callback once the queue is gone
+    std::atomic<uint64_t> heard{ 0 };      // samples the loudspeaker played
+    std::atomic<uint64_t> consumed{ 0 };   // samples played or dropped
+};
+
 // A unit the voice speaks, with the sample of the answer where its audio
 // starts.
 struct Unit {
@@ -88,30 +99,36 @@ struct Unit {
     uint64_t    start = 0;
 };
 
+// What the model knows: the conversation the client owns, and the answer in
+// flight, filed with what was heard of it.
+struct Context {
+    std::vector<rt_message> history;
+    std::string             user_item;              // the item of the last user message
+    std::vector<Unit>       units;
+    bool                    answering     = false;  // between response.created and its close
+    bool                    answer_done   = false;  // the server finished the answer
+    uint64_t                queued        = 0;      // samples of the answer sent to the loudspeaker
+    uint64_t                heard_base    = 0;      // heard at response.created
+    uint64_t                consumed_base = 0;      // consumed at response.created
+};
+
+// What the user sees: the conversation on stdout, apart from the log, tagged
+// like it and in color on a terminal. Every transcript of the user takes a
+// line, a revision included, and every answer one line, its units joined as
+// the voice speaks them.
+struct Display {
+    bool line_open = false;  // the line of the answer awaits its end
+};
+
 struct Cli {
-    bool aec = true;  // the reference travels with the microphone
+    bool  aec = true;  // the reference travels with the microphone
+    Audio audio;
 
-    // Shared with the audio callback, without a lock: the rings have one
-    // producer and one consumer each.
-    ma_pcm_rb             capture;         // two channels: the microphone and what played meanwhile
-    ma_pcm_rb             playback;        // the answer, waiting for the loudspeaker
-    std::atomic<bool>     flush{ false };  // raised by the client, lowered by the callback once the queue is gone
-    std::atomic<uint64_t> heard{ 0 };      // samples the loudspeaker played
-    std::atomic<uint64_t> consumed{ 0 };   // samples played or dropped
-
-    // The client: the conversation it owns, the answer in flight, and the
-    // frames waiting for the reader.
+    // Changed by the frames of the engine, read by the reader.
     std::mutex               mutex;
-    std::vector<rt_message>  history;
-    std::string              user_item;              // the item of the last user message
-    std::vector<Unit>        units;
-    bool                     answering     = false;  // between response.created and its close
-    bool                     answer_done   = false;  // the server finished the answer
-    uint64_t                 queued        = 0;      // samples of the answer sent to the loudspeaker
-    uint64_t                 heard_base    = 0;      // heard at response.created
-    uint64_t                 consumed_base = 0;      // consumed at response.created
-    bool                     line_open     = false;  // the line of the answer awaits its end on stdout
-    std::vector<std::string> outbox;
+    Context                  context;
+    Display                  display;
+    std::vector<std::string> outbox;  // frames waiting for the reader
 };
 
 // Colors only on a terminal: a redirected stdout stays plain text. The
@@ -129,68 +146,62 @@ static bool console_colors() {
 #endif
 }
 
-// The conversation goes to stdout, apart from the log, tagged like it and in
-// color on a terminal.
-
-// Ends the line of the answer, when one is open.
-static void end_answer_line(Cli * cli) {
-    if (cli->line_open) {
+static void display_answer_end(Display & display) {
+    if (display.line_open) {
         printf("%s\n", g_color ? CLI_COLOR_RESET : "");
         fflush(stdout);
-        cli->line_open = false;
+        display.line_open = false;
     }
 }
 
-// One line per transcript of the user.
-static void say_user(Cli * cli, const std::string & text) {
-    end_answer_line(cli);
+static void display_user(Display & display, const std::string & text) {
+    display_answer_end(display);
     printf("%s[User] %s%s\n", g_color ? CLI_COLOR_USER : "", text.c_str(), g_color ? CLI_COLOR_RESET : "");
     fflush(stdout);
 }
 
-// One unit of the answer, on the line the first unit opens.
-static void say_unit(Cli * cli, const std::string & text) {
-    if (cli->line_open) {
+static void display_unit(Display & display, const std::string & text) {
+    if (display.line_open) {
         printf(" %s", text.c_str());
     } else {
         printf("%s[Assistant] %s", g_color ? CLI_COLOR_ASSISTANT : "", text.c_str());
-        cli->line_open = true;
+        display.line_open = true;
     }
     fflush(stdout);
 }
 
 static void on_audio(ma_device * device, void * output, const void * input, ma_uint32 n_frames) {
-    Cli *         cli = (Cli *) device->pUserData;
-    float *       out = (float *) output;
-    const float * in  = (const float *) input;
+    Audio *       audio = (Audio *) device->pUserData;
+    float *       out   = (float *) output;
+    const float * in    = (const float *) input;
 
-    if (cli->flush.load(std::memory_order_acquire)) {
-        const ma_uint32 dropped = ma_pcm_rb_available_read(&cli->playback);
-        ma_pcm_rb_seek_read(&cli->playback, dropped);
-        cli->consumed += dropped;
-        cli->flush.store(false, std::memory_order_release);
+    if (audio->flush.load(std::memory_order_acquire)) {
+        const ma_uint32 dropped = ma_pcm_rb_available_read(&audio->playback);
+        ma_pcm_rb_seek_read(&audio->playback, dropped);
+        audio->consumed += dropped;
+        audio->flush.store(false, std::memory_order_release);
     }
 
     ma_uint32 played = 0;
     while (played < n_frames) {
         ma_uint32 n     = n_frames - played;
         void *    chunk = nullptr;
-        if (ma_pcm_rb_acquire_read(&cli->playback, &n, &chunk) != MA_SUCCESS || n == 0) {
+        if (ma_pcm_rb_acquire_read(&audio->playback, &n, &chunk) != MA_SUCCESS || n == 0) {
             break;
         }
         memcpy(out + played, chunk, n * sizeof(float));
-        ma_pcm_rb_commit_read(&cli->playback, n);
+        ma_pcm_rb_commit_read(&audio->playback, n);
         played += n;
     }
     memset(out + played, 0, (n_frames - played) * sizeof(float));
-    cli->heard += played;
-    cli->consumed += played;
+    audio->heard += played;
+    audio->consumed += played;
 
     ma_uint32 captured = 0;
     while (captured < n_frames) {
         ma_uint32 n     = n_frames - captured;
         void *    chunk = nullptr;
-        if (ma_pcm_rb_acquire_write(&cli->capture, &n, &chunk) != MA_SUCCESS || n == 0) {
+        if (ma_pcm_rb_acquire_write(&audio->capture, &n, &chunk) != MA_SUCCESS || n == 0) {
             break;
         }
         float * pair = (float *) chunk;
@@ -198,42 +209,42 @@ static void on_audio(ma_device * device, void * output, const void * input, ma_u
             pair[2 * i]     = in[captured + i];
             pair[2 * i + 1] = out[captured + i];
         }
-        ma_pcm_rb_commit_write(&cli->capture, n);
+        ma_pcm_rb_commit_write(&audio->capture, n);
         captured += n;
     }
 }
 
 // Drops what the loudspeaker has not played yet, and returns once the
 // callback did.
-static void flush_playback(Cli * cli) {
-    cli->flush.store(true, std::memory_order_release);
-    while (cli->flush.load(std::memory_order_acquire) && !g_stop) {
+static void audio_flush(Audio & audio) {
+    audio.flush.store(true, std::memory_order_release);
+    while (audio.flush.load(std::memory_order_acquire) && !g_stop) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
 
 // Queues samples for the loudspeaker, and returns how many it took.
-static size_t play(Cli * cli, const std::vector<float> & pcm) {
+static size_t audio_play(Audio & audio, const std::vector<float> & pcm) {
     size_t done = 0;
     while (done < pcm.size()) {
         ma_uint32 n     = (ma_uint32) (pcm.size() - done);
         void *    chunk = nullptr;
-        if (ma_pcm_rb_acquire_write(&cli->playback, &n, &chunk) != MA_SUCCESS || n == 0) {
+        if (ma_pcm_rb_acquire_write(&audio.playback, &n, &chunk) != MA_SUCCESS || n == 0) {
             s2s_log(S2S_LOG_WARN, "[Audio] Playback queue full, %zu samples dropped", pcm.size() - done);
             break;
         }
         memcpy(chunk, pcm.data() + done, n * sizeof(float));
-        ma_pcm_rb_commit_write(&cli->playback, n);
+        ma_pcm_rb_commit_write(&audio.playback, n);
         done += n;
     }
     return done;
 }
 
-// The conversation, for the reader to send.
-static void push_history(Cli * cli) {
+// The conversation, as the frame that hands it to the engine.
+static std::string context_history(const Context & context) {
     rt_frame         frame    = rt_frame_begin("conversation.history");
     yyjson_mut_val * messages = yyjson_mut_obj_add_arr(frame.doc, frame.root, "messages");
-    for (const rt_message & message : cli->history) {
+    for (const rt_message & message : context.history) {
         yyjson_mut_val * entry = yyjson_mut_arr_add_obj(frame.doc, messages);
         yyjson_mut_obj_add_strn(frame.doc, entry, "role", message.role.c_str(), message.role.size());
         yyjson_mut_obj_add_strn(frame.doc, entry, "content", message.content.c_str(), message.content.size());
@@ -241,20 +252,45 @@ static void push_history(Cli * cli) {
             yyjson_mut_obj_add_strn(frame.doc, entry, "item", message.item.c_str(), message.item.size());
         }
     }
-    cli->outbox.push_back(rt_frame_end(frame));
+    return rt_frame_end(frame);
+}
+
+// A later transcript of the same turn replaces its user message instead of
+// adding one.
+static void context_user(Context & context, const std::string & item, const std::string & transcript) {
+    const bool revised =
+        !item.empty() && item == context.user_item && !context.history.empty() && context.history.back().role == "user";
+    if (revised) {
+        context.history.back().content = transcript;
+    } else {
+        context.history.push_back({ "user", transcript, item });
+    }
+    context.user_item = item;
+}
+
+static void context_open(Context & context, const Audio & audio) {
+    context.answering     = true;
+    context.answer_done   = false;
+    context.queued        = 0;
+    context.heard_base    = audio.heard;
+    context.consumed_base = audio.consumed;
+}
+
+// Whether the loudspeaker played the last sample of an answer the server
+// finished.
+static bool context_played(const Context & context, const Audio & audio) {
+    return context.answering && context.answer_done && audio.consumed - context.consumed_base >= context.queued;
 }
 
 // Closes the answer in flight with what was actually heard. A unit counts
 // once its audio started playing: a barge-in keeps the sentence it cut and
 // drops the ones still queued, so the model never believes it said more. An
-// answer with nothing heard is not filed. Every close pushes the list.
-static void close_answer(Cli * cli) {
-    if (!cli->answering) {
-        return;
-    }
-    const uint64_t heard = cli->heard - cli->heard_base;
+// answer with nothing heard is not filed. Every close hands the list to the
+// engine.
+static void context_close(Context & context, const Audio & audio, std::vector<std::string> & outbox) {
+    const uint64_t heard = audio.heard - context.heard_base;
     std::string    content;
-    for (const Unit & unit : cli->units) {
+    for (const Unit & unit : context.units) {
         if (unit.start < heard) {
             content += (content.empty() ? "" : " ") + unit.text;
         }
@@ -263,14 +299,22 @@ static void close_answer(Cli * cli) {
     const size_t last  = content.find_last_not_of(" \t\r\n");
     content            = first == std::string::npos ? "" : content.substr(first, last - first + 1);
 
-    end_answer_line(cli);
-    cli->units.clear();
-    cli->answering   = false;
-    cli->answer_done = false;
+    context.units.clear();
+    context.answering   = false;
+    context.answer_done = false;
     if (!content.empty()) {
-        cli->history.push_back({ "assistant", content, "" });
+        context.history.push_back({ "assistant", content, "" });
     }
-    push_history(cli);
+    outbox.push_back(context_history(context));
+}
+
+// Ends the answer in flight, in the context and on the display.
+static void close_answer(Cli * cli) {
+    if (!cli->context.answering) {
+        return;
+    }
+    context_close(cli->context, cli->audio, cli->outbox);
+    display_answer_end(cli->display);
 }
 
 // Every frame the engine sends, on its writer thread.
@@ -289,52 +333,38 @@ static bool on_event(const std::string & frame, void * user) {
     if (type == "input_audio_buffer.speech_started") {
         // The user speaks: whatever still plays is over, and the answer keeps
         // only what was heard.
-        if (cli->answering) {
-            flush_playback(cli);
+        if (cli->context.answering) {
+            audio_flush(cli->audio);
             close_answer(cli);
         }
     } else if (type == "conversation.item.input_audio_transcription.completed") {
-        // A later transcript of the same turn replaces its user message
-        // instead of adding one.
         const std::string transcript = rt_json_str(root, "transcript");
-        const std::string item       = rt_json_str(root, "item_id");
-        const bool        revised =
-            !item.empty() && item == cli->user_item && !cli->history.empty() && cli->history.back().role == "user";
-        if (revised) {
-            cli->history.back().content = transcript;
-        } else {
-            cli->history.push_back({ "user", transcript, item });
-        }
-        cli->user_item = item;
-        say_user(cli, transcript);
+        context_user(cli->context, rt_json_str(root, "item_id"), transcript);
+        display_user(cli->display, transcript);
     } else if (type == "response.created") {
         close_answer(cli);
-        cli->answering     = true;
-        cli->answer_done   = false;
-        cli->queued        = 0;
-        cli->heard_base    = cli->heard;
-        cli->consumed_base = cli->consumed;
+        context_open(cli->context, cli->audio);
     } else if (type == "response.output_audio_transcript.delta") {
         // An answer the client already closed takes nothing more.
-        if (cli->answering) {
+        if (cli->context.answering) {
             const std::string delta = rt_json_str(root, "delta");
-            cli->units.push_back({ delta, cli->queued });
-            say_unit(cli, delta);
+            cli->context.units.push_back({ delta, cli->context.queued });
+            display_unit(cli->display, delta);
         }
     } else if (type == "response.output_audio.delta") {
-        if (cli->answering) {
+        if (cli->context.answering) {
             const std::string  delta = rt_json_str(root, "delta");
             std::vector<float> pcm;
             rt_pcm16_to_float(rt_base64_decode(delta.c_str(), delta.size()), pcm);
-            cli->queued += play(cli, pcm);
+            cli->context.queued += audio_play(cli->audio, pcm);
         }
     } else if (type == "response.cancelled") {
-        flush_playback(cli);
+        audio_flush(cli->audio);
         close_answer(cli);
     } else if (type == "response.done") {
         // The server is done, the loudspeaker may not be: the reader closes
         // the answer once the last queued sample played.
-        cli->answer_done = true;
+        cli->context.answer_done = true;
     }
 
     yyjson_doc_free(doc);
@@ -552,8 +582,8 @@ int main(int argc, char ** argv) {
     }
     s2s_log(S2S_LOG_INFO, "[Load] Voices: %s", labels.c_str());
 
-    ma_pcm_rb_init(ma_format_f32, 2, CLI_CAPTURE_SECONDS * S2S_INPUT_RATE, nullptr, nullptr, &cli.capture);
-    ma_pcm_rb_init(ma_format_f32, 1, CLI_PLAYBACK_SECONDS * S2S_INPUT_RATE, nullptr, nullptr, &cli.playback);
+    ma_pcm_rb_init(ma_format_f32, 2, CLI_CAPTURE_SECONDS * S2S_INPUT_RATE, nullptr, nullptr, &cli.audio.capture);
+    ma_pcm_rb_init(ma_format_f32, 1, CLI_PLAYBACK_SECONDS * S2S_INPUT_RATE, nullptr, nullptr, &cli.audio.playback);
 
     ma_device_config config         = ma_device_config_init(ma_device_type_duplex);
     config.sampleRate               = S2S_INPUT_RATE;
@@ -565,7 +595,7 @@ int main(int argc, char ** argv) {
     config.playback.channels        = 1;
     config.playback.pDeviceID       = speaker >= 0 ? &speakers[speaker].id : nullptr;
     config.dataCallback             = on_audio;
-    config.pUserData                = &cli;
+    config.pUserData                = &cli.audio;
 
     ma_device device;
     if (ma_device_init(&context, &config, &device) != MA_SUCCESS) {
@@ -632,7 +662,7 @@ int main(int argc, char ** argv) {
     conn_frame(conn, rt_frame_end(update));
     {
         std::lock_guard<std::mutex> lock(cli.mutex);
-        push_history(&cli);
+        cli.outbox.push_back(context_history(cli.context));
     }
 
     signal(SIGINT, on_signal);
@@ -658,7 +688,7 @@ int main(int argc, char ** argv) {
     while (!g_stop && !conn_stopped(conn)) {
         {
             std::lock_guard<std::mutex> lock(cli.mutex);
-            if (cli.answering && cli.answer_done && cli.consumed - cli.consumed_base >= cli.queued) {
+            if (context_played(cli.context, cli.audio)) {
                 close_answer(&cli);
             }
             outbox.swap(cli.outbox);
@@ -668,7 +698,7 @@ int main(int argc, char ** argv) {
         }
         outbox.clear();
 
-        if (ma_pcm_rb_available_read(&cli.capture) < CLI_FRAME_SAMPLES) {
+        if (ma_pcm_rb_available_read(&cli.audio.capture) < CLI_FRAME_SAMPLES) {
             std::this_thread::sleep_for(std::chrono::milliseconds(CLI_POLL_MS));
             continue;
         }
@@ -676,9 +706,9 @@ int main(int argc, char ** argv) {
         while (got < CLI_FRAME_SAMPLES) {
             ma_uint32 n     = CLI_FRAME_SAMPLES - got;
             void *    chunk = nullptr;
-            ma_pcm_rb_acquire_read(&cli.capture, &n, &chunk);
+            ma_pcm_rb_acquire_read(&cli.audio.capture, &n, &chunk);
             memcpy(pair.data() + 2 * got, chunk, 2 * n * sizeof(float));
-            ma_pcm_rb_commit_read(&cli.capture, n);
+            ma_pcm_rb_commit_read(&cli.audio.capture, n);
             got += n;
         }
 
@@ -704,8 +734,8 @@ int main(int argc, char ** argv) {
     g_stop = true;
     ma_device_uninit(&device);
     conn_close(conn);
-    ma_pcm_rb_uninit(&cli.playback);
-    ma_pcm_rb_uninit(&cli.capture);
+    ma_pcm_rb_uninit(&cli.audio.playback);
+    ma_pcm_rb_uninit(&cli.audio.capture);
     ma_context_uninit(&context);
     models_free(setup.models);
     return 0;

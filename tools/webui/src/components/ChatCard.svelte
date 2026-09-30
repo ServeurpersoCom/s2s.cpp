@@ -25,7 +25,8 @@
 	// follow the stream, the way a terminal does
 	$effect(() => {
 		void voice.chat.length;
-		void voice.chat[voice.chat.length - 1]?.draft;
+		void voice.chat[voice.chat.length - 1]?.written;
+		void voice.chat[voice.chat.length - 1]?.spoken;
 		if (body) {
 			body.scrollTop = body.scrollHeight;
 		}
@@ -49,12 +50,21 @@
 					{system}
 				</div>
 			{/if}
-			{#each voice.chat as turn, i (i)}
+			{#each voice.chat as entry, i (i)}
 				<div class="turn">
-					<span class="who {turn.role}">{turn.role === 'user' ? USER : ASSISTANT}</span>
-					{turn.draft.slice(0, turn.spokenEnd)}{#if turn.draft.length > turn.spokenEnd}<span
-							class="ahead">{turn.draft.slice(turn.spokenEnd)}</span
-						>{/if}
+					<span class="who {entry.role}">{entry.role === 'user' ? USER : ASSISTANT}</span>
+					{#if entry.role === 'user'}
+						{entry.written}
+					{:else if entry.written}
+						{entry.written.slice(
+							0,
+							entry.spokenEnd
+						)}{#if entry.written.length > entry.spokenEnd}<span class="ahead"
+								>{entry.written.slice(entry.spokenEnd)}</span
+							>{/if}
+					{:else}
+						{entry.spoken}
+					{/if}
 				</div>
 			{/each}
 		</div>

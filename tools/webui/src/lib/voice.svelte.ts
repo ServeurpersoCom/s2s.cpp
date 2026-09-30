@@ -116,27 +116,31 @@ export function toOptions(): S2SOptions {
 	};
 }
 
-// One line of the conversation. draft is what the model wrote, spokenEnd how
-// far into it the voice went: it trails the draft by one synthesis unit, and
-// stops there on a barge-in.
-interface ChatTurn {
+// One line of the display. A user line holds its transcript in written. An
+// answer holds what the model wrote in written, what the voice spoke in
+// spoken, and in spokenEnd how far into written the voice went: it trails
+// by one synthesis unit and stops there on a barge-in. Loopback has no model
+// writing, so its answers hold spoken alone.
+export interface ChatEntry {
 	role: 'user' | 'assistant';
-	draft: string;
+	written: string;
+	spoken: string;
 	spokenEnd: number;
-	done: boolean;
+	open: boolean;
 }
 
-// The conversation survives a reload: the page files every version the
-// component reports and seeds the next component with it. It holds what
-// the model knows, so a reloaded line is what was heard, never the text
-// written past it. Its own key: a reset of the settings leaves it alone.
+// Each role keeps its own memory across a reload: the context is what the
+// model knows, only what was heard, and the display is what the page showed,
+// text written past the voice included. Their own keys: a reset of the
+// settings leaves them alone.
 const HISTORY_KEY = 's2s.history';
+const CHAT_KEY = 's2s.chat';
 
-function loadHistory(): S2SMessage[] {
+function load<T>(key: string): T[] {
 	try {
-		const raw = localStorage.getItem(HISTORY_KEY);
+		const raw = localStorage.getItem(key);
 		if (raw) {
-			return JSON.parse(raw) as S2SMessage[];
+			return JSON.parse(raw) as T[];
 		}
 	} catch {
 		// corrupt or unavailable
@@ -144,50 +148,40 @@ function loadHistory(): S2SMessage[] {
 	return [];
 }
 
-// the turn identity dies with its connection, so only the words are kept
-function saveHistory(messages: S2SMessage[]) {
+function save(key: string, value: unknown) {
 	try {
-		const words = messages.map(({ role, content }) => ({ role, content }));
-		localStorage.setItem(HISTORY_KEY, JSON.stringify(words));
+		localStorage.setItem(key, JSON.stringify(value));
 	} catch {
 		// full or unavailable
 	}
 }
 
+// the turn identity dies with its connection, so only the words are kept
+function saveHistory(messages: S2SMessage[]) {
+	save(
+		HISTORY_KEY,
+		messages.map(({ role, content }) => ({ role, content }))
+	);
+}
+
 // Live view of the component, for whatever the page decides to draw. Nothing
 // here touches the DOM: the component stays invisible until a host renders
-// something from this state. The conversation filed by the last visit shows
+// something from this state. The display filed by the last visit shows
 // before any start.
 export const voice = $state({
 	state: 'idle' as S2SState,
-	chat: loadHistory().map(({ role, content }): ChatTurn => ({
-		role,
-		draft: content,
-		spokenEnd: content.length,
-		done: true
-	}))
+	chat: load<ChatEntry>(CHAT_KEY)
 });
 
-function lastAssistant(): ChatTurn | undefined {
-	const turn = voice.chat[voice.chat.length - 1];
-	return turn && turn.role === 'assistant' && !turn.done ? turn : undefined;
+// the display is filed each time a line closes
+function saveChat() {
+	save(CHAT_KEY, voice.chat);
 }
 
-function openAssistant(): ChatTurn {
-	const open = lastAssistant();
-	if (open) {
-		return open;
-	}
-	const turn: ChatTurn = { role: 'assistant', draft: '', spokenEnd: 0, done: false };
-	voice.chat.push(turn);
-	return turn;
-}
-
-function closeAssistant() {
-	const open = lastAssistant();
-	if (open) {
-		open.done = true;
-	}
+// The answer the component opened and has not closed yet.
+function openAnswer(): ChatEntry | undefined {
+	const entry = voice.chat[voice.chat.length - 1];
+	return entry && entry.role === 'assistant' && entry.open ? entry : undefined;
 }
 
 let client: S2S | null = null;
@@ -219,18 +213,15 @@ function loadModule(): Promise<S2SModule> {
 export async function createVoice(): Promise<S2S> {
 	const { S2S } = await loadModule();
 	const s2s = new S2S(toOptions());
-	s2s.setHistory(loadHistory());
+	s2s.setHistory(load<S2SMessage>(HISTORY_KEY));
 
 	s2s.on('state', (state) => {
 		voice.state = state;
-		if (state === 'listening') {
-			closeAssistant();
-		}
 	});
+	// A revision replaces the line it revises, and the answer drafted for it
+	// that nobody heard: the component only calls it revised when the
+	// context filed nothing after that line.
 	s2s.on('user_text', (text, revised) => {
-		closeAssistant();
-		// a revision replaces the turn it revises, and the answer drafted for
-		// it that nobody heard
 		if (revised) {
 			let at = voice.chat.length - 1;
 			while (at >= 0 && voice.chat[at].role !== 'user') {
@@ -238,28 +229,38 @@ export async function createVoice(): Promise<S2S> {
 			}
 			voice.chat.splice(Math.max(at, 0));
 		}
-		voice.chat.push({
-			role: 'user',
-			draft: text,
-			spokenEnd: text.length,
-			done: true
-		});
+		voice.chat.push({ role: 'user', written: text, spoken: '', spokenEnd: 0, open: false });
+		saveChat();
+	});
+	s2s.on('assistant_start', () => {
+		voice.chat.push({ role: 'assistant', written: '', spoken: '', spokenEnd: 0, open: true });
 	});
 	s2s.on('assistant_delta', (text) => {
-		openAssistant().draft += text;
-	});
-	// a finished answer closes its line; one that wrote nothing has none, the
-	// way the conversation files it
-	s2s.on('assistant_done', () => {
-		closeAssistant();
+		const entry = openAnswer();
+		if (entry) {
+			entry.written += text;
+		}
 	});
 	s2s.on('assistant_text', (text, textEnd) => {
-		const turn = openAssistant();
-		// loopback has no model writing ahead: what is spoken is the whole turn
-		if (!turn.draft) {
-			turn.draft = text;
+		const entry = openAnswer();
+		if (entry) {
+			entry.spoken += (entry.spoken ? ' ' : '') + text;
+			entry.spokenEnd = textEnd;
 		}
-		turn.spokenEnd = textEnd;
+	});
+	// an answer that neither wrote nor spoke leaves no line, the way the
+	// context files it
+	s2s.on('assistant_end', () => {
+		const entry = openAnswer();
+		if (!entry) {
+			return;
+		}
+		if (!entry.written && !entry.spoken) {
+			voice.chat.pop();
+		} else {
+			entry.open = false;
+		}
+		saveChat();
 	});
 	s2s.on('history', saveHistory);
 	// the voice and the effect the model picked are the ones the panel shows
@@ -288,6 +289,8 @@ export function destroyVoice() {
 export function clearContext() {
 	client?.clearHistory();
 	voice.chat = [];
+	saveHistory([]);
+	saveChat();
 }
 
 // Pushes a settings change to a running session. The options are built
