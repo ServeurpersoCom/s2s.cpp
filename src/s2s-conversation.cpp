@@ -745,6 +745,14 @@ static void conn_answer(Connection * conn, const AnswerJob & job) {
                 return !self->conn->cancel.load();
             };
 
+            // The calls travel between the deltas, at their place in the
+            // text.
+            llm_agent_call_cb on_call = [](const std::string & name, bool done, bool ok, double ms, size_t bytes,
+                                           void * user) {
+                StreamTap * self = (StreamTap *) user;
+                conn_send(self->conn, done ? rt_event_tool_done(name, ok, ms, bytes) : rt_event_tool_started(name));
+            };
+
             // The MCP sessions of the agent live with the connection and
             // follow its list of servers: a changed list, or a changed tool
             // timeout, gets fresh ones.
@@ -771,7 +779,7 @@ static void conn_answer(Connection * conn, const AnswerJob & job) {
             const bool streamed =
                 client.mode == "agentic" ?
                     llm_agent_run(conn->agent, builtins, llm, client.llm, client.tools, client.max_rounds, messages,
-                                  on_delta, &stream_tap, &conn->cancel, answer) :
+                                  on_delta, on_call, &stream_tap, &conn->cancel, answer) :
                     llm_client_stream(llm, messages, on_delta, &stream_tap, &conn->cancel, answer);
 
             // The tail is a unit like the others: a one sentence answer has

@@ -30,6 +30,11 @@ struct llm_agent_builtin {
     void *       user = nullptr;
 };
 
+// Hears every call of the model twice: when it starts, done false, and when
+// it ends, done true, with ok false when it failed, a cancellation included,
+// the ms it ran and the bytes of its result.
+typedef void (*llm_agent_call_cb)(const std::string & name, bool done, bool ok, double ms, size_t bytes, void * user);
+
 struct llm_agent;
 
 // The tool servers of one session: the MCP servers, not yet reached. The
@@ -58,7 +63,8 @@ bool llm_agent_tools(llm_agent *                            agent,
                      std::vector<llm_agent_group> &         groups);
 
 // Answers one turn, growing messages with the calls and their results. Text
-// receives the words of every round, deltas included. A call that fails, a
+// receives the words of every round, deltas included, and cb hears them as
+// they come, on_call hears the calls between them, both with user. A call that fails, a
 // timeout included, is answered with its error as the tool result, and the
 // model goes on from there. Returns false on a transport error of the
 // endpoint, on cancellation, or when the rounds run out, with the reason in
@@ -71,6 +77,7 @@ bool llm_agent_run(llm_agent *                            agent,
                    int                                    max_rounds,
                    std::vector<llm_message> &             messages,
                    llm_delta_cb                           cb,
+                   llm_agent_call_cb                      on_call,
                    void *                                 user,
                    const std::atomic<bool> *              cancel,
                    std::string &                          text);

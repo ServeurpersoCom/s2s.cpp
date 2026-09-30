@@ -24,6 +24,11 @@
 //                                    transcript of the same turn replaces it
 //   response.created
 //   response.output_text.delta       what the model writes, as it writes it
+//   response.tool_call.started       a call of the agentic mode starts, with
+//                                    its name, where it stands between the
+//                                    deltas of the written text
+//   response.tool_call.done          the call ended: ok, the ms it ran and
+//                                    the bytes of its result
 //   response.output_audio.delta
 //   response.output_audio_transcript.delta
 //                                    what the voice speaks, one unit at a
@@ -486,6 +491,25 @@ static std::string rt_event_spoken(const std::string & unit, size_t text_end) {
     rt_frame frame = rt_frame_begin("response.output_audio_transcript.delta");
     rt_frame_str(frame, "delta", unit);
     yyjson_mut_obj_add_uint(frame.doc, frame.root, "text_end", text_end);
+    return rt_frame_end(frame);
+}
+
+// A call of the model starts. It travels in the stream of the answer, so
+// its place among the text deltas is its place in the written text.
+static std::string rt_event_tool_started(const std::string & name) {
+    rt_frame frame = rt_frame_begin("response.tool_call.started");
+    rt_frame_str(frame, "name", name);
+    return rt_frame_end(frame);
+}
+
+// The call ended: whether it returned a result, how long it ran, and the
+// size of what it returned.
+static std::string rt_event_tool_done(const std::string & name, bool ok, double ms, size_t bytes) {
+    rt_frame frame = rt_frame_begin("response.tool_call.done");
+    rt_frame_str(frame, "name", name);
+    yyjson_mut_obj_add_bool(frame.doc, frame.root, "ok", ok);
+    yyjson_mut_obj_add_uint(frame.doc, frame.root, "ms", (uint64_t) llround(ms));
+    yyjson_mut_obj_add_uint(frame.doc, frame.root, "bytes", bytes);
     return rt_frame_end(frame);
 }
 

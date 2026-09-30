@@ -339,6 +339,7 @@ voice with `set_voice`,
 `input_audio_buffer.speech_started`,
 `conversation.item.input_audio_transcription.completed`,
 `response.created`, `response.output_text.delta`,
+`response.tool_call.started`, `response.tool_call.done`,
 `response.output_audio.delta`, `response.output_audio_transcript.delta`,
 `response.done`, `response.cancelled`, `error`.
 
@@ -353,6 +354,14 @@ part reaches, in UTF-16 code units, the index a browser slices its copy
 with. What lies past it was written and not spoken, which is how the page
 tells an answer cut off by a barge-in from one said to the end. Unknown
 fields are ignored, an unknown type gets an `error` event.
+
+In agentic mode every call of the model sends `response.tool_call.started`
+with its `name` when it starts, and `response.tool_call.done` with its
+`name`, `ok`, the `ms` it ran and the `bytes` of its result when it ends,
+a failure or a cancellation included. Both travel in the stream of the
+answer, so their place among the `response.output_text.delta` events is
+their place in the written text. They are for display only: neither the
+voice nor the conversation carries them.
 
 `session.update` describes the whole session: a field it leaves out takes
 the default published on `/props`, so clearing a field brings the default

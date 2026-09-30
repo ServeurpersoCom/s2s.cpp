@@ -230,6 +230,7 @@ bool llm_agent_run(llm_agent *                            agent,
                    int                                    max_rounds,
                    std::vector<llm_message> &             messages,
                    llm_delta_cb                           cb,
+                   llm_agent_call_cb                      on_call,
                    void *                                 user,
                    const std::atomic<bool> *              cancel,
                    std::string &                          text) {
@@ -275,13 +276,15 @@ bool llm_agent_run(llm_agent *                            agent,
         for (const LlmAgentCall & call : calls) {
             std::string result;
             const Timer timer;
+            on_call(call.name, false, false, 0.0, 0, user);
             if (!llm_agent_call(available, c, call.name, call.arguments, cancel, result)) {
+                const double ms = timer.ms();
+                on_call(call.name, true, false, ms, 0, user);
                 if (cancel && cancel->load()) {
                     return false;
                 }
                 // The model reads why its call failed and decides what comes
                 // next: another call, another tool, or words.
-                const double ms = timer.ms();
                 s2s_log(S2S_LOG_WARN, "[Agent] Round %d, %s failed after %.1f s: %s", round + 1, call.name.c_str(),
                         ms / 1000.0, s2s_last_error());
                 const bool timed_out = ms + HTTP_TIMER_SLACK_MS >= params.tool_timeout_sec * 1000.0;
@@ -291,6 +294,7 @@ bool llm_agent_run(llm_agent *                            agent,
                 messages.push_back({ "tool", result, "", call.id });
                 continue;
             }
+            on_call(call.name, true, true, timer.ms(), result.size(), user);
             s2s_log(S2S_LOG_INFO, "[Agent] Round %d, %s returned %zu bytes", round + 1, call.name.c_str(),
                     result.size());
             messages.push_back({ "tool", result, "", call.id });

@@ -191,6 +191,12 @@ export interface S2SEvents {
 	assistant_start: () => void;
 	// what the model writes, as it writes it
 	assistant_delta: (text: string) => void;
+	// a call of the agentic mode starts, where it stands between the
+	// assistant_delta texts
+	tool_start: (name: string) => void;
+	// the call ended: whether it returned a result, the ms it ran and the
+	// bytes of its result
+	tool_end: (name: string, ok: boolean, ms: number, bytes: number) => void;
 	// what the voice really speaks, one synthesis unit at a time, and how far
 	// into the written text it reaches: what lies past textEnd in the
 	// assistant_delta text was written and not spoken
@@ -954,6 +960,23 @@ export class S2S {
 			case 'response.output_text.delta':
 				if (this.answering) {
 					this.handlers.assistant_delta?.(String(message.delta ?? ''));
+				}
+				break;
+
+			case 'response.tool_call.started':
+				if (this.answering) {
+					this.handlers.tool_start?.(String(message.name ?? ''));
+				}
+				break;
+
+			case 'response.tool_call.done':
+				if (this.answering) {
+					this.handlers.tool_end?.(
+						String(message.name ?? ''),
+						message.ok === true,
+						Number(message.ms ?? 0),
+						Number(message.bytes ?? 0)
+					);
 				}
 				break;
 

@@ -30,6 +30,7 @@
 #include "version.h"
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -67,6 +68,8 @@
 
 #define CLI_COLOR_USER      "\033[32m"
 #define CLI_COLOR_ASSISTANT "\033[36m"
+#define CLI_COLOR_TOOL      "\033[97m"
+#define CLI_COLOR_FAILED    "\033[31m"
 #define CLI_COLOR_RESET     "\033[0m"
 
 // The one conversation of the process, numbered like a connection of the
@@ -115,12 +118,15 @@ struct Context {
 // What the user sees: the conversation on stdout, apart from the log, tagged
 // like it and in color on a terminal. Every transcript of the user takes a
 // line numbered by its revision, from 0, and every answer one line, written
-// as the model writes it, token by token. Loopback has no model writing, so
-// its answers show the units the voice speaks.
+// as the model writes it, token by token, with its tool calls where the
+// model makes them. Loopback has no model writing, so its answers show the
+// units the voice speaks.
 struct Display {
     int  revision  = 0;      // of the last user line
     bool line_open = false;  // the line of the answer awaits its end
     bool written   = false;  // the answer in flight wrote something
+    bool spaced    = true;   // its text ends with a space, or has none yet
+    bool tooled    = false;  // a call ended since its last text
 };
 
 struct Cli {
@@ -174,20 +180,45 @@ static void display_append(Display & display, const std::string & text) {
     if (!display.line_open) {
         printf("%s[Assistant] ", g_color ? CLI_COLOR_ASSISTANT : "");
         display.line_open = true;
+        display.spaced    = true;
     }
     printf("%s", text.c_str());
     fflush(stdout);
 }
 
+// Text of the answer, one space apart from a call before it.
+static void display_words(Display & display, const std::string & text) {
+    if (text.empty()) {
+        return;
+    }
+    const bool apart = display.tooled && !isspace((unsigned char) text.front());
+    display.tooled   = false;
+    display_append(display, apart ? " " + text : text);
+    display.spaced = isspace((unsigned char) text.back());
+}
+
 static void display_text(Display & display, const std::string & delta) {
     display.written = true;
-    display_append(display, delta);
+    display_words(display, delta);
 }
 
 static void display_unit(Display & display, const std::string & unit) {
     if (!display.written) {
-        display_append(display, display.line_open ? " " + unit : unit);
+        display_words(display, display.line_open ? " " + unit : unit);
     }
+}
+
+// A call shows where the model makes it: its name while it runs, then the
+// time it ran and the size of its result, or that it failed.
+static void display_tool_start(Display & display, const std::string & name) {
+    display_append(display, std::string(display.spaced ? "" : " ") + (g_color ? CLI_COLOR_TOOL : "") + "<" + name);
+}
+
+static void display_tool_done(Display & display, bool ok, uint64_t ms, uint64_t bytes) {
+    const std::string tail = ok ? " " + std::to_string(ms) + " ms " + std::to_string(bytes) + " bytes>" :
+                                  std::string(g_color ? CLI_COLOR_FAILED : "") + " failed>";
+    display_append(display, tail + (g_color ? CLI_COLOR_ASSISTANT : ""));
+    display.tooled = true;
 }
 
 static void on_audio(ma_device * device, void * output, const void * input, ma_uint32 n_frames) {
@@ -371,6 +402,16 @@ static bool on_event(const std::string & frame, void * user) {
     } else if (type == "response.output_text.delta") {
         if (cli->context.answering) {
             display_text(cli->display, rt_json_str(root, "delta"));
+        }
+    } else if (type == "response.tool_call.started") {
+        if (cli->context.answering) {
+            display_tool_start(cli->display, rt_json_str(root, "name"));
+        }
+    } else if (type == "response.tool_call.done") {
+        if (cli->context.answering) {
+            display_tool_done(cli->display, yyjson_get_bool(yyjson_obj_get(root, "ok")),
+                              yyjson_get_uint(yyjson_obj_get(root, "ms")),
+                              yyjson_get_uint(yyjson_obj_get(root, "bytes")));
         }
     } else if (type == "response.output_audio_transcript.delta") {
         if (cli->context.answering) {

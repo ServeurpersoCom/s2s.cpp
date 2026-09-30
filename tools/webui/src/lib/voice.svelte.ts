@@ -116,14 +116,27 @@ export function toOptions(): S2SOptions {
 	};
 }
 
+// A call of the model, at the place in written where it was made: while it
+// runs only its name, then ok, the ms it ran and the bytes of its result.
+export interface ChatTool {
+	at: number;
+	name: string;
+	done: boolean;
+	ok: boolean;
+	ms: number;
+	bytes: number;
+}
+
 // One line of the display. A user line holds its transcript in written and
-// its revision, from 0. An answer holds what the model wrote in written, what the voice spoke in
-// spoken, and in spokenEnd how far into written the voice went: it trails
-// by one synthesis unit and stops there on a barge-in. Loopback has no model
-// writing, so its answers hold spoken alone.
+// its revision, from 0. An answer holds what the model wrote in written, its
+// calls in tools, what the voice spoke in spoken, and in spokenEnd how far
+// into written the voice went: it trails by one synthesis unit and stops
+// there on a barge-in. Loopback has no model writing, so its answers hold
+// spoken alone.
 export interface ChatEntry {
 	role: 'user' | 'assistant';
 	written: string;
+	tools: ChatTool[];
 	spoken: string;
 	spokenEnd: number;
 	revision: number;
@@ -235,6 +248,7 @@ export async function createVoice(): Promise<S2S> {
 		voice.chat.push({
 			role: 'user',
 			written: text,
+			tools: [],
 			spoken: '',
 			spokenEnd: 0,
 			revision,
@@ -246,6 +260,7 @@ export async function createVoice(): Promise<S2S> {
 		voice.chat.push({
 			role: 'assistant',
 			written: '',
+			tools: [],
 			spoken: '',
 			spokenEnd: 0,
 			revision: 0,
@@ -256,6 +271,19 @@ export async function createVoice(): Promise<S2S> {
 		const entry = openAnswer();
 		if (entry) {
 			entry.written += text;
+		}
+	});
+	s2s.on('tool_start', (name) => {
+		const entry = openAnswer();
+		if (entry) {
+			entry.tools.push({ at: entry.written.length, name, done: false, ok: false, ms: 0, bytes: 0 });
+		}
+	});
+	// the calls of an answer run one after the other: the last one runs
+	s2s.on('tool_end', (name, ok, ms, bytes) => {
+		const tool = openAnswer()?.tools.at(-1);
+		if (tool && tool.name === name && !tool.done) {
+			Object.assign(tool, { done: true, ok, ms, bytes });
 		}
 	});
 	s2s.on('assistant_text', (text, textEnd) => {
@@ -272,7 +300,7 @@ export async function createVoice(): Promise<S2S> {
 		if (!entry) {
 			return;
 		}
-		if (!entry.written && !entry.spoken) {
+		if (!entry.written && !entry.spoken && !entry.tools.length) {
 			voice.chat.pop();
 		} else {
 			entry.open = false;
