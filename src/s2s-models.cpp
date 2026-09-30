@@ -10,9 +10,12 @@ bool models_load(const std::string & models_dir,
                  const tts_engine &  engine,
                  ModelFiles &        files,
                  ConversationSetup & setup) {
-    files.vad    = find_model(models_dir, "silero-vad", "");
-    files.turn   = find_model(models_dir, "smart-turn", "");
-    files.asr    = find_model(models_dir, "parakeet", "");
+    files.vad  = find_model(models_dir, "silero-vad", "");
+    files.turn = find_model(models_dir, "smart-turn", "");
+    files.asr  = find_model(models_dir, "parakeet-ultra", "");
+    if (files.asr.empty()) {
+        files.asr = find_model(models_dir, "parakeet-tdt", "");
+    }
     files.talker = find_model(models_dir, "qwen-talker", "-base-");
     files.codec  = find_model(models_dir, "qwen-tokenizer", "");
     files.aec    = find_model(models_dir, "localvqe", "");

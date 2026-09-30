@@ -12,7 +12,7 @@ while staying ready to be interrupted at any instant.
 | Echo cancellation | LocalVQE v1.3 | LocalAI-io/LocalVQE | best GPU |
 | Voice activity | Silero VAD v5 | onnx-community/silero-vad | CPU, 1 thread |
 | End of turn | Smart Turn v3.2 | pipecat-ai/smart-turn-v3 | CPU |
-| Recognition | Parakeet TDT 0.6B v3 | nvidia/parakeet-tdt-0.6b-v3 | best GPU |
+| Recognition | Parakeet Ultra, or Parakeet TDT 0.6B v3 | moondream/parakeet-ultra, nvidia/parakeet-tdt-0.6b-v3 | best GPU |
 | Synthesis | Qwen3-TTS 1.7B Base | qwentts.cpp submodule | best GPU |
 | Reasoning | any OpenAI chat completions endpoint | external | external |
 
@@ -24,7 +24,8 @@ well. LocalVQE, Parakeet and Qwen3-TTS take the best device
 
 The models are found in `--models` by file name. For each one the server
 takes the largest model present, then the best quant up to Q8_0, F32 and
-BF16 last; the talker must be a `base` one. The six files really
+BF16 last; the talker must be a `base` one, and Parakeet Ultra wins over
+Parakeet TDT 0.6B v3 when both are present. The six files really
 loaded are logged at startup and published on `/props`.
 
 ## Threading
@@ -484,7 +485,7 @@ Every case also checks that each response closes exactly once and that
 the transcripts of a turn come in a row. The time windows need the
 synthesis faster than real time, so the script runs on the GPU backends.
 
-The Parakeet sweep covers CUDA, Vulkan and CPU against F32, Q8_0 and
-Q4_K_M, the LocalVQE sweep CUDA, Vulkan and CPU, one log per backend.
+The Parakeet sweep covers v3 and Ultra on CUDA, Vulkan and CPU against
+F32, Q8_0 and Q4_K_M, the LocalVQE sweep CUDA, Vulkan and CPU, one log per backend.
 Silero and Smart Turn only ever run on the CPU, so one log each covers
 them. The synthesis itself has its parity harnesses in qwentts.cpp.

@@ -54,7 +54,7 @@ big one for the model.
 3. LocalVQE v1.3: echo, noise and reverberation removed
 4. Silero VAD: speech detected window by window
 5. Smart Turn v3.2: end of turn decided
-6. Parakeet TDT 0.6B v3: turn transcribed, 25 European languages
+6. Parakeet Ultra, or Parakeet TDT 0.6B v3 when Ultra is absent: turn transcribed, 25 European languages
 7. OpenAI chat completions endpoint (external): answer streamed
 8. Sentence split and text clean: synthesis units
 9. Qwen3-TTS 1.7B Base through qwentts.cpp: answer spoken, unit by unit

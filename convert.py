@@ -2,10 +2,11 @@
 # convert.py: upstream checkpoints to GGUF
 #
 # Usage: ./convert.py [model ...]
-#   silero      checkpoints/silero-vad/onnx/model.onnx -> models/silero-vad-F32.gguf
-#   smart-turn  checkpoints/smart-turn/smart-turn-v3.2-gpu.onnx -> models/smart-turn-v3.2-F32.gguf
-#   parakeet    checkpoints/parakeet/model.safetensors -> models/parakeet-tdt-0.6b-v3-F32.gguf
-#   localvqe    checkpoints/localvqe/localvqe-v1.3-4.8M.pt -> models/localvqe-v1.3-F32.gguf
+#   silero          checkpoints/silero-vad/onnx/model.onnx -> models/silero-vad-F32.gguf
+#   smart-turn      checkpoints/smart-turn/smart-turn-v3.2-gpu.onnx -> models/smart-turn-v3.2-F32.gguf
+#   parakeet        checkpoints/parakeet/model.safetensors -> models/parakeet-tdt-0.6b-v3-F32.gguf
+#   parakeet-ultra  checkpoints/parakeet-ultra/model.safetensors -> models/parakeet-ultra-F32.gguf
+#   localvqe        checkpoints/localvqe/localvqe-v1.3-4.8M.pt -> models/localvqe-v1.3-F32.gguf
 #
 # Every model of the pipeline gets a subcommand here so the whole project
 # converts from one entry point. Outputs that already exist are skipped.
@@ -231,8 +232,9 @@ def convert_smart_turn(src, dst):
     writer.close()
 
 
-# Parakeet TDT 0.6B v3: FastConformer encoder, LSTM prediction network and
-# the TDT joint. Two shape conventions have to be reconciled:
+# Parakeet TDT 0.6B v3 and Parakeet Ultra, its post trained twin of the same
+# shape: FastConformer encoder, LSTM prediction network and the TDT joint.
+# Two shape conventions have to be reconciled:
 #
 #   torch linear weights are [out, in] and land as [in, out] in ne terms,
 #   which is what ggml_mul_mat wants, so they pass through untouched
@@ -437,6 +439,11 @@ MODEL_TABLE = {
     "parakeet": (
         os.path.join(CHECKPOINTS, "parakeet", "model.safetensors"),
         os.path.join(MODELS, "parakeet-tdt-0.6b-v3-F32.gguf"),
+        convert_parakeet,
+    ),
+    "parakeet-ultra": (
+        os.path.join(CHECKPOINTS, "parakeet-ultra", "model.safetensors"),
+        os.path.join(MODELS, "parakeet-ultra-F32.gguf"),
         convert_parakeet,
     ),
     "localvqe": (

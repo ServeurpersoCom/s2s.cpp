@@ -12,6 +12,7 @@
 # Usage:
 #     ./test-parakeet.py
 #     GGML_BACKEND=CPU ./test-parakeet.py --model ../models/parakeet-tdt-0.6b-v3-Q8_0.gguf
+#     ./test-parakeet.py --model ../models/parakeet-ultra-F32.gguf --checkpoint ../checkpoints/parakeet-ultra
 
 import os
 import subprocess
@@ -35,7 +36,7 @@ def _arg(name, default):
 
 
 GGUF = _arg("--model", "../models/parakeet-tdt-0.6b-v3-F32.gguf")
-CKPT = "../checkpoints/parakeet"
+CKPT = _arg("--checkpoint", "../checkpoints/parakeet")
 WAV = "../qwentts.cpp/examples/freeman.wav"
 TMP = "tmp"
 
