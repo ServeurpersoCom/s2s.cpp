@@ -97,6 +97,17 @@ export interface S2STurn {
 	graceMs?: number;
 }
 
+// The wake phrase gate of the conversation and agentic modes. off answers
+// every turn; alone and anywhere answer none until a turn is a wake phrase
+// alone, or holds one anywhere, and a turn that holds a sleep phrase puts
+// the assistant back to sleep after its answer. Asleep, a turn without a
+// wake phrase never leaves the server.
+export interface S2SWake {
+	mode?: string;
+	phrases?: string[];
+	sleepPhrases?: string[];
+}
+
 export interface S2SSampling {
 	temperature?: number;
 	topP?: number;
@@ -173,6 +184,7 @@ export interface S2SOptions {
 	llmTimeoutSec?: number;
 	vad?: S2SVad;
 	turn?: S2STurn;
+	wake?: S2SWake;
 	// ECHO_DEFAULT unless set. A change reaches a running session, the
 	// microphone constraints included.
 	echo?: S2SEcho;
@@ -807,6 +819,11 @@ export class S2S {
 					incomplete_delay_ms: this.options.turn?.incompleteDelayMs,
 					max_wait_ms: this.options.turn?.maxWaitMs,
 					reopen_grace_ms: this.options.turn?.graceMs
+				},
+				wake: {
+					mode: this.options.wake?.mode,
+					phrases: this.options.wake?.phrases,
+					sleep_phrases: this.options.wake?.sleepPhrases
 				}
 			}
 		});

@@ -99,13 +99,15 @@ machine has several.
 
 ## Voices
 
-Drop a voice in `voices/` and it shows up in the web UI. A `.spk` alone
+Drop a voice in `voices/` and it shows up in the web UI. Its name ends
+with the language it was recorded in, `-en` or `-fr`. A `.spk` alone
 gives the timbre; with the `.rvq` and `.txt` of a recording next to it,
-the voice also keeps its pace and accent, and is offered both ways:
+the voice also keeps its pace and the accent of that language, and is
+offered both ways:
 
 ```
-freeman (original accent)
-freeman (timbre only)
+freeman-en (original accent)
+freeman-en (timbre only)
 ```
 
 The language id only weighs on a lone word, a few words are read in the
@@ -113,7 +115,8 @@ language they are written in: auto, the default, takes the language of the
 browser when the talker speaks it.
 
 `qwen-codec --talker` of the qwentts.cpp submodule makes the three files
-from a clean recording. `freeman` ships as the default.
+from a clean recording. The first voice by name is the default,
+`christophe-fr`.
 
 ## Run
 
@@ -132,7 +135,8 @@ written in, so the system prompt decides the language of the answers.
 The agentic mode takes its tools from the server itself, under
 built-in: `set_voice` lets the model change the voice it speaks with,
 one of the voices above, and the effect over it, `off` or `jarvis`, an
-echo and a chorus. Then from MCP servers, any that speak
+echo and a chorus, and `sleep` lets it stop answering until a wake
+phrase is heard again. Then from MCP servers, any that speak
 Streamable HTTP, a web search for instance, named in the playground one
 per line with the key each takes, and from the endpoint itself when it
 is a llama.cpp server started with `--tools`, or `--tools all`. Reload

@@ -74,12 +74,15 @@ struct rt_message {
 // session.update describes the whole session. A number out of its range is
 // refused, read as absent and named in invalid.
 struct rt_session_patch {
-    std::string mode;  // conversation, loopback or agentic
-    std::string echo;  // both, server, client or off
-    std::string llm_url;
-    std::string llm_model;
-    std::string llm_key;
-    std::string system_prompt;
+    std::string              mode;  // conversation, loopback or agentic
+    std::string              echo;  // both, server, client or off
+    std::string              llm_url;
+    std::string              llm_model;
+    std::string              llm_key;
+    std::string              system_prompt;
+    std::string              wake_mode;  // off, alone or anywhere
+    std::vector<std::string> wake_phrases;
+    std::vector<std::string> sleep_phrases;
 
     // Tools the session lets the model use, by name, in the agentic mode.
     // Absent and empty read the same: the model is offered none.
@@ -314,6 +317,11 @@ static rt_client_message rt_parse(const std::string & frame) {
         message.patch.llm_key         = rt_json_str(fields, "llm_key");
         message.patch.system_prompt   = rt_json_str(fields, "instructions");
         message.patch.llm_timeout_sec = rt_json_count(fields, "llm_timeout_sec", message.patch.invalid);
+
+        yyjson_val * wake           = yyjson_obj_get(fields, "wake");
+        message.patch.wake_mode     = rt_json_str(wake, "mode");
+        message.patch.wake_phrases  = rt_json_strs(wake, "phrases");
+        message.patch.sleep_phrases = rt_json_strs(wake, "sleep_phrases");
 
         message.patch.max_rounds       = rt_json_count(fields, "max_rounds", message.patch.invalid);
         message.patch.tool_timeout_sec = rt_json_count(fields, "tool_timeout_sec", message.patch.invalid);

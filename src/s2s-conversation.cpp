@@ -64,6 +64,7 @@ bool host_allowed(const std::vector<std::string> & hosts, const std::string & ur
 }
 
 #define VOICE_TOOL "set_voice"  // the name the model calls the built-in voice tool by
+#define SLEEP_TOOL "sleep"      // and the built-in sleep tool
 
 // Every effect and what it does, in the words the model reads.
 struct VoiceEffect {
@@ -92,19 +93,88 @@ static bool conn_effect_known(const std::string & effect) {
     return std::find(names.begin(), names.end(), effect) != names.end();
 }
 
-llm_tool conn_voice_tool(const tts_bridge * tts, const std::string & voice, const std::string & effect) {
-    const std::string current = voice.empty() ? tts_bridge_defaults_request(tts).voice : voice;
-    std::string       effects;
+const std::vector<std::string> & conn_wake_modes() {
+    static const std::vector<std::string> modes = { "off", "alone", "anywhere" };
+    return modes;
+}
+
+static bool conn_wake_known(const std::string & mode) {
+    const std::vector<std::string> & modes = conn_wake_modes();
+    return std::find(modes.begin(), modes.end(), mode) != modes.end();
+}
+
+// The words of a text as the wake gate compares them: lowercase, and every
+// run of anything but letters and digits one separator. A byte past ASCII
+// counts as a letter, so an accented word stays whole.
+static std::vector<std::string> wake_words(const std::string & text) {
+    std::vector<std::string> words;
+    std::string              word;
+    for (const unsigned char c : text) {
+        if (c >= 0x80 || isalnum(c)) {
+            word += (char) tolower(c);
+        } else if (!word.empty()) {
+            words.push_back(word);
+            word.clear();
+        }
+    }
+    if (!word.empty()) {
+        words.push_back(word);
+    }
+    return words;
+}
+
+// Whether the words of one of the phrases make the whole text, alone, or
+// stand in it in a row anywhere.
+static bool wake_heard(const std::string & text, const std::vector<std::string> & phrases, bool alone) {
+    const std::vector<std::string> words = wake_words(text);
+    for (const std::string & phrase : phrases) {
+        const std::vector<std::string> wanted = wake_words(phrase);
+        if (wanted.empty()) {
+            continue;
+        }
+        if (alone ? words == wanted :
+                    std::search(words.begin(), words.end(), wanted.begin(), wanted.end()) != words.end()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+llm_tool conn_sleep_tool() {
+    const std::string about =
+        "Stops answering until the user says a wake phrase again. What you write with the call is still spoken. "
+        "Call it when the user thanks you, says goodbye or expects nothing more, or when what you hear makes no "
+        "sense or is not meant for you.";
+
+    yyjson_mut_doc * doc  = yyjson_mut_doc_new(nullptr);
+    yyjson_mut_val * root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "type", "function");
+    yyjson_mut_val * function = yyjson_mut_obj_add_obj(doc, root, "function");
+    yyjson_mut_obj_add_str(doc, function, "name", SLEEP_TOOL);
+    yyjson_mut_obj_add_strn(doc, function, "description", about.c_str(), about.size());
+    yyjson_mut_val * parameters = yyjson_mut_obj_add_obj(doc, function, "parameters");
+    yyjson_mut_obj_add_str(doc, parameters, "type", "object");
+    yyjson_mut_obj_add_obj(doc, parameters, "properties");
+
+    char *   json = yyjson_mut_write(doc, 0, nullptr);
+    llm_tool tool = { SLEEP_TOOL, json ? json : "{}" };
+    free(json);
+    yyjson_mut_doc_free(doc);
+    return tool;
+}
+
+llm_tool conn_voice_tool(const tts_bridge * tts) {
+    std::string effects;
     for (const VoiceEffect & e : EFFECTS) {
         effects += std::string(effects.empty() ? "" : ", ") + e.name + " for " + e.about;
     }
     const std::string about =
         "Changes the voice you speak with, for the rest of the conversation: what you write after the call is "
-        "spoken with it. You speak with " +
-        current + ", effect " + effect +
-        ", now. An original accent voice continues a recording, with its accent and pace; a timbre only voice "
-        "keeps the timbre alone. effect runs over any voice: " +
-        effects + "; left out, it stays as it is.";
+        "spoken with it. The suffix of a voice is the language it was recorded in: an original accent voice "
+        "speaks with the accent of that language, a timbre only voice keeps its timbre alone. Try to pick a voice "
+        "in the language of the user. effect runs over any voice: " +
+        effects + "; left out, it does not change.";
 
     yyjson_mut_doc * doc  = yyjson_mut_doc_new(nullptr);
     yyjson_mut_val * root = yyjson_mut_obj(doc);
@@ -181,6 +251,12 @@ struct Connection {
     // turn: a change lands on the next answer, never under a running one.
     std::mutex     client_mutex;
     ClientSettings client;
+
+    // The wake phrase gate, under client_mutex: whether the assistant
+    // answers, and the turn it last let through, whose revisions pass as it
+    // did. A change of mode puts it to sleep.
+    bool awake         = false;
+    int  admitted_turn = -1;
 
     // Frames to the client. Every thread queues, one writer sends: a client
     // that reads slowly stalls its own writer, never the synthesis worker
@@ -554,6 +630,48 @@ static bool conn_set_voice(const std::string & arguments, void * user, std::stri
     return true;
 }
 
+// What sleep changes: from the turn after this one, the connection answers
+// none until the wake phrase is heard again.
+static bool conn_sleep(const std::string &, void * user, std::string & result) {
+    Connection * conn = (Connection *) user;
+    {
+        std::lock_guard<std::mutex> lock(conn->client_mutex);
+        conn->awake = false;
+    }
+    s2s_log(S2S_LOG_INFO, "[Wake] The model put the assistant to sleep");
+    result = "Asleep: the next turn needs the wake phrase";
+    return true;
+}
+
+// Whether a turn reaches the model. The gate holds in the conversation and
+// agentic modes while a wake mode is on: asleep, only the turn that wakes the
+// assistant gets through, and a turn that got through keeps doing so through
+// its revisions, so a wake phrase followed by a question in the same breath
+// is answered as a whole. A turn that holds a sleep phrase gets through and
+// puts the assistant to sleep for the turns after it.
+static bool conn_admit(Connection * conn, int turn_id, const std::string & transcript) {
+    std::lock_guard<std::mutex> lock(conn->client_mutex);
+    const WakeSettings &        wake = conn->client.wake;
+    if (wake.mode == "off" || conn->client.mode == "loopback") {
+        return true;
+    }
+    if (turn_id != conn->admitted_turn) {
+        if (!conn->awake) {
+            if (!wake_heard(transcript, wake.phrases, wake.mode == "alone")) {
+                return false;
+            }
+            conn->awake = true;
+            s2s_log(S2S_LOG_INFO, "[Wake] Turn %d woke the assistant", turn_id);
+        }
+        conn->admitted_turn = turn_id;
+    }
+    if (conn->awake && wake_heard(transcript, wake.sleep_phrases, false)) {
+        conn->awake = false;
+        s2s_log(S2S_LOG_INFO, "[Wake] Turn %d puts the assistant to sleep after its answer", turn_id);
+    }
+    return true;
+}
+
 // The endpoint client of the connection, created on its first turn and
 // pointed at the settings of every turn after.
 static llm_client * conn_llm(Connection * conn, const llm_client_params & params) {
@@ -608,6 +726,14 @@ static void conn_recognize(Connection * conn, const TurnAudio & turn) {
 
     if (transcript.empty()) {
         s2s_log(S2S_LOG_INFO, "[Turn] Empty transcript, nothing to answer");
+        conn_release(conn, turn.turn_id, turn.revision);
+        return;
+    }
+
+    // Asleep, a turn without a wake phrase goes nowhere: not to the model,
+    // not to the client.
+    if (!conn_admit(conn, turn.turn_id, transcript)) {
+        s2s_log(S2S_LOG_INFO, "[Wake] Turn %d rev %d unheard while asleep", turn.turn_id, turn.revision);
         conn_release(conn, turn.turn_id, turn.revision);
         return;
     }
@@ -771,8 +897,8 @@ static void conn_answer(Connection * conn, const AnswerJob & job) {
             // The built-in tools act on this answer and this connection.
             VoiceSwitch                          voice_switch = { conn, &client.tts };
             const std::vector<llm_agent_builtin> builtins     = {
-                { conn_voice_tool(conn->setup->models.tts, client.tts.voice, client.tts.effect), conn_set_voice,
-                 &voice_switch }
+                { conn_voice_tool(conn->setup->models.tts), conn_set_voice, &voice_switch },
+                { conn_sleep_tool(),                        conn_sleep,     conn          }
             };
 
             Timer      t_llm;
@@ -965,6 +1091,7 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     std::lock_guard<std::mutex> lock(conn->client_mutex);
 
     std::vector<rt_message> history = std::move(conn->client.history);
+    const std::string       waking  = conn->client.wake.mode;
     conn->client                    = conn->setup->defaults;
     conn->client.history            = std::move(history);
 
@@ -991,6 +1118,22 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
     }
     if (patch.max_rounds > 0) {
         conn->client.max_rounds = patch.max_rounds;
+    }
+    if (conn_wake_known(patch.wake_mode)) {
+        conn->client.wake.mode = patch.wake_mode;
+    } else if (!patch.wake_mode.empty()) {
+        conn_error(conn, ("[Realtime] Unknown wake mode " + patch.wake_mode + ", every turn is answered").c_str());
+    }
+    if (!patch.wake_phrases.empty()) {
+        conn->client.wake.phrases = patch.wake_phrases;
+    }
+    if (!patch.sleep_phrases.empty()) {
+        conn->client.wake.sleep_phrases = patch.sleep_phrases;
+    }
+    if (conn->client.wake.mode != waking) {
+        conn->awake = false;
+        s2s_log(S2S_LOG_INFO, "[Wake] Mode %s%s", conn->client.wake.mode.c_str(),
+                conn->client.wake.mode == "off" ? "" : ", asleep");
     }
     if (patch.tool_timeout_sec > 0) {
         conn->client.llm.tool_timeout_sec = patch.tool_timeout_sec;

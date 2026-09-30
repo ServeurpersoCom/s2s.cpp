@@ -54,6 +54,9 @@ export interface Settings {
 	turnIncompleteDelayMs: string;
 	turnMaxWaitMs: string;
 	turnGraceMs: string;
+	wakeMode: string;
+	wakePhrases: string; // one per line
+	sleepPhrases: string; // one per line
 	echo: S2SEcho | '';
 	mic: string; // a deviceId, empty for the browser default
 	volume: number;
@@ -110,6 +113,9 @@ function defaults(): Settings {
 		turnIncompleteDelayMs: '',
 		turnMaxWaitMs: '',
 		turnGraceMs: '',
+		wakeMode: '',
+		wakePhrases: '',
+		sleepPhrases: '',
 		echo: '',
 		mic: '',
 		volume: 1,
@@ -204,6 +210,9 @@ $effect.root(() => {
 			turnIncompleteDelayMs: settings.turnIncompleteDelayMs,
 			turnMaxWaitMs: settings.turnMaxWaitMs,
 			turnGraceMs: settings.turnGraceMs,
+			wakeMode: settings.wakeMode,
+			wakePhrases: settings.wakePhrases,
+			sleepPhrases: settings.sleepPhrases,
 			echo: settings.echo,
 			mic: settings.mic,
 			volume: settings.volume,

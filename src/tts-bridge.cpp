@@ -10,8 +10,8 @@
 // talker continues on every unit, accent and pace included. A voice with all
 // three files is offered both ways, the reference speech first:
 //
-//   freeman (original accent)
-//   freeman (timbre only)
+//   freeman-en (original accent)
+//   freeman-en (timbre only)
 //
 // The frame budget of a synthesis is derived from the length of the text, so
 // a talker that misses its end of speech stops within a few seconds of the

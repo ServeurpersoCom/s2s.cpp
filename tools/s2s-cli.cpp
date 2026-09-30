@@ -459,8 +459,8 @@ static void print_usage(const char * prog) {
             "Tools, for the agentic mode:\n"
             "  --mcp <url>                 MCP server, repeatable, Streamable HTTP\n"
             "  --mcp-key-file <path>       File holding the key of the --mcp named before it\n"
-            "  --tool <name>               Tool offered to the model, repeatable: set_voice, a tool\n"
-            "                              of an MCP server or of the endpoint\n"
+            "  --tool <name>               Tool offered to the model, repeatable: set_voice, sleep,\n"
+            "                              a tool of an MCP server or of the endpoint\n"
             "  --tool-timeout <s>          Longest a tool may work before its call fails\n"
             "                              (default: 10)\n"
             "  --max-rounds <N>            Rounds of tool calls one turn may take (default: 10)\n"
@@ -470,6 +470,14 @@ static void print_usage(const char * prog) {
             "  --effect <name>             Effect over the voice: off or jarvis (default: off)\n"
             "  --language <name>           Language of the voice (default: auto, the first language\n"
             "                              of the system the voice speaks, else English)\n"
+            "\n"
+            "Wake, for the conversation and agentic modes:\n"
+            "  --wake-mode <mode>          off answers every turn; alone and anywhere answer none\n"
+            "                              until a turn is a wake phrase alone, or holds one\n"
+            "                              anywhere (default: off)\n"
+            "  --wake-phrase <text>        Wakes the assistant, repeatable (default: jarvis)\n"
+            "  --sleep-phrase <text>       Anywhere in a turn, puts it back to sleep after its\n"
+            "                              answer, repeatable (default: shut up)\n"
             "\n"
             "Sound:\n"
             "  --list-devices              Lists the microphones and the loudspeakers, then exits\n"
@@ -610,6 +618,10 @@ int main(int argc, char ** argv) {
     std::string effect;
     std::string language;
 
+    std::string              wake_mode;
+    std::vector<std::string> wake_phrases;
+    std::vector<std::string> sleep_phrases;
+
     bool list    = false;
     int  mic     = -1;
     int  speaker = -1;
@@ -672,6 +684,12 @@ int main(int argc, char ** argv) {
             effect = argv[++i];
         } else if (arg == "--language" && has_value) {
             language = argv[++i];
+        } else if (arg == "--wake-mode" && has_value) {
+            wake_mode = argv[++i];
+        } else if (arg == "--wake-phrase" && has_value) {
+            wake_phrases.push_back(argv[++i]);
+        } else if (arg == "--sleep-phrase" && has_value) {
+            sleep_phrases.push_back(argv[++i]);
         } else if (arg == "--list-devices") {
             list = true;
         } else if (arg == "--mic" && has_value) {
@@ -801,6 +819,16 @@ int main(int argc, char ** argv) {
     }
     yyjson_mut_val * sampling = yyjson_mut_obj_add_obj(update.doc, session, "sampling");
     str(sampling, "reasoning_effort", reasoning_effort);
+    yyjson_mut_val * wake = yyjson_mut_obj_add_obj(update.doc, session, "wake");
+    str(wake, "mode", wake_mode);
+    yyjson_mut_val * wake_list = yyjson_mut_obj_add_arr(update.doc, wake, "phrases");
+    for (const std::string & phrase : wake_phrases) {
+        yyjson_mut_arr_add_strn(update.doc, wake_list, phrase.c_str(), phrase.size());
+    }
+    yyjson_mut_val * sleep_list = yyjson_mut_obj_add_arr(update.doc, wake, "sleep_phrases");
+    for (const std::string & phrase : sleep_phrases) {
+        yyjson_mut_arr_add_strn(update.doc, sleep_list, phrase.c_str(), phrase.size());
+    }
     if (tool_timeout > 0) {
         yyjson_mut_obj_add_int(update.doc, session, "tool_timeout_sec", tool_timeout);
     }

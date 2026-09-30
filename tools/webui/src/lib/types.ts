@@ -4,6 +4,10 @@ interface S2SDefaults {
 	llm_fixed: boolean; // the server owns the endpoint, the page names none
 	mcp_fixed: boolean; // the server owns the MCP servers, the page names none
 	instructions: string;
+	wake_mode: string;
+	wake_modes: string[];
+	wake_phrases: string[];
+	sleep_phrases: string[];
 	voice: string;
 	language: string;
 	tts_effect: string;

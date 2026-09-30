@@ -30,6 +30,17 @@ struct ServerModels {
     lv_context * aec  = nullptr;
 };
 
+// The wake phrase gate of the conversation and agentic modes. off answers
+// every turn. alone and anywhere answer none until a turn wakes the
+// assistant, one made of a wake phrase alone or one that holds one
+// anywhere; a turn that holds a sleep phrase anywhere puts it back to sleep
+// after its answer.
+struct WakeSettings {
+    std::string              mode          = "off";
+    std::vector<std::string> phrases       = { "jarvis" };
+    std::vector<std::string> sleep_phrases = { "shut up" };
+};
+
 // What the client sets for its answers, conversation included: the list is
 // the client's, pushed when it changes, and nothing survives here between two
 // turns.
@@ -39,6 +50,7 @@ struct ClientSettings {
     llm_client_params       llm;
     std::string             system_prompt = "You are a voice assistant. Answer in one or two short spoken sentences.";
     std::vector<rt_message> history;
+    WakeSettings            wake;
 
     // Tools the model is offered in the agentic mode, by name, the MCP
     // servers that run some of them, and the rounds of calls one turn may
@@ -88,11 +100,21 @@ void conn_close(Connection * conn);
 // The effects a voice can run through, off first: the default.
 const std::vector<std::string> & conn_effects();
 
+// The modes of the wake phrase gate, off first: the default.
+const std::vector<std::string> & conn_wake_modes();
+
+// The built-in tools are defined once for the whole process: they sit at the
+// head of every prompt, so a word that changed there would make the endpoint
+// prefill the whole conversation again.
+
+// The definition of sleep, the built-in tool that lets the model stop
+// answering until a wake phrase is heard again.
+llm_tool conn_sleep_tool();
+
 // The definition of set_voice, the built-in tool that lets the model change
 // the voice it speaks with and the effect over it: every label the bridge
-// lists, every effect, and the voice and effect in use, an empty voice for
-// the default.
-llm_tool conn_voice_tool(const tts_bridge * tts, const std::string & voice, const std::string & effect);
+// lists and every effect.
+llm_tool conn_voice_tool(const tts_bridge * tts);
 
 // Host of an endpoint URL, with its port when it carries one: what an
 // allowlist entry is compared against.

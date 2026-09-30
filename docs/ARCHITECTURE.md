@@ -185,8 +185,10 @@ next round starts.
 
 The tools come from three places. The server itself runs the built-in
 ones, listed first under `built-in`: `set_voice` takes one of the labels
-of `tts_voices`, and optionally one of `tts_effects`, and its
-description names the voice and effect in use. The rest of
+of `tts_voices`, and optionally one of `tts_effects`, and `sleep` takes
+nothing. Their definitions never change within a process: tools sit at
+the head of the prompt, so any change there would make the endpoint
+prefill the whole conversation again. The rest of
 the answer in flight speaks with the new voice, every later turn of the
 connection too, and the server tells the client with a `session.updated`
 carrying `session.tts.voice` and `session.tts.effect`, since the session
@@ -276,8 +278,8 @@ browser by preference, named as the talker names them: under `auto` the
 first one the talker speaks gives the id, so the lone words of a French
 visitor are French, and the talker keeps its English default only when
 it speaks none of them. `/props` lists in `tts_voices` every way to speak with the voices, a voice with
-reference speech twice, `freeman (original accent)` then
-`freeman (timbre only)`; the first label is the default, and a session
+reference speech twice, `freeman-en (original accent)` then
+`freeman-en (timbre only)`; the first label is the default, and a session
 picks one with `tts.voice`. The files come from `qwen-codec
 --talker` of the qwentts.cpp submodule, and the embedding has the hidden
 size of the talker that extracted it: a voice made with the 1.7B talker
@@ -379,6 +381,21 @@ absent list and an empty one read the same: the model is offered none.
 A server started with `--mcp` owns its MCP servers the way `--llm-url`
 owns the endpoint: a session that names any is refused. The hosts of
 MCP servers pass the same allowlist as the endpoint's.
+
+`session.update` carries `wake`, the wake phrase gate of the
+conversation and agentic modes: `{mode, phrases, sleep_phrases}`, with
+`off`, `["jarvis"]` and `["shut up"]` by default. `off` answers every
+turn, as without the field. `alone` and `anywhere` start asleep: a turn
+is answered only once one wakes the assistant, a turn made of a wake
+phrase alone or one that holds one anywhere, and a turn that gets
+through keeps doing so through its revisions. Asleep, a turn without a
+wake phrase never leaves the server: no transcript, no answer, and the
+log names its number only. A turn that holds a sleep phrase anywhere
+is answered, then the assistant sleeps again. In agentic mode the
+built-in `sleep` tool, offered like `set_voice` when the session lists
+it, does the same from the turn after the call. The words compare lowercase, with
+punctuation dropped. Changing the mode puts the assistant to sleep;
+loopback ignores the gate.
 
 HTTP routes: `/` the page, `/s2s.js` the component, `/props` the session
 defaults and the loaded models, `/health`, `/logs` the server log as

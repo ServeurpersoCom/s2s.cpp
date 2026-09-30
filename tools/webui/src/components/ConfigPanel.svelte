@@ -12,6 +12,7 @@
 		getClient,
 		mcpServers,
 		sessionEffect,
+		sessionWakeMode,
 		sessionLanguage,
 		sessionVoice,
 		voice
@@ -99,6 +100,17 @@
 	function onEffect(e: Event) {
 		settings.ttsEffect = (e.target as HTMLSelectElement).value;
 	}
+
+	function onWakeMode(e: Event) {
+		settings.wakeMode = (e.target as HTMLSelectElement).value;
+	}
+
+	// the modes of the gate as the selector names them
+	const WAKE_LABELS: Record<string, string> = {
+		off: 'Disabled',
+		alone: 'Alone',
+		anywhere: 'Anywhere'
+	};
 
 	// an endpoint that answers fills the selector, one that does not empties it
 	// and the toast says why: a model name is what the endpoint answered, never
@@ -211,6 +223,12 @@
 		settings.turnIncompleteDelayMs = '';
 		settings.turnMaxWaitMs = '';
 		settings.turnGraceMs = '';
+	}
+
+	function clearWake() {
+		settings.wakeMode = '';
+		settings.wakePhrases = '';
+		settings.sleepPhrases = '';
 	}
 
 	// start() has to run inside the click: the browser grants the microphone
@@ -468,6 +486,55 @@
 			</div>
 		</div>
 	</details>
+
+	{#if mode !== 'loopback'}
+		<details class="has-clear">
+			<summary>System wake words</summary>
+			<button
+				type="button"
+				class="clear-btn details-clear"
+				title="Clear system wake words"
+				onclick={clearWake}
+				aria-label="Clear system wake words"
+			>
+				<X size={20} />
+			</button>
+			<div class="details-body">
+				<div
+					class="model-row"
+					title="Disabled answers every turn. Alone and Anywhere answer none until a turn is a wake phrase alone, or holds one anywhere; asleep, what you say never leaves the server. In the agentic mode, the sleep tool lets the model go back to sleep on its own."
+				>
+					<span class="model-label">Wake</span>
+					<select
+						class="model-select"
+						value={sessionWakeMode() || d?.wake_mode || ''}
+						onchange={onWakeMode}
+					>
+						{#each d?.wake_modes ?? [] as name (name)}
+							<option value={name}>{WAKE_LABELS[name] ?? name}</option>
+						{/each}
+					</select>
+				</div>
+
+				<label
+					title="The phrases that wake the assistant, one per line, compared lowercase, punctuation dropped."
+					>Wake phrases <textarea
+						rows="4"
+						placeholder={d?.wake_phrases?.join('\n') ?? ''}
+						bind:value={settings.wakePhrases}
+					></textarea></label
+				>
+				<label
+					title="Anywhere in a turn, one of these phrases puts the assistant back to sleep once it answered, one per line."
+					>Sleep phrases <textarea
+						rows="4"
+						placeholder={d?.sleep_phrases?.join('\n') ?? ''}
+						bind:value={settings.sleepPhrases}
+					></textarea></label
+				>
+			</div>
+		</details>
+	{/if}
 
 	{#if mode !== 'loopback'}
 		<details class="has-clear">

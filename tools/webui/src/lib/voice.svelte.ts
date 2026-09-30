@@ -18,6 +18,20 @@ export function sessionEffect(): string | undefined {
 	return served(settings.ttsEffect, app.props?.defaults.tts_effects);
 }
 
+// The lines of a text that hold something, trimmed; undefined when none
+// does, so the server default applies.
+function lines(text: string): string[] | undefined {
+	const list = text
+		.split('\n')
+		.map((line) => line.trim())
+		.filter(Boolean);
+	return list.length ? list : undefined;
+}
+
+export function sessionWakeMode(): string | undefined {
+	return served(settings.wakeMode, app.props?.defaults.wake_modes);
+}
+
 // auto is not in the list, and every server takes it
 export function sessionLanguage(): string | undefined {
 	const list = app.props?.defaults.tts_languages;
@@ -108,6 +122,13 @@ export function toOptions(): S2SOptions {
 			maxWaitMs: num(settings.turnMaxWaitMs),
 			graceMs: num(settings.turnGraceMs)
 		},
+		wake: model
+			? {
+					mode: sessionWakeMode(),
+					phrases: lines(settings.wakePhrases),
+					sleepPhrases: lines(settings.sleepPhrases)
+				}
+			: undefined,
 		echo: settings.echo || undefined,
 		mic: served(
 			settings.mic,

@@ -67,7 +67,7 @@ FAST = ["--mode", "conversation", "--llm", "v1"]
 
 BOOT_TIMEOUT_S = 120
 
-VOICE = "freeman (timbre only)"  # the voice the mock asks set_voice for
+VOICE = "freeman-en (timbre only)"  # the voice the mock asks set_voice for
 
 LINE = re.compile(r"\[(Event|Client|Mock)\]\s+([\d.]+)s\s+(\S+)(.*)")
 

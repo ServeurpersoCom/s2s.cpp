@@ -69,7 +69,7 @@ static const char * MOCK_ANSWER =
 
 // The voice the voice route asks set_voice for: the timbre only way of the
 // default voice, which speaks with its reference speech.
-#define MOCK_VOICE "freeman (timbre only)"
+#define MOCK_VOICE "freeman-en (timbre only)"
 
 static void print_usage(const char * prog) {
     fprintf(stderr, "s2s.cpp %s\n\n", S2S_VERSION);
