@@ -116,8 +116,8 @@ export function toOptions(): S2SOptions {
 	};
 }
 
-// One line of the display. A user line holds its transcript in written. An
-// answer holds what the model wrote in written, what the voice spoke in
+// One line of the display. A user line holds its transcript in written and
+// its revision, from 0. An answer holds what the model wrote in written, what the voice spoke in
 // spoken, and in spokenEnd how far into written the voice went: it trails
 // by one synthesis unit and stops there on a barge-in. Loopback has no model
 // writing, so its answers hold spoken alone.
@@ -126,6 +126,7 @@ export interface ChatEntry {
 	written: string;
 	spoken: string;
 	spokenEnd: number;
+	revision: number;
 	open: boolean;
 }
 
@@ -222,18 +223,34 @@ export async function createVoice(): Promise<S2S> {
 	// that nobody heard: the component only calls it revised when the
 	// context filed nothing after that line.
 	s2s.on('user_text', (text, revised) => {
+		let revision = 0;
 		if (revised) {
 			let at = voice.chat.length - 1;
 			while (at >= 0 && voice.chat[at].role !== 'user') {
 				at--;
 			}
+			revision = at >= 0 ? voice.chat[at].revision + 1 : 0;
 			voice.chat.splice(Math.max(at, 0));
 		}
-		voice.chat.push({ role: 'user', written: text, spoken: '', spokenEnd: 0, open: false });
+		voice.chat.push({
+			role: 'user',
+			written: text,
+			spoken: '',
+			spokenEnd: 0,
+			revision,
+			open: false
+		});
 		saveChat();
 	});
 	s2s.on('assistant_start', () => {
-		voice.chat.push({ role: 'assistant', written: '', spoken: '', spokenEnd: 0, open: true });
+		voice.chat.push({
+			role: 'assistant',
+			written: '',
+			spoken: '',
+			spokenEnd: 0,
+			revision: 0,
+			open: true
+		});
 	});
 	s2s.on('assistant_delta', (text) => {
 		const entry = openAnswer();

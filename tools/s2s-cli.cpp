@@ -114,10 +114,13 @@ struct Context {
 
 // What the user sees: the conversation on stdout, apart from the log, tagged
 // like it and in color on a terminal. Every transcript of the user takes a
-// line, a revision included, and every answer one line, its units joined as
-// the voice speaks them.
+// line numbered by its revision, from 0, and every answer one line, written
+// as the model writes it, token by token. Loopback has no model writing, so
+// its answers show the units the voice speaks.
 struct Display {
+    int  revision  = 0;      // of the last user line
     bool line_open = false;  // the line of the answer awaits its end
+    bool written   = false;  // the answer in flight wrote something
 };
 
 struct Cli {
@@ -146,6 +149,10 @@ static bool console_colors() {
 #endif
 }
 
+static void display_answer_start(Display & display) {
+    display.written = false;
+}
+
 static void display_answer_end(Display & display) {
     if (display.line_open) {
         printf("%s\n", g_color ? CLI_COLOR_RESET : "");
@@ -154,20 +161,33 @@ static void display_answer_end(Display & display) {
     }
 }
 
-static void display_user(Display & display, const std::string & text) {
+static void display_user(Display & display, const std::string & text, bool revised) {
     display_answer_end(display);
-    printf("%s[User] %s%s\n", g_color ? CLI_COLOR_USER : "", text.c_str(), g_color ? CLI_COLOR_RESET : "");
+    display.revision = revised ? display.revision + 1 : 0;
+    printf("%s[User-%d] %s%s\n", g_color ? CLI_COLOR_USER : "", display.revision, text.c_str(),
+           g_color ? CLI_COLOR_RESET : "");
     fflush(stdout);
 }
 
-static void display_unit(Display & display, const std::string & text) {
-    if (display.line_open) {
-        printf(" %s", text.c_str());
-    } else {
-        printf("%s[Assistant] %s", g_color ? CLI_COLOR_ASSISTANT : "", text.c_str());
+// Appends to the line of the answer, opening it on the first text.
+static void display_append(Display & display, const std::string & text) {
+    if (!display.line_open) {
+        printf("%s[Assistant] ", g_color ? CLI_COLOR_ASSISTANT : "");
         display.line_open = true;
     }
+    printf("%s", text.c_str());
     fflush(stdout);
+}
+
+static void display_text(Display & display, const std::string & delta) {
+    display.written = true;
+    display_append(display, delta);
+}
+
+static void display_unit(Display & display, const std::string & unit) {
+    if (!display.written) {
+        display_append(display, display.line_open ? " " + unit : unit);
+    }
 }
 
 static void on_audio(ma_device * device, void * output, const void * input, ma_uint32 n_frames) {
@@ -256,8 +276,8 @@ static std::string context_history(const Context & context) {
 }
 
 // A later transcript of the same turn replaces its user message instead of
-// adding one.
-static void context_user(Context & context, const std::string & item, const std::string & transcript) {
+// adding one. Returns whether it did.
+static bool context_user(Context & context, const std::string & item, const std::string & transcript) {
     const bool revised =
         !item.empty() && item == context.user_item && !context.history.empty() && context.history.back().role == "user";
     if (revised) {
@@ -266,6 +286,7 @@ static void context_user(Context & context, const std::string & item, const std:
         context.history.push_back({ "user", transcript, item });
     }
     context.user_item = item;
+    return revised;
 }
 
 static void context_open(Context & context, const Audio & audio) {
@@ -339,13 +360,19 @@ static bool on_event(const std::string & frame, void * user) {
         }
     } else if (type == "conversation.item.input_audio_transcription.completed") {
         const std::string transcript = rt_json_str(root, "transcript");
-        context_user(cli->context, rt_json_str(root, "item_id"), transcript);
-        display_user(cli->display, transcript);
+        const bool        revised    = context_user(cli->context, rt_json_str(root, "item_id"), transcript);
+        display_user(cli->display, transcript, revised);
     } else if (type == "response.created") {
+        // An answer the client already closed takes nothing more: every delta
+        // below checks it is still open.
         close_answer(cli);
         context_open(cli->context, cli->audio);
+        display_answer_start(cli->display);
+    } else if (type == "response.output_text.delta") {
+        if (cli->context.answering) {
+            display_text(cli->display, rt_json_str(root, "delta"));
+        }
     } else if (type == "response.output_audio_transcript.delta") {
-        // An answer the client already closed takes nothing more.
         if (cli->context.answering) {
             const std::string delta = rt_json_str(root, "delta");
             cli->context.units.push_back({ delta, cli->context.queued });

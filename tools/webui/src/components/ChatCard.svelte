@@ -8,7 +8,7 @@
 	// Log style prefixes, padded so both speakers start their text on the same
 	// column. The one place indentation is welcome: it is alignment, not code.
 	const ASSISTANT = '[Assistant]';
-	const USER = '[User]'.padStart(ASSISTANT.length);
+	const user = (revision: number) => `[User-${revision}]`.padStart(ASSISTANT.length);
 	const SYSTEM = '[System]'.padStart(ASSISTANT.length);
 
 	const LOOPBACK_HELP =
@@ -52,7 +52,9 @@
 			{/if}
 			{#each voice.chat as entry, i (i)}
 				<div class="turn">
-					<span class="who {entry.role}">{entry.role === 'user' ? USER : ASSISTANT}</span>
+					<span class="who {entry.role}"
+						>{entry.role === 'user' ? user(entry.revision) : ASSISTANT}</span
+					>
 					{#if entry.role === 'user'}
 						{entry.written}
 					{:else if entry.written}
