@@ -393,8 +393,10 @@ wake phrase never leaves the server: no transcript, no answer, and the
 log names its number only. A turn that holds a sleep phrase anywhere
 is answered, then the assistant sleeps again. In agentic mode the
 built-in `sleep` tool, offered like `set_voice` when the session lists
-it, does the same from the turn after the call. The words compare lowercase, with
-punctuation dropped. Changing the mode puts the assistant to sleep;
+it, does the same from the turn after the call; under `off` no phrase
+can wake it, so no turn is answered for the rest of the session. The
+words compare lowercase, with punctuation dropped. Changing the mode to
+`off` wakes the assistant, to `alone` or `anywhere` puts it to sleep;
 loopback ignores the gate.
 
 HTTP routes: `/` the page, `/s2s.js` the component, `/props` the session

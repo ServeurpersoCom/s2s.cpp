@@ -502,7 +502,7 @@
 			<div class="details-body">
 				<div
 					class="model-row"
-					title="Disabled answers every turn. Alone and Anywhere answer none until a turn is a wake phrase alone, or holds one anywhere; asleep, what you say never leaves the server. In the agentic mode, the sleep tool lets the model go back to sleep on its own."
+					title="Disabled answers every turn. Alone and Anywhere answer none until a turn is a wake phrase alone, or holds one anywhere; asleep, what you say never leaves the server. In the agentic mode, the sleep tool lets the model go back to sleep on its own, for the rest of the session when Disabled."
 				>
 					<span class="model-label">Wake</span>
 					<select

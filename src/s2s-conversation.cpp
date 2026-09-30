@@ -142,7 +142,8 @@ static bool wake_heard(const std::string & text, const std::vector<std::string> 
 
 llm_tool conn_sleep_tool() {
     const std::string about =
-        "Stops answering until the user says a wake phrase again. What you write with the call is still spoken. "
+        "Stops answering until the user says a wake phrase again, for the rest of the conversation when none is "
+        "set. What you write with the call is still spoken. "
         "Call it when the user thanks you, says goodbye or expects nothing more, or when what you hear makes no "
         "sense or is not meant for you.";
 
@@ -254,8 +255,9 @@ struct Connection {
 
     // The wake phrase gate, under client_mutex: whether the assistant
     // answers, and the turn it last let through, whose revisions pass as it
-    // did. A change of mode puts it to sleep.
-    bool awake         = false;
+    // did. It answers with the gate off, and a change of mode wakes it for
+    // off and puts it to sleep for the others.
+    bool awake         = true;
     int  admitted_turn = -1;
 
     // Frames to the client. Every thread queues, one writer sends: a client
@@ -631,33 +633,36 @@ static bool conn_set_voice(const std::string & arguments, void * user, std::stri
 }
 
 // What sleep changes: from the turn after this one, the connection answers
-// none until the wake phrase is heard again.
+// none until a wake phrase is heard again, and none at all for the rest of
+// the session while the gate is off, with no phrase to wake it.
 static bool conn_sleep(const std::string &, void * user, std::string & result) {
     Connection * conn = (Connection *) user;
+    bool         off  = false;
     {
         std::lock_guard<std::mutex> lock(conn->client_mutex);
         conn->awake = false;
+        off         = conn->client.wake.mode == "off";
     }
-    s2s_log(S2S_LOG_INFO, "[Wake] The model put the assistant to sleep");
-    result = "Asleep: the next turn needs the wake phrase";
+    s2s_log(S2S_LOG_INFO, "[Wake] The model put the assistant to sleep%s", off ? " for the rest of the session" : "");
+    result = off ? "Asleep for the rest of the conversation" : "Asleep until the user says a wake phrase";
     return true;
 }
 
-// Whether a turn reaches the model. The gate holds in the conversation and
-// agentic modes while a wake mode is on: asleep, only the turn that wakes the
-// assistant gets through, and a turn that got through keeps doing so through
-// its revisions, so a wake phrase followed by a question in the same breath
-// is answered as a whole. A turn that holds a sleep phrase gets through and
-// puts the assistant to sleep for the turns after it.
+// Whether a turn reaches the model, in the conversation and agentic modes.
+// Asleep, only the turn that wakes the assistant gets through, and none with
+// the gate off; a turn that got through keeps doing so through its
+// revisions, so a wake phrase followed by a question in the same breath is
+// answered as a whole. With the gate on, a turn that holds a sleep phrase
+// gets through and puts the assistant to sleep for the turns after it.
 static bool conn_admit(Connection * conn, int turn_id, const std::string & transcript) {
     std::lock_guard<std::mutex> lock(conn->client_mutex);
     const WakeSettings &        wake = conn->client.wake;
-    if (wake.mode == "off" || conn->client.mode == "loopback") {
+    if (conn->client.mode == "loopback") {
         return true;
     }
     if (turn_id != conn->admitted_turn) {
         if (!conn->awake) {
-            if (!wake_heard(transcript, wake.phrases, wake.mode == "alone")) {
+            if (wake.mode == "off" || !wake_heard(transcript, wake.phrases, wake.mode == "alone")) {
                 return false;
             }
             conn->awake = true;
@@ -665,7 +670,7 @@ static bool conn_admit(Connection * conn, int turn_id, const std::string & trans
         }
         conn->admitted_turn = turn_id;
     }
-    if (conn->awake && wake_heard(transcript, wake.sleep_phrases, false)) {
+    if (wake.mode != "off" && conn->awake && wake_heard(transcript, wake.sleep_phrases, false)) {
         conn->awake = false;
         s2s_log(S2S_LOG_INFO, "[Wake] Turn %d puts the assistant to sleep after its answer", turn_id);
     }
@@ -1131,7 +1136,7 @@ static void conn_apply_patch(Connection * conn, const rt_session_patch & patch) 
         conn->client.wake.sleep_phrases = patch.sleep_phrases;
     }
     if (conn->client.wake.mode != waking) {
-        conn->awake = false;
+        conn->awake = conn->client.wake.mode == "off";
         s2s_log(S2S_LOG_INFO, "[Wake] Mode %s%s", conn->client.wake.mode.c_str(),
                 conn->client.wake.mode == "off" ? "" : ", asleep");
     }
