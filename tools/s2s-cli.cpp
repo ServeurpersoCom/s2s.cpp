@@ -30,7 +30,6 @@
 #include "version.h"
 
 #include <atomic>
-#include <cctype>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -125,8 +124,6 @@ struct Display {
     int  revision  = 0;      // of the last user line
     bool line_open = false;  // the line of the answer awaits its end
     bool written   = false;  // the answer in flight wrote something
-    bool spaced    = true;   // its text ends with a space, or has none yet
-    bool tooled    = false;  // a call ended since its last text
 };
 
 struct Cli {
@@ -180,45 +177,33 @@ static void display_append(Display & display, const std::string & text) {
     if (!display.line_open) {
         printf("%s[Assistant] ", g_color ? CLI_COLOR_ASSISTANT : "");
         display.line_open = true;
-        display.spaced    = true;
     }
     printf("%s", text.c_str());
     fflush(stdout);
 }
 
-// Text of the answer, one space apart from a call before it.
-static void display_words(Display & display, const std::string & text) {
-    if (text.empty()) {
-        return;
-    }
-    const bool apart = display.tooled && !isspace((unsigned char) text.front());
-    display.tooled   = false;
-    display_append(display, apart ? " " + text : text);
-    display.spaced = isspace((unsigned char) text.back());
-}
-
 static void display_text(Display & display, const std::string & delta) {
     display.written = true;
-    display_words(display, delta);
+    display_append(display, delta);
 }
 
 static void display_unit(Display & display, const std::string & unit) {
     if (!display.written) {
-        display_words(display, display.line_open ? " " + unit : unit);
+        display_append(display, display.line_open ? " " + unit : unit);
     }
 }
 
-// A call shows where the model makes it: its name while it runs, then the
-// time it ran and the size of its result, or that it failed.
+// A call shows where the model makes it, inserted as is between two deltas:
+// its name while it runs, then the time it ran and the size of its result,
+// or that it failed.
 static void display_tool_start(Display & display, const std::string & name) {
-    display_append(display, std::string(display.spaced ? "" : " ") + (g_color ? CLI_COLOR_TOOL : "") + "<" + name);
+    display_append(display, std::string(g_color ? CLI_COLOR_TOOL : "") + "<" + name);
 }
 
 static void display_tool_done(Display & display, bool ok, uint64_t ms, uint64_t bytes) {
     const std::string tail = ok ? " " + std::to_string(ms) + " ms " + std::to_string(bytes) + " bytes>" :
                                   std::string(g_color ? CLI_COLOR_FAILED : "") + " failed>";
     display_append(display, tail + (g_color ? CLI_COLOR_ASSISTANT : ""));
-    display.tooled = true;
 }
 
 static void on_audio(ma_device * device, void * output, const void * input, ma_uint32 n_frames) {

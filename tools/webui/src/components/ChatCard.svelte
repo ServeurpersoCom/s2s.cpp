@@ -160,9 +160,8 @@
 	.ahead {
 		color: var(--error);
 	}
-	/* a call of the model, apart from the words around it */
+	/* a call of the model, inserted as is between two deltas */
 	.tool {
-		margin: 0 0.3em;
 		color: var(--fg);
 	}
 	.tool.failed {
