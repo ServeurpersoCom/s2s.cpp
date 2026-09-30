@@ -29,18 +29,25 @@
 #include "utf8.h"
 #include "version.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
+
+#if defined(__APPLE__)
+#    include <CoreFoundation/CoreFoundation.h>
+#endif
 
 #if defined(_WIN32)
 #    include <io.h>
@@ -430,41 +437,52 @@ static void print_usage(const char * prog) {
             "Usage: %s [options]\n"
             "\n"
             "Models:\n"
-            "  --models <dir>         Directory holding the GGUF files (default: ./models)\n"
-            "  --voices <dir>         Directory holding the voices, <name>.spk with an optional\n"
-            "                         <name>.rvq and <name>.txt pair of reference speech\n"
-            "                         (default: ./voices)\n"
+            "  --models <dir>              Directory holding the GGUF files (default: ./models)\n"
+            "  --voices <dir>              Directory holding the voices, <name>.spk with an optional\n"
+            "                              <name>.rvq and <name>.txt pair of reference speech\n"
+            "                              (default: ./voices)\n"
             "\n"
             "Session:\n"
-            "  --mode <mode>          loopback, conversation or agentic (default: loopback)\n"
-            "  --instructions <text>  System prompt of the model\n"
-            "  --llm-url <url>        OpenAI compatible endpoint\n"
-            "  --llm-model <name>     Model on that endpoint\n"
-            "  --llm-key-file <path>  File holding its API key, read at startup\n"
-            "  --llm-timeout <s>      Longest the endpoint may stay silent, a prefill included\n"
-            "                         (default: 10)\n"
-            "  --reasoning-effort <e> How long a reasoning model thinks before it answers: none,\n"
-            "                         or a level of its chat template (default: none)\n"
-            "  --tool <name>          Tool the agentic mode offers, repeatable: set_voice, a tool\n"
-            "                         of an MCP server or of the endpoint\n"
-            "  --mcp <url>            MCP server, repeatable, Streamable HTTP\n"
-            "  --mcp-key-file <path>  File holding the key of the --mcp named before it\n"
-            "  --tool-timeout <s>     Longest a tool may work before its call fails (default: 10)\n"
-            "  --max-rounds <N>       Rounds of tool calls one turn may take (default: 10)\n"
-            "  --voice <label>        Voice, one of the labels the log lists at startup\n"
-            "  --effect <name>        Effect over the voice: off or jarvis (default: off)\n"
-            "  --language <name>      Language of the voice (default: auto, English)\n"
+            "  --mode <mode>               loopback, conversation or agentic (default: loopback)\n"
+            "  --instructions-file <path>  File holding the system prompt of the model, read at\n"
+            "                              startup\n"
+            "\n"
+            "Endpoint:\n"
+            "  --llm-url <url>             OpenAI compatible endpoint\n"
+            "  --llm-model <name>          Model on that endpoint\n"
+            "  --llm-timeout <s>           Longest the endpoint may stay silent, a prefill included\n"
+            "                              (default: 10)\n"
+            "  --llm-key-file <path>       File holding its API key, read at startup\n"
+            "  --reasoning-effort <e>      How long a reasoning model thinks before it answers:\n"
+            "                              none, or a level of its chat template (default: none)\n"
+            "\n"
+            "Tools, for the agentic mode:\n"
+            "  --mcp <url>                 MCP server, repeatable, Streamable HTTP\n"
+            "  --mcp-key-file <path>       File holding the key of the --mcp named before it\n"
+            "  --tool <name>               Tool offered to the model, repeatable: set_voice, a tool\n"
+            "                              of an MCP server or of the endpoint\n"
+            "  --tool-timeout <s>          Longest a tool may work before its call fails\n"
+            "                              (default: 10)\n"
+            "  --max-rounds <N>            Rounds of tool calls one turn may take (default: 10)\n"
+            "\n"
+            "Voice:\n"
+            "  --voice <label>             One of the labels the log lists at startup\n"
+            "  --effect <name>             Effect over the voice: off or jarvis (default: off)\n"
+            "  --language <name>           Language of the voice (default: auto, the first language\n"
+            "                              of the system the voice speaks, else English)\n"
             "\n"
             "Sound:\n"
-            "  --list-devices         Lists the microphones and the loudspeakers, then exits\n"
-            "  --mic <N>              Microphone, by its number in the list (default: the system's)\n"
-            "  --speaker <N>          Loudspeaker, by its number in the list (default: the system's)\n"
-            "  --no-aec               Disable echo cancellation, for headphones\n"
+            "  --list-devices              Lists the microphones and the loudspeakers, then exits\n"
+            "  --mic <N>                   Microphone, by its number in the list (default: the\n"
+            "                              system's)\n"
+            "  --speaker <N>               Loudspeaker, by its number in the list (default: the\n"
+            "                              system's)\n"
+            "  --no-aec                    Disable echo cancellation, for headphones\n"
             "\n"
             "Engine:\n"
-            "  --no-fa                Disable flash attention in the TTS\n"
-            "  --clamp-fp16           Clamp hidden states to the FP16 range in the TTS\n"
-            "  --codec-chunk-dur <s>  Codec decode chunk, bounds the peak decode memory\n",
+            "  --no-fa                     Disable flash attention in the TTS\n"
+            "  --clamp-fp16                Clamp hidden states to the FP16 range in the TTS\n"
+            "  --codec-chunk-dur <s>       Codec decode chunk, bounds the peak decode memory\n",
             prog);
 }
 
@@ -476,6 +494,84 @@ static bool read_key(const char * path, std::string & key) {
         return false;
     }
     return true;
+}
+
+// A whole file: a system prompt.
+static bool read_text(const char * path, std::string & text) {
+    std::ifstream      in(std::filesystem::u8path(path), std::ios::binary);
+    std::ostringstream content;
+    content << in.rdbuf();
+    text = content.str();
+    if (!in || text.empty()) {
+        s2s_log(S2S_LOG_ERROR, "[Main] FATAL: nothing to read in %s", path);
+        return false;
+    }
+    return true;
+}
+
+// The languages of the system by preference, named the way the page names
+// the languages of the browser, the talker's own names. Only the languages
+// the talker knows are kept: under auto the first one gives the voice its
+// language.
+static std::vector<std::string> system_languages() {
+    std::vector<std::string> tags;
+#if defined(_WIN32)
+    ULONG n    = 0;
+    ULONG size = 0;
+    if (GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &n, nullptr, &size) && size) {
+        std::vector<wchar_t> list(size);
+        if (GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &n, list.data(), &size)) {
+            for (const wchar_t * tag = list.data(); *tag; tag += wcslen(tag) + 1) {
+                std::string ascii;
+                for (const wchar_t * c = tag; *c; c++) {
+                    ascii += (char) *c;
+                }
+                tags.push_back(ascii);
+            }
+        }
+    }
+#elif defined(__APPLE__)
+    CFArrayRef list = CFLocaleCopyPreferredLanguages();
+    for (CFIndex i = 0; list && i < CFArrayGetCount(list); i++) {
+        char tag[64];
+        if (CFStringGetCString((CFStringRef) CFArrayGetValueAtIndex(list, i), tag, sizeof(tag),
+                               kCFStringEncodingUTF8)) {
+            tags.push_back(tag);
+        }
+    }
+    if (list) {
+        CFRelease(list);
+    }
+#else
+    for (const char * variable : { "LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG" }) {
+        std::stringstream value(getenv(variable) ? getenv(variable) : "");
+        for (std::string tag; std::getline(value, tag, ':');) {
+            tags.push_back(tag);
+        }
+    }
+#endif
+    static const char * names[][2] = {
+        { "zh", "chinese"    },
+        { "en", "english"    },
+        { "ja", "japanese"   },
+        { "ko", "korean"     },
+        { "de", "german"     },
+        { "fr", "french"     },
+        { "ru", "russian"    },
+        { "pt", "portuguese" },
+        { "es", "spanish"    },
+        { "it", "italian"    },
+    };
+    std::vector<std::string> languages;
+    for (const std::string & tag : tags) {
+        for (const auto & name : names) {
+            if (tag.compare(0, 2, name[0]) == 0 &&
+                std::find(languages.begin(), languages.end(), name[1]) == languages.end()) {
+                languages.push_back(name[1]);
+            }
+        }
+    }
+    return languages;
 }
 
 static void list_devices(const ma_device_info * infos, ma_uint32 count) {
@@ -495,24 +591,28 @@ int main(int argc, char ** argv) {
 
     std::string models_dir = "models";
     std::string voices_dir = "voices";
-    bool        list       = false;
-    int         mic        = -1;
-    int         speaker    = -1;
 
-    std::string                    mode;
-    std::string                    instructions;
-    std::string                    llm_url;
-    std::string                    llm_model;
-    std::string                    llm_key;
-    int                            llm_timeout = -1;
-    std::string                    reasoning_effort;
-    std::vector<std::string>       tools;
+    std::string mode;
+    std::string instructions;
+
+    std::string llm_url;
+    std::string llm_model;
+    int         llm_timeout = -1;
+    std::string llm_key;
+    std::string reasoning_effort;
+
     std::vector<mcp_server_params> mcp;
+    std::vector<std::string>       tools;
     int                            tool_timeout = -1;
     int                            max_rounds   = -1;
-    std::string                    voice;
-    std::string                    effect;
-    std::string                    language;
+
+    std::string voice;
+    std::string effect;
+    std::string language;
+
+    bool list    = false;
+    int  mic     = -1;
+    int  speaker = -1;
 
     tts_engine engine;
     Cli        cli;
@@ -532,22 +632,22 @@ int main(int argc, char ** argv) {
             voices_dir = argv[++i];
         } else if (arg == "--mode" && has_value) {
             mode = argv[++i];
-        } else if (arg == "--instructions" && has_value) {
-            instructions = argv[++i];
+        } else if (arg == "--instructions-file" && has_value) {
+            if (!read_text(argv[++i], instructions)) {
+                return 1;
+            }
         } else if (arg == "--llm-url" && has_value) {
             llm_url = argv[++i];
         } else if (arg == "--llm-model" && has_value) {
             llm_model = argv[++i];
+        } else if (arg == "--llm-timeout" && has_value) {
+            llm_timeout = atoi(argv[++i]);
         } else if (arg == "--llm-key-file" && has_value) {
             if (!read_key(argv[++i], llm_key)) {
                 return 1;
             }
-        } else if (arg == "--llm-timeout" && has_value) {
-            llm_timeout = atoi(argv[++i]);
         } else if (arg == "--reasoning-effort" && has_value) {
             reasoning_effort = argv[++i];
-        } else if (arg == "--tool" && has_value) {
-            tools.push_back(argv[++i]);
         } else if (arg == "--mcp" && has_value) {
             mcp_server_params server;
             server.url = argv[++i];
@@ -560,6 +660,8 @@ int main(int argc, char ** argv) {
             if (!read_key(argv[++i], mcp.back().api_key)) {
                 return 1;
             }
+        } else if (arg == "--tool" && has_value) {
+            tools.push_back(argv[++i]);
         } else if (arg == "--tool-timeout" && has_value) {
             tool_timeout = atoi(argv[++i]);
         } else if (arg == "--max-rounds" && has_value) {
@@ -709,6 +811,11 @@ int main(int argc, char ** argv) {
     str(tts, "voice", voice);
     str(tts, "effect", effect);
     str(tts, "language", language);
+    const std::vector<std::string> languages = system_languages();
+    yyjson_mut_val *               spoken    = yyjson_mut_obj_add_arr(update.doc, tts, "browser_languages");
+    for (const std::string & name : languages) {
+        yyjson_mut_arr_add_strn(update.doc, spoken, name.c_str(), name.size());
+    }
 
     // From here on this thread is the reader of the connection.
     s2s_log_thread(("Reader-" + std::to_string(CLI_CONNECTION)).c_str());

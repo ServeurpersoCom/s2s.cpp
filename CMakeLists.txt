@@ -213,6 +213,10 @@ add_executable(s2s-cli tools/s2s-cli.cpp)
 link_ggml_backends(s2s-cli)
 target_include_directories(s2s-cli SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/vendor)
 target_link_libraries(s2s-cli PRIVATE s2s-core ${CMAKE_DL_LIBS})
+if (APPLE)
+    # the preferred languages of the system, for the voice under auto
+    target_link_libraries(s2s-cli PRIVATE "-framework CoreFoundation")
+endif()
 
 # quantize: GGUF requantizer (F32 -> K-quants)
 add_executable(quantize tools/quantize.cpp)
