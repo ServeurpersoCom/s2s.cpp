@@ -24,13 +24,16 @@ if(WIN32)
     set(LIBRESSL_APPS OFF CACHE BOOL "" FORCE)
     set(LIBRESSL_TESTS OFF CACHE BOOL "" FORCE)
     set(LIBRESSL_SKIP_INSTALL ON CACHE BOOL "" FORCE)
-    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../libressl ${CMAKE_BINARY_DIR}/libressl EXCLUDE_FROM_ALL)
 
     # MSVC at /O2 miscompiles the LibreSSL bignum on x64: RSA and EC checks
-    # fail at random and break the handshake, so the crypto math builds at /Od
+    # fail at random and break the handshake, so the C code of this scope,
+    # LibreSSL alone, builds at /Od
     if(MSVC)
-        target_compile_options(crypto_obj PRIVATE /Od)
+        foreach(cfg RELEASE RELWITHDEBINFO MINSIZEREL)
+            string(REGEX REPLACE "/O[12]" "/Od" CMAKE_C_FLAGS_${cfg} "${CMAKE_C_FLAGS_${cfg}}")
+        endforeach()
     endif()
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../libressl ${CMAKE_BINARY_DIR}/libressl EXCLUDE_FROM_ALL)
 
     # httplib.h loads the Windows certificate store, links crypt32 and
     # undefines the wincrypt.h macros that clash with the LibreSSL headers
