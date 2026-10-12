@@ -7,6 +7,7 @@
 
 bool models_load(const std::string & models_dir,
                  const std::string & voices_dir,
+                 const std::string & device,
                  const tts_engine &  engine,
                  ModelFiles &        files,
                  ConversationSetup & setup) {
@@ -49,6 +50,7 @@ bool models_load(const std::string & models_dir,
 
     pk_init_params asr_init = pk_init_default_params();
     asr_init.model_path     = files.asr.c_str();
+    asr_init.device         = device.empty() ? nullptr : device.c_str();
 
     models.asr = pk_init(&asr_init);
     if (!models.asr) {
@@ -60,6 +62,7 @@ bool models_load(const std::string & models_dir,
     tts_init.talker_path             = files.talker;
     tts_init.codec_path              = files.codec;
     tts_init.voices_dir              = voices_dir;
+    tts_init.device                  = device;
     tts_init.sampling.max_new_tokens = S2S_TTS_MAX_NEW_TOKENS;
     tts_init.engine                  = engine;
 
@@ -69,7 +72,7 @@ bool models_load(const std::string & models_dir,
         return false;
     }
 
-    models.aec = lv_init(files.aec.c_str());
+    models.aec = lv_init(files.aec.c_str(), device.empty() ? nullptr : device.c_str());
     if (!models.aec) {
         s2s_log(S2S_LOG_ERROR, "[Load] FATAL: %s", lv_last_error());
         return false;

@@ -13,7 +13,7 @@
 #
 # Usage:
 #     ./test-localvqe.py
-#     GGML_BACKEND=CPU ./test-localvqe.py
+#     ./test-localvqe.py --device CPU
 
 import os
 import subprocess
@@ -29,6 +29,8 @@ sys.path.insert(0, "../../LocalVQE/pytorch")
 from localvqe.model import LocalVQE  # noqa: E402
 
 BIN = "../build/test-localvqe"
+# A leading "--device <name>" is forwarded to the harness
+DEVICE = ["--device", sys.argv[2]] if sys.argv[1:2] == ["--device"] else []
 GGUF = "../models/localvqe-v1.3-F32.gguf"
 CKPT = "../checkpoints/localvqe/localvqe-v1.3-4.8M.pt"
 WAV = "../qwentts.cpp/examples/freeman.wav"
@@ -110,7 +112,7 @@ def main():
     mic, far, n = scenario()
     mic.tofile(TMP + "/localvqe-mic.f32")
     far.tofile(TMP + "/localvqe-ref.f32")
-    subprocess.run([BIN, GGUF, TMP + "/localvqe-mic.f32", TMP + "/localvqe-ref.f32", TMP + "/localvqe-out.f32"],
+    subprocess.run([BIN] + DEVICE + [GGUF, TMP + "/localvqe-mic.f32", TMP + "/localvqe-ref.f32", TMP + "/localvqe-out.f32"],
                    check=True)
 
     got = np.fromfile(TMP + "/localvqe-out.f32", dtype=np.float32).astype(np.float64)[HOP:]
@@ -127,7 +129,7 @@ def main():
     erle_ok = erle >= MIN_ERLE_DB
     print("[Check] echo removed where the far end plays alone: %.1f dB %s" % (erle, "OK" if erle_ok else "FAIL"))
 
-    subprocess.run([BIN, GGUF, TMP + "/localvqe-mic.f32", TMP + "/localvqe-ref.f32", TMP + "/localvqe-batch.f32",
+    subprocess.run([BIN] + DEVICE + [GGUF, TMP + "/localvqe-mic.f32", TMP + "/localvqe-ref.f32", TMP + "/localvqe-batch.f32",
                     str(STREAMS)], check=True)
     batch = np.fromfile(TMP + "/localvqe-batch.f32", dtype=np.float32).astype(np.float64)[HOP:]
     bcos = float(batch @ got / (np.linalg.norm(batch) * np.linalg.norm(got)))

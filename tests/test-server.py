@@ -31,7 +31,7 @@
 #
 # Usage:
 #     ./test-server.py
-#     GGML_BACKEND=Vulkan0 ./test-server.py
+#     ./test-server.py --device Vulkan0
 
 import json
 import os
@@ -53,6 +53,8 @@ OWNED_URL = "http://127.0.0.1:18086/v1"
 OWNED_MODEL = "owned-model"
 OWNED_KEY = "s2s-test-key"
 MAX_BATCH = "8"
+# A leading "--device <name>" is forwarded to the server
+DEVICE = ["--device", sys.argv[2]] if sys.argv[1:2] == ["--device"] else []
 TMP = "tmp"
 
 A, B, C = "0-5.9", "6-11.5", "11.9-16"
@@ -286,7 +288,7 @@ def start_server(port, log_name, extra):
     log = open("%s/%s" % (TMP, log_name), "w")
     process = subprocess.Popen(
         [SERVER, "--models", MODELS, "--voices", VOICES, "--host", "127.0.0.1", "--port", str(port),
-         "--max-batch", MAX_BATCH] + extra,
+         "--max-batch", MAX_BATCH] + DEVICE + extra,
         stdout=log,
         stderr=subprocess.STDOUT,
     )

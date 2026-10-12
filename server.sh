@@ -2,9 +2,7 @@
 
 set -eu
 
-# Multi-GPU: set GGML_BACKEND to pick a device (CUDA0, CUDA1, Vulkan0...)
-#export GGML_BACKEND=CUDA0
-#export GGML_BACKEND=Vulkan0
+# Multi-GPU: add --device <name> below (CUDA0, CUDA1, Vulkan0, CPU)
 
 # Everything else belongs to the client: mode, endpoint, prompt, voice,
 # sampling and turn detection travel in session.update, and their defaults

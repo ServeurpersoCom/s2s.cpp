@@ -5,6 +5,7 @@
 // WebSocket that carries each conversation. What a conversation does lives
 // in s2s-conversation.cpp, which only sees Realtime frames.
 
+#include "backend.h"
 #include "httplib.h"
 #include "index.html.gz.hpp"
 #include "llm-agent.h"
@@ -109,6 +110,8 @@ static void print_usage(const char * prog) {
             "                         closes that door.\n"
             "\n"
             "Engine:\n"
+            "  --device <name>        Compute device: CUDA0, Vulkan0, MTL0, CPU...\n"
+            "                         (default: best available)\n"
             "  --max-batch <N>        Concurrent syntheses batched on the GPU (default: 1)\n"
             "  --no-fa                Disable flash attention in the TTS\n"
             "  --clamp-fp16           Clamp hidden states to the FP16 range in the TTS\n"
@@ -137,6 +140,7 @@ int main(int argc, char ** argv) {
     std::vector<std::string> llm_hosts;
 
     tts_engine        engine;
+    std::string       compute_device;
     ConversationSetup setup;
 
     // Session defaults, published on /props and overridable per client. The
@@ -193,6 +197,8 @@ int main(int argc, char ** argv) {
                 s2s_log(S2S_LOG_ERROR, "[Server] FATAL: no key in %s", argv[i]);
                 return 1;
             }
+        } else if (arg == "--device" && has_value) {
+            compute_device = argv[++i];
         } else if (arg == "--max-batch" && has_value) {
             engine.max_batch = atoi(argv[++i]);
         } else if (arg == "--no-fa") {
@@ -206,9 +212,13 @@ int main(int argc, char ** argv) {
             return 1;
         }
     }
+    if (!compute_device.empty() && !backend_check_device(compute_device.c_str())) {
+        print_usage(argv[0]);
+        return 1;
+    }
 
     ModelFiles files;
-    if (!models_load(models_dir, voices_dir, engine, files, setup)) {
+    if (!models_load(models_dir, voices_dir, compute_device, engine, files, setup)) {
         return 1;
     }
 

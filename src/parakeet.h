@@ -41,7 +41,7 @@ extern "C" {
 // its tail. Callers set .abi_version = PK_ABI_VERSION or let the
 // pk_*_default_params helpers fill it. Entries reject inputs whose
 // abi_version exceeds the build-time constant.
-#define PK_ABI_VERSION 1
+#define PK_ABI_VERSION 2
 
 // Returns "<git-hash> (<date>)" for the exact commit this binary came from.
 PK_API const char * pk_version(void);
@@ -73,11 +73,13 @@ PK_API void pk_log_set(pk_log_cb cb, void * user);
 typedef struct pk_context pk_context;
 
 // Init params. model_path points at the GGUF holding the encoder, the
-// transducer and the piece table. The model runs on the best device, or on
-// the one GGML_BACKEND names.
+// transducer and the piece table. device names the GGML device the model
+// runs on (CUDA0, Vulkan0, MTL0, CPU...), NULL selects the best one (since
+// ABI 2).
 struct pk_init_params {
     int          abi_version;
     const char * model_path;
+    const char * device;
 };
 
 PK_API struct pk_init_params pk_init_default_params(void);

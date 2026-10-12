@@ -5,6 +5,7 @@
 // compares against the transformers reference.
 
 #include "audio-resample.h"
+#include "backend.h"
 #include "parakeet.h"
 #include "pipeline-asr.h"
 #include "utf8.h"
@@ -27,6 +28,8 @@ static void print_usage(const char * prog) {
             "  --file <wav>           Input audio, any rate, mono or stereo\n"
             "\n"
             "Optional:\n"
+            "  --device <name>        Compute device: CUDA0, Vulkan0, MTL0, CPU...\n"
+            "                         (default: best available)\n"
             "  --out <path>           Write the transcript to a file as well\n"
             "  --stream               Print every piece as the transducer emits it\n"
             "\n"
@@ -49,6 +52,7 @@ int main(int argc, char ** argv) {
     const char * wav_path   = nullptr;
     const char * out_path   = nullptr;
     const char * dump_dir   = nullptr;
+    const char * device     = nullptr;
     bool         stream     = false;
 
     for (int i = 1; i < argc; i++) {
@@ -58,6 +62,8 @@ int main(int argc, char ** argv) {
             wav_path = argv[++i];
         } else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
             out_path = argv[++i];
+        } else if (strcmp(argv[i], "--device") == 0 && i + 1 < argc) {
+            device = argv[++i];
         } else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) {
             dump_dir = argv[++i];
         } else if (strcmp(argv[i], "--stream") == 0) {
@@ -68,6 +74,10 @@ int main(int argc, char ** argv) {
         }
     }
     if (!model_path || !wav_path) {
+        print_usage(argv[0]);
+        return 1;
+    }
+    if (device && !backend_check_device(device)) {
         print_usage(argv[0]);
         return 1;
     }
@@ -107,6 +117,9 @@ int main(int argc, char ** argv) {
         pipeline_asr_params params;
         params.model_path = model_path;
         params.dump_dir   = dump_dir;
+        if (device) {
+            params.device = device;
+        }
 
         pipeline_asr * pipeline = pipeline_asr_load(params);
         if (!pipeline) {
@@ -126,6 +139,7 @@ int main(int argc, char ** argv) {
     } else {
         pk_init_params init = pk_init_default_params();
         init.model_path     = model_path;
+        init.device         = device;
 
         pk_context * ctx = pk_init(&init);
         if (!ctx) {

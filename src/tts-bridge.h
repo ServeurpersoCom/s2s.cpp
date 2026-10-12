@@ -68,6 +68,7 @@ struct tts_bridge_params {
     std::string  talker_path;
     std::string  codec_path;
     std::string  voices_dir;  // one voice per <name>.spk, with <name>.rvq and <name>.txt as reference speech
+    std::string  device;      // GGML device by name, empty for the best one
     tts_sampling sampling;
     tts_guards   guards;
     tts_engine   engine;

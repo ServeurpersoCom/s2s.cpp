@@ -3,7 +3,8 @@
 // Reads a microphone and a far end reference as raw float32 at 16 kHz, runs
 // them hop by hop through the streaming canceller exactly like the server
 // does, and writes the cleaned signal as raw float32. The output is one hop
-// late, which test-localvqe.py accounts for. The device follows GGML_BACKEND.
+// late, which test-localvqe.py accounts for. A leading --device <name> picks
+// the device.
 //
 // With a stream count, the stream runs among others fed with other audio,
 // each on its own thread like the connections of the server: their hops meet
@@ -11,6 +12,7 @@
 // as many join, so its slot also lives through a growth of the batch. Its
 // output must not change.
 
+#include "backend.h"
 #include "localvqe.h"
 #include "timer.h"
 #include "version.h"
@@ -18,13 +20,14 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <thread>
 #include <vector>
 
 static void print_usage(const char * prog) {
     fprintf(stderr, "s2s.cpp %s\n\n", S2S_VERSION);
     fprintf(stderr,
-            "Usage: %s <gguf> <mic.f32> <ref.f32> <out.f32> [streams]\n"
+            "Usage: %s [--device <name>] <gguf> <mic.f32> <ref.f32> <out.f32> [streams]\n"
             "\n"
             "Cleans the microphone of the reference echo, hop by hop, and writes\n"
             "the result as raw float32, one hop late. streams runs it among\n"
@@ -49,6 +52,18 @@ static std::vector<float> read_f32(const char * path) {
 }
 
 int main(int argc, char ** argv) {
+    // A leading --device <name> picks the device, the positional arguments follow
+    const char * device = nullptr;
+    if (argc > 2 && !strcmp(argv[1], "--device")) {
+        device = argv[2];
+        if (!backend_check_device(device)) {
+            return 1;
+        }
+        for (int i = 3; i <= argc; i++) {
+            argv[i - 2] = argv[i];
+        }
+        argc -= 2;
+    }
     if (argc < 5 || argc > 6) {
         print_usage(argv[0]);
         return 1;
@@ -66,7 +81,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    lv_context * ctx = lv_init(argv[1]);
+    lv_context * ctx = lv_init(argv[1], device);
     if (!ctx) {
         fprintf(stderr, "[LocalVQE] FATAL: %s\n", lv_last_error());
         return 1;

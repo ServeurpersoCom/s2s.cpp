@@ -25,10 +25,12 @@ struct ModelFiles {
 };
 
 // Picks every model in models_dir, loads them into setup.models with the
-// voices of voices_dir, and sets the voice request of setup.defaults. Returns
-// false once the reason is logged.
+// voices of voices_dir, the device models on the GGML device named by device
+// (empty for the best one), and sets the voice request of setup.defaults.
+// Returns false once the reason is logged.
 bool models_load(const std::string & models_dir,
                  const std::string & voices_dir,
+                 const std::string & device,
                  const tts_engine &  engine,
                  ModelFiles &        files,
                  ConversationSetup & setup);

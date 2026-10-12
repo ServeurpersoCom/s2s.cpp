@@ -11,7 +11,7 @@
 #
 # Usage:
 #     ./test-parakeet.py
-#     GGML_BACKEND=CPU ./test-parakeet.py --model ../models/parakeet-tdt-0.6b-v3-Q8_0.gguf
+#     ./test-parakeet.py --device CPU --model ../models/parakeet-tdt-0.6b-v3-Q8_0.gguf
 #     ./test-parakeet.py --model ../models/parakeet-ultra-F32.gguf --checkpoint ../checkpoints/parakeet-ultra
 
 import os
@@ -37,6 +37,7 @@ def _arg(name, default):
 
 GGUF = _arg("--model", "../models/parakeet-tdt-0.6b-v3-F32.gguf")
 CKPT = _arg("--checkpoint", "../checkpoints/parakeet")
+DEVICE = ["--device", _arg("--device", None)] if "--device" in sys.argv else []
 WAV = "../qwentts.cpp/examples/freeman.wav"
 TMP = "tmp"
 
@@ -90,7 +91,7 @@ def main():
     warnings.filterwarnings("ignore")
 
     subprocess.run(
-        [BIN, "--model", GGUF, "--file", WAV, "--dump", TMP, "--out", TMP + "/parakeet-text.txt"],
+        [BIN, "--model", GGUF, "--file", WAV, "--dump", TMP, "--out", TMP + "/parakeet-text.txt"] + DEVICE,
         check=True,
         stdout=subprocess.DEVNULL,
     )

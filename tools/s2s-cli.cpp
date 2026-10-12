@@ -22,6 +22,7 @@
 // frames going back, and the context and the display they change sit under
 // one mutex.
 
+#include "backend.h"
 #include "realtime-proto.h"
 #include "s2s-conversation.h"
 #include "s2s-error.h"
@@ -488,6 +489,8 @@ static void print_usage(const char * prog) {
             "  --no-aec                    Disable echo cancellation, for headphones\n"
             "\n"
             "Engine:\n"
+            "  --device <name>             Compute device: CUDA0, Vulkan0, MTL0, CPU...\n"
+            "                              (default: best available)\n"
             "  --no-fa                     Disable flash attention in the TTS\n"
             "  --clamp-fp16                Clamp hidden states to the FP16 range in the TTS\n"
             "  --codec-chunk-dur <s>       Codec decode chunk, bounds the peak decode memory\n",
@@ -626,8 +629,9 @@ int main(int argc, char ** argv) {
     int  mic     = -1;
     int  speaker = -1;
 
-    tts_engine engine;
-    Cli        cli;
+    tts_engine  engine;
+    std::string compute_device;
+    Cli         cli;
 
     if (argc < 2) {
         print_usage(argv[0]);
@@ -698,6 +702,8 @@ int main(int argc, char ** argv) {
             speaker = atoi(argv[++i]);
         } else if (arg == "--no-aec") {
             cli.aec = false;
+        } else if (arg == "--device" && has_value) {
+            compute_device = argv[++i];
         } else if (arg == "--no-fa") {
             engine.use_fa = false;
         } else if (arg == "--clamp-fp16") {
@@ -708,6 +714,10 @@ int main(int argc, char ** argv) {
             print_usage(argv[0]);
             return 1;
         }
+    }
+    if (!compute_device.empty() && !backend_check_device(compute_device.c_str())) {
+        print_usage(argv[0]);
+        return 1;
     }
 
     ma_context context;
@@ -744,7 +754,7 @@ int main(int argc, char ** argv) {
 
     ConversationSetup setup;
     ModelFiles        files;
-    if (!models_load(models_dir, voices_dir, engine, files, setup)) {
+    if (!models_load(models_dir, voices_dir, compute_device, engine, files, setup)) {
         ma_context_uninit(&context);
         return 1;
     }

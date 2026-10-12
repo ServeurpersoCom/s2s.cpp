@@ -111,7 +111,7 @@ pipeline_asr * pipeline_asr_load(const pipeline_asr_params & params) {
         parakeet_read_hparams(gf, p->hp);
         p->mel_cfg = parakeet_mel_config(p->hp);
 
-        p->backend = backend_init("ASR");
+        p->backend = backend_init("ASR", params.device.empty() ? nullptr : params.device.c_str());
         if (!p->backend) {
             s2s_set_error("[ASR] No usable backend");
             gf_close(&gf);

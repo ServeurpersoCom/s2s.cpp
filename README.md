@@ -83,7 +83,7 @@ NVCC_CCBIN=g++-13 ./buildcuda.sh # rolling release distros (Arch w/ GCC 16, etc.
 
 The https client links the LibreSSL of `vendor/libressl` on Windows and the system OpenSSL elsewhere (`libssl-dev`).
 
-`GGML_BACKEND` picks a device by name (`CUDA0`, `Vulkan1`...) when the
+`--device` picks a device by name (`CUDA0`, `Vulkan1`...) when the
 machine has several.
 
 ## Models

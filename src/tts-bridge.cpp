@@ -223,6 +223,7 @@ tts_bridge * tts_bridge_load(const tts_bridge_params & params) {
     init.max_batch   = params.engine.max_batch > 0 ? params.engine.max_batch : 1;
     init.use_fa      = params.engine.use_fa;
     init.clamp_fp16  = params.engine.clamp_fp16;
+    init.device      = params.device.empty() ? nullptr : params.device.c_str();
     if (params.engine.codec_chunk_sec > 0.0f) {
         init.codec_chunk_sec = params.engine.codec_chunk_sec;
     }

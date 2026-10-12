@@ -22,9 +22,9 @@ extern "C" {
 typedef struct lv_context lv_context;
 typedef struct lv_state   lv_state;
 
-// Loads the GGUF and builds the compute graph, on the best device or on the
-// one GGML_BACKEND names.
-lv_context * lv_init(const char * gguf_path);
+// Loads the GGUF and builds the compute graph, on the GGML device named by
+// device (CUDA0, Vulkan0, MTL0, CPU...), or on the best one when NULL.
+lv_context * lv_init(const char * gguf_path, const char * device);
 void         lv_free(lv_context * ctx);
 
 // Hop size in samples and sample rate the model expects.

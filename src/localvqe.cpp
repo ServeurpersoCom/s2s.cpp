@@ -626,7 +626,7 @@ static void lv_worker(lv_context * ctx) {
     }
 }
 
-lv_context * lv_init(const char * gguf_path) {
+lv_context * lv_init(const char * gguf_path, const char * device) {
     if (!gguf_path) {
         s2s_set_error("[LocalVQE] Gguf path is NULL");
         return nullptr;
@@ -649,7 +649,7 @@ lv_context * lv_init(const char * gguf_path) {
         ctx->power_law   = gf_get_f32(gf, "lv.power_law_c");
         ctx->eps         = gf_get_f32(gf, "lv.norm_eps");
 
-        ctx->backend = backend_init("LocalVQE");
+        ctx->backend = backend_init("LocalVQE", device);
         if (!ctx->backend) {
             s2s_set_error("[LocalVQE] Failed to init the backend");
             gf_close(&gf);

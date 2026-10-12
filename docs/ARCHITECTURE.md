@@ -19,8 +19,8 @@ while staying ready to be interrupted at any instant.
 The VAD runs on every 32 ms window, so it stays on the CPU with a single
 thread: the model is 2 MB and a GPU dispatch would cost more than the
 work. Smart Turn runs once per speech to silence boundary, on the CPU as
-well. LocalVQE, Parakeet and Qwen3-TTS take the best device
-`ggml_backend_init_best` finds, or the one `GGML_BACKEND` names.
+well. LocalVQE, Parakeet and Qwen3-TTS take the device `--device` names,
+or the best one `ggml_backend_init_best` finds.
 
 The models are found in `--models` by file name. For each one the server
 takes the largest model present, then the best quant up to Q8_0, F32 and

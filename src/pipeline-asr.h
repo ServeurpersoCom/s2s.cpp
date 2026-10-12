@@ -15,6 +15,7 @@ struct pipeline_asr;
 
 struct pipeline_asr_params {
     std::string model_path;
+    std::string device;    // GGML device by name, empty for the best one
     std::string dump_dir;  // when set, write the stage tensors there as f32 dumps
 };
 

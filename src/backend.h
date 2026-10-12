@@ -1,8 +1,8 @@
 #pragma once
 // backend.h: GGML backend initialization
 //
-// A model on the device takes the best backend, or the one GGML_BACKEND
-// names; a model that never leaves the host takes the CPU backend on the
+// A model on the device takes the backend of the device its caller names,
+// or the best one; a model that never leaves the host takes the CPU backend on the
 // threads it asks for. Each call returns a fresh backend with its own device
 // context and memory pool, so two models never share allocator state and can
 // run concurrently.
@@ -10,7 +10,6 @@
 #include "ggml-backend.h"
 #include "s2s-error.h"
 
-#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -85,40 +84,49 @@ static void s2s_ggml_log(enum ggml_log_level level, const char * text, void * us
     }
 }
 
-// The best backend, or the one GGML_BACKEND names (CUDA0, Vulkan0, CPU...),
-// on one thread per physical core when it is the CPU. label opens the log
-// line. NULL when no backend can be initialized.
-static ggml_backend_t backend_init(const char * label) {
-    // Magic static: the log callback and the dynamic backend loading happen
-    // exactly once, safe under concurrent init calls.
+// The log callback and the dynamic backend loading. Magic static: they
+// happen exactly once, safe under concurrent init calls.
+static void backend_load(void) {
     static const bool loaded = [] {
         ggml_log_set(s2s_ggml_log, nullptr);
         ggml_backend_load_all();
         return true;
     }();
     (void) loaded;
+}
 
-    ggml_backend_t backend       = nullptr;
-    const char *   force_backend = std::getenv("GGML_BACKEND");
-    if (force_backend) {
-        backend = ggml_backend_init_by_name(force_backend, nullptr);
-        if (!backend) {
-            // One line lists every device, so the log reads it whole.
-            std::string msg = "[Load] GGML_BACKEND=";
-            msg += force_backend;
-            msg += " not found. Available:";
-            for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
-                msg += ' ';
-                msg += ggml_backend_dev_name(ggml_backend_dev_get(i));
-            }
-            s2s_log(S2S_LOG_ERROR, "%s", msg.c_str());
-            return nullptr;
-        }
-    } else {
-        backend = ggml_backend_init_best();
+// True when name matches a device (CUDA0, Vulkan0, MTL0, CPU...), the check
+// of a --device argument. Otherwise logs the available devices on one line,
+// so the log reads it whole, and returns false.
+static bool backend_check_device(const char * name) {
+    backend_load();
+    if (ggml_backend_dev_by_name(name)) {
+        return true;
     }
+    std::string msg = "--device ";
+    msg += name;
+    msg += " not found. Available:";
+    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+        msg += ' ';
+        msg += ggml_backend_dev_name(ggml_backend_dev_get(i));
+    }
+    s2s_log(S2S_LOG_ERROR, "%s", msg.c_str());
+    return false;
+}
+
+// The backend of the device named by device, or the best one when device is
+// NULL, on one thread per physical core when it is the CPU. label opens the
+// log line. NULL when no backend can be initialized.
+static ggml_backend_t backend_init(const char * label, const char * device) {
+    backend_load();
+
+    ggml_backend_t backend = device ? ggml_backend_init_by_name(device, nullptr) : ggml_backend_init_best();
     if (!backend) {
-        s2s_log(S2S_LOG_ERROR, "[Load] No backend available");
+        if (device) {
+            s2s_log(S2S_LOG_ERROR, "[Load] Device %s not available", device);
+        } else {
+            s2s_log(S2S_LOG_ERROR, "[Load] No backend available");
+        }
         return nullptr;
     }
     const int n_threads = backend_cpu_n_threads();
@@ -142,7 +150,7 @@ static ggml_backend_t backend_init_cpu(const char * label, int n_threads) {
     // In DL builds the CPU device only appears in the registry once the
     // backends are loaded, so a context that never asks for a GPU still has to
     // go through the loader.
-    ggml_backend_load_all();
+    backend_load();
 
     ggml_backend_t backend = cpu_backend_new(n_threads);
     if (!backend) {
