@@ -35,6 +35,13 @@ if(WIN32)
     endif()
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../libressl ${CMAKE_BINARY_DIR}/libressl EXCLUDE_FROM_ALL)
 
+    # LibreSSL builds at -W4 with its own list of warnings off; the defensive
+    # returns of mlkem/mlkem_key.c add C4702, unreachable code, which it turns
+    # off the same way for pkcs7/pk7_doit.c alone
+    if(MSVC)
+        target_compile_options(crypto_obj PRIVATE /wd4702)
+    endif()
+
     # httplib.h loads the Windows certificate store, links crypt32 and
     # undefines the wincrypt.h macros that clash with the LibreSSL headers
     target_compile_definitions(httplib PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT LIBRESSL_DISABLE_OVERRIDE_WINCRYPT_DEFINES_WARNING)
