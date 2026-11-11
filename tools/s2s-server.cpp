@@ -586,6 +586,13 @@ int main(int argc, char ** argv) {
     s2s_log(S2S_LOG_INFO, "[Server] s2s-server %s", S2S_VERSION);
     s2s_log(S2S_LOG_INFO, "[Server] Mode: %s, endpoint %s, %zu MCP servers", setup.defaults.mode.c_str(),
             setup.llm_fixed ? "set by the command line" : "named by the session", setup.defaults.mcp.size());
+    // A session drives the endpoint and the MCP servers of the command line
+    // with their keys, so with no --origin any page reaches them.
+    if (origins.empty() && (setup.llm_fixed || setup.mcp_fixed)) {
+        s2s_log(
+            S2S_LOG_WARN,
+            "[Server] Security: every origin drives the endpoint and MCP servers of the command line, set --origin");
+    }
     s2s_log(S2S_LOG_INFO, "[Server] Listening on http://%s:%d", host.c_str(), port);
 
     if (!server.listen(host, port)) {
