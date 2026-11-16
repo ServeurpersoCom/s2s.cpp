@@ -56,6 +56,7 @@ struct ParakeetBlockWeights {
     struct ggml_tensor * ff1_linear2 = nullptr;
     struct ggml_tensor * norm_attn_w = nullptr;
     struct ggml_tensor * norm_attn_b = nullptr;
+    struct ggml_tensor * qkv_w       = nullptr;  // fused [d_model, 3 d_model], NULL when the types differ
     struct ggml_tensor * q_w         = nullptr;
     struct ggml_tensor * k_w         = nullptr;
     struct ggml_tensor * v_w         = nullptr;
@@ -151,25 +152,28 @@ static void parakeet_load_encoder(ParakeetEncoderWeights * w,
         b.ff1_linear2            = gf_load_tensor(wctx, gf, p + "ff1.linear2.weight");
         b.norm_attn_w            = gf_load_tensor_f32(wctx, gf, p + "norm_attn.weight");
         b.norm_attn_b            = gf_load_tensor_f32(wctx, gf, p + "norm_attn.bias");
-        b.q_w                    = gf_load_tensor(wctx, gf, p + "attn.q.weight");
-        b.k_w                    = gf_load_tensor(wctx, gf, p + "attn.k.weight");
-        b.v_w                    = gf_load_tensor(wctx, gf, p + "attn.v.weight");
-        b.o_w                    = gf_load_tensor(wctx, gf, p + "attn.o.weight");
-        b.rel_k_w                = gf_load_tensor(wctx, gf, p + "attn.rel_k.weight");
-        b.bias_u                 = gf_load_tensor_f32(wctx, gf, p + "attn.bias_u");
-        b.bias_v                 = gf_load_tensor_f32(wctx, gf, p + "attn.bias_v");
-        b.norm_conv_w            = gf_load_tensor_f32(wctx, gf, p + "norm_conv.weight");
-        b.norm_conv_b            = gf_load_tensor_f32(wctx, gf, p + "norm_conv.bias");
-        b.conv_pw1               = gf_load_tensor(wctx, gf, p + "conv.pw1.weight");
-        b.conv_dw_w              = gf_load_tensor_f32(wctx, gf, p + "conv.dw.weight");
-        b.conv_dw_b              = gf_load_tensor_f32(wctx, gf, p + "conv.dw.bias");
-        b.conv_pw2               = gf_load_tensor(wctx, gf, p + "conv.pw2.weight");
-        b.norm_ff2_w             = gf_load_tensor_f32(wctx, gf, p + "norm_ff2.weight");
-        b.norm_ff2_b             = gf_load_tensor_f32(wctx, gf, p + "norm_ff2.bias");
-        b.ff2_linear1            = gf_load_tensor(wctx, gf, p + "ff2.linear1.weight");
-        b.ff2_linear2            = gf_load_tensor(wctx, gf, p + "ff2.linear2.weight");
-        b.norm_out_w             = gf_load_tensor_f32(wctx, gf, p + "norm_out.weight");
-        b.norm_out_b             = gf_load_tensor_f32(wctx, gf, p + "norm_out.bias");
+        b.qkv_w = gf_load_qkv_fused(wctx, gf, p + "attn.q.weight", p + "attn.k.weight", p + "attn.v.weight");
+        if (!b.qkv_w) {
+            b.q_w = gf_load_tensor(wctx, gf, p + "attn.q.weight");
+            b.k_w = gf_load_tensor(wctx, gf, p + "attn.k.weight");
+            b.v_w = gf_load_tensor(wctx, gf, p + "attn.v.weight");
+        }
+        b.o_w         = gf_load_tensor(wctx, gf, p + "attn.o.weight");
+        b.rel_k_w     = gf_load_tensor(wctx, gf, p + "attn.rel_k.weight");
+        b.bias_u      = gf_load_tensor_f32(wctx, gf, p + "attn.bias_u");
+        b.bias_v      = gf_load_tensor_f32(wctx, gf, p + "attn.bias_v");
+        b.norm_conv_w = gf_load_tensor_f32(wctx, gf, p + "norm_conv.weight");
+        b.norm_conv_b = gf_load_tensor_f32(wctx, gf, p + "norm_conv.bias");
+        b.conv_pw1    = gf_load_tensor(wctx, gf, p + "conv.pw1.weight");
+        b.conv_dw_w   = gf_load_tensor_f32(wctx, gf, p + "conv.dw.weight");
+        b.conv_dw_b   = gf_load_tensor_f32(wctx, gf, p + "conv.dw.bias");
+        b.conv_pw2    = gf_load_tensor(wctx, gf, p + "conv.pw2.weight");
+        b.norm_ff2_w  = gf_load_tensor_f32(wctx, gf, p + "norm_ff2.weight");
+        b.norm_ff2_b  = gf_load_tensor_f32(wctx, gf, p + "norm_ff2.bias");
+        b.ff2_linear1 = gf_load_tensor(wctx, gf, p + "ff2.linear1.weight");
+        b.ff2_linear2 = gf_load_tensor(wctx, gf, p + "ff2.linear2.weight");
+        b.norm_out_w  = gf_load_tensor_f32(wctx, gf, p + "norm_out.weight");
+        b.norm_out_b  = gf_load_tensor_f32(wctx, gf, p + "norm_out.bias");
     }
 
     w->proj_w = gf_load_tensor(wctx, gf, "enc.proj.weight");
@@ -221,9 +225,8 @@ static struct ggml_tensor * parakeet_rel_shift(struct ggml_context * ctx, struct
 
     struct ggml_tensor * padded = ggml_pad_ext(ctx, bd, 1, 0, 0, 0, 0, 0, 0, 0);
 
-    return ggml_cont(ctx,
-                     ggml_view_3d(ctx, padded, n_tokens, n_tokens, n_heads, n_pos * sizeof(float),
-                                  (size_t) n_tokens * (n_pos + 1) * sizeof(float), (size_t) n_tokens * sizeof(float)));
+    return ggml_view_3d(ctx, padded, n_tokens, n_tokens, n_heads, n_pos * sizeof(float),
+                        (size_t) n_tokens * (n_pos + 1) * sizeof(float), (size_t) n_tokens * sizeof(float));
 }
 
 // Mel in, encoder states out. out_stem and out_block0 expose the two stages
@@ -281,23 +284,31 @@ static struct ggml_tensor * parakeet_encoder_build(struct ggml_context *        
         residual = x;
         h        = parakeet_layer_norm(ctx, x, b.norm_attn_w, b.norm_attn_b);
 
-        struct ggml_tensor * q = ggml_mul_mat(ctx, b.q_w, h);
-        struct ggml_tensor * k = ggml_mul_mat(ctx, b.k_w, h);
-        struct ggml_tensor * v = ggml_mul_mat(ctx, b.v_w, h);
-
-        q = ggml_permute(ctx, ggml_reshape_3d(ctx, q, d_head, hp.n_heads, n_tokens), 0, 2, 1, 3);
-        k = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_3d(ctx, k, d_head, hp.n_heads, n_tokens), 0, 2, 1, 3));
-        v = ggml_permute(ctx, ggml_reshape_3d(ctx, v, d_head, hp.n_heads, n_tokens), 0, 2, 1, 3);
+        // [d_head, heads, tokens] heads of each projection, views of one matmul with the fused weight
+        struct ggml_tensor *q, *k, *v;
+        if (b.qkv_w) {
+            struct ggml_tensor * qkv  = ggml_mul_mat(ctx, b.qkv_w, h);
+            const size_t         head = (size_t) d_head * sizeof(float);
+            q                         = ggml_view_3d(ctx, qkv, d_head, hp.n_heads, n_tokens, head, qkv->nb[1], 0);
+            k = ggml_view_3d(ctx, qkv, d_head, hp.n_heads, n_tokens, head, qkv->nb[1], hp.d_model * sizeof(float));
+            v = ggml_view_3d(ctx, qkv, d_head, hp.n_heads, n_tokens, head, qkv->nb[1], 2 * hp.d_model * sizeof(float));
+        } else {
+            q = ggml_reshape_3d(ctx, ggml_mul_mat(ctx, b.q_w, h), d_head, hp.n_heads, n_tokens);
+            k = ggml_reshape_3d(ctx, ggml_mul_mat(ctx, b.k_w, h), d_head, hp.n_heads, n_tokens);
+            v = ggml_reshape_3d(ctx, ggml_mul_mat(ctx, b.v_w, h), d_head, hp.n_heads, n_tokens);
+        }
+        q = ggml_permute(ctx, q, 0, 2, 1, 3);
+        k = ggml_permute(ctx, k, 0, 2, 1, 3);
+        v = ggml_permute(ctx, v, 0, 2, 1, 3);
 
         struct ggml_tensor * bias_u = ggml_reshape_3d(ctx, b.bias_u, d_head, 1, hp.n_heads);
         struct ggml_tensor * bias_v = ggml_reshape_3d(ctx, b.bias_v, d_head, 1, hp.n_heads);
 
-        struct ggml_tensor * q_u = ggml_cont(ctx, ggml_add(ctx, q, bias_u));
-        struct ggml_tensor * q_v = ggml_cont(ctx, ggml_add(ctx, q, bias_v));
+        struct ggml_tensor * q_u = ggml_add(ctx, q, bias_u);
+        struct ggml_tensor * q_v = ggml_add(ctx, q, bias_v);
 
         struct ggml_tensor * rel_k = ggml_mul_mat(ctx, b.rel_k_w, positions);
-        rel_k                      = ggml_cont(
-            ctx, ggml_permute(ctx, ggml_reshape_3d(ctx, rel_k, d_head, hp.n_heads, positions->ne[1]), 0, 2, 1, 3));
+        rel_k = ggml_permute(ctx, ggml_reshape_3d(ctx, rel_k, d_head, hp.n_heads, positions->ne[1]), 0, 2, 1, 3);
 
         struct ggml_tensor * ac = ggml_mul_mat(ctx, k, q_u);
         struct ggml_tensor * bd = parakeet_rel_shift(ctx, ggml_mul_mat(ctx, rel_k, q_v), (int) n_tokens);
@@ -316,9 +327,9 @@ static struct ggml_tensor * parakeet_encoder_build(struct ggml_context *        
         h        = parakeet_layer_norm(ctx, x, b.norm_conv_w, b.norm_conv_b);
 
         struct ggml_tensor * gated = ggml_mul_mat(ctx, b.conv_pw1, h);
-        struct ggml_tensor * lhs   = ggml_cont(ctx, ggml_view_2d(ctx, gated, hp.d_model, n_tokens, gated->nb[1], 0));
-        struct ggml_tensor * rhs   = ggml_cont(
-            ctx, ggml_view_2d(ctx, gated, hp.d_model, n_tokens, gated->nb[1], (size_t) hp.d_model * sizeof(float)));
+        struct ggml_tensor * lhs   = ggml_view_2d(ctx, gated, hp.d_model, n_tokens, gated->nb[1], 0);
+        struct ggml_tensor * rhs =
+            ggml_view_2d(ctx, gated, hp.d_model, n_tokens, gated->nb[1], (size_t) hp.d_model * sizeof(float));
         h = ggml_mul(ctx, lhs, ggml_sigmoid(ctx, rhs));
 
         h = ggml_cont(ctx, ggml_transpose(ctx, h));
